@@ -1,0 +1,31 @@
+# Python environments and caches
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local credentials and Hugging Face caches
+.env
+.env.*
+!.env.example
+.cache/
+
+# Datasets and model checkpoints do not belong in the GitHub source repo
+*.npz
+*.safetensors
+*.bin
+*.pt
+*.pth
+
+# Local demo runs and downloaded Hub snapshots
+work/
+*_work/
+bear/
+call_*
+tchngyang
+
+# OS/editor files
+.DS_Store
+*.swp
