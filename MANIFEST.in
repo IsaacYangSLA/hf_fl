@@ -1,8 +1,7 @@
 include README.md
 include requirements.txt
-include participant_allowlist.example.json
 recursive-include docs *.md *.pdf
-recursive-include examples *.py
+recursive-include examples *.py *.json
 recursive-include hf2l *.py
 recursive-include tests *.py
 global-exclude *.py[cod]

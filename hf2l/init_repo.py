@@ -11,8 +11,20 @@ import textwrap
 from pathlib import Path
 
 from hf2l.checkpoint_utils import copy_model_directory, discover_checkpoint
-from hf2l.hub_helpers import ROUND_FILE, SCHEMA_VERSION, SUBMISSION_FILE, make_api, utc_now, write_json
-from hf2l.plugin_loader import load_local_plugin, parse_plugin_args, require_callable
+from hf2l.hub_helpers import (
+    ROUND_FILE,
+    SCHEMA_VERSION,
+    SUBMISSION_FILE,
+    make_api,
+    utc_now,
+    write_json,
+)
+from hf2l.plugin_loader import (
+    load_plugin,
+    parse_plugin_args,
+    plugin_reference_name,
+    require_callable,
+)
 
 
 def generic_model_card(repo_id: str) -> str:
@@ -56,8 +68,10 @@ def parse_args() -> argparse.Namespace:
     )
     source.add_argument(
         "--plugin",
-        type=Path,
-        help="Trusted local Python file defining initialize_model(output_dir, options)",
+        help=(
+            "Built-in plugin name (lenet or vgg-cifar10), or a trusted local Python "
+            "file defining initialize_model(output_dir, options)"
+        ),
     )
     parser.add_argument(
         "--plugin-arg",
@@ -89,7 +103,7 @@ def main() -> None:
                 initialization = {"source": "local_model_directory"}
             else:
                 staging.mkdir()
-                plugin = load_local_plugin(args.plugin)
+                plugin = load_plugin(args.plugin)
                 initialize_model = require_callable(plugin, "initialize_model")
                 options = parse_plugin_args(args.plugin_arg)
                 options["repo_id"] = args.repo_id
@@ -103,7 +117,7 @@ def main() -> None:
                 json.dumps(result_metadata)
                 initialization = {
                     "source": "trusted_local_plugin",
-                    "plugin": args.plugin.name,
+                    "plugin": plugin_reference_name(args.plugin),
                     "metadata": result_metadata,
                 }
 

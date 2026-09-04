@@ -62,9 +62,14 @@ Each person uses a separate HF account and local environment:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -e .
+.venv/bin/python -m pip install \
+  'git+https://github.com/IsaacYangSLA/hf_fl.git@main'
 .venv/bin/hf auth login
 ```
+
+After the package is published to PyPI, the installation command becomes
+`.venv/bin/python -m pip install hf2l`. A source checkout may instead use
+`.venv/bin/python -m pip install -e .` for editable development.
 
 Alternatively, set `HF_TOKEN` securely. Every command resolves credentials in
 this order: `--token`, `HF_TOKEN`, then the token cached by `hf auth login`.
@@ -98,7 +103,7 @@ Its model and data implementations are
 ```bash
 .venv/bin/python -m hf2l.init_repo \
   --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
-  --plugin hf2l/plugins/lenet_poc.py \
+  --plugin lenet \
   --plugin-arg seed=20260903
 ```
 
@@ -116,7 +121,7 @@ Its model and data implementations are
 ```bash
 .venv/bin/python -m hf2l.init_repo \
   --repo-id OWNER_OR_ORG/vgg-cifar10-fedavg-poc \
-  --plugin hf2l/plugins/vgg_cifar10_poc.py \
+  --plugin vgg-cifar10 \
   --plugin-arg seed=20260903 \
   --plugin-arg width_multiplier=0.25
 ```
@@ -203,7 +208,7 @@ trusted local plugin. A participant joining the LeNet repository runs:
   --base-revision OWNER_SUPPLIED_COMMIT_SHA \
   --participant alice \
   --work-dir work/alice-round-0 \
-  --plugin hf2l/plugins/lenet_poc.py \
+  --plugin lenet \
   --plugin-arg synthetic_examples=1000 \
   --plugin-arg epochs=8 \
   --plugin-arg learning_rate=0.2
@@ -222,7 +227,7 @@ only the repository, plugin, data, and training options:
   --base-revision VGG_REPO_MAIN_COMMIT_SHA \
   --participant alice \
   --work-dir work/alice-vgg-round-0 \
-  --plugin hf2l/plugins/vgg_cifar10_poc.py \
+  --plugin vgg-cifar10 \
   --plugin-arg dataset_npz=/private/alice-cifar10.npz \
   --plugin-arg epochs=5 \
   --plugin-arg learning_rate=0.01
@@ -238,8 +243,10 @@ Users of the three-step workflow make the same switch in their own trainer:
 load the VGG repository checkpoint, train it on local CIFAR-10 data, and write a
 complete compatible checkpoint before running the unchanged upload command.
 
-Plugins are ordinary Python and execute with the caller's permissions. Use
-only reviewed local files; the scripts never load code from an HF PR.
+The package recognizes the built-in `lenet` and `vgg-cifar10` plugin names.
+For custom training, pass the path to a reviewed local Python file, such as
+`--plugin /private/alice_plugin.py`. Plugins are ordinary Python and execute
+with the caller's permissions; the commands never load code from an HF PR.
 
 ### Plugin interface
 
@@ -363,10 +370,13 @@ the submissions that are eligible for the current round.
 
 The recommended discovery mode also uses an allowlist that binds each approved
 HF username to the participant ID that must appear in that user's submission
-manifest. Copy and edit the example:
+manifest. Generate a validated allowlist from any working directory:
 
 ```bash
-cp participant_allowlist.example.json participant_allowlist.json
+.venv/bin/python -m hf2l.create_allowlist \
+  --participant alice-hf=alice \
+  --participant bob-hf=bob \
+  --output participant_allowlist.json
 ```
 
 ```json
@@ -378,9 +388,11 @@ cp participant_allowlist.example.json participant_allowlist.json
 
 HF usernames are matched case-insensitively; participant IDs are matched
 exactly. Each username and participant ID must appear only once, so the file
-defines a one-to-one identity mapping. Do not commit the real allowlist if its
-membership is sensitive; `participant_allowlist.example.json` is intended to
-remain a placeholder template.
+defines a one-to-one identity mapping. The generator rejects duplicate HF
+usernames, duplicate participant IDs, and an existing output file. Do not
+commit the real allowlist if its membership is sensitive. The repository's
+[`examples/participant_allowlist.example.json`](examples/participant_allowlist.example.json)
+remains a placeholder reference.
 
 Then discover eligible open PRs and aggregate without changing HF:
 
@@ -453,13 +465,12 @@ Evaluation is optional and must come from an owner-trusted local plugin:
   --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
   --pr 1 --pr 2 \
   --output-dir work/owner-check-round-1 \
-  --plugin hf2l/plugins/lenet_poc.py \
+  --plugin lenet \
   --plugin-arg eval_examples=1000
 ```
 
 For the VGG repository, use `--repo-id
-OWNER_OR_ORG/vgg-cifar10-fedavg-poc` and
-`--plugin hf2l/plugins/vgg_cifar10_poc.py`. Aggregation itself remains
+OWNER_OR_ORG/vgg-cifar10-fedavg-poc` and `--plugin vgg-cifar10`. Aggregation itself remains
 model-agnostic; only
 optional evaluation needs the model-specific plugin.
 
@@ -521,6 +532,7 @@ creates these equivalent console-command aliases:
 - `hf2l-client-download`
 - `hf2l-client-train`
 - `hf2l-client-upload`
+- `hf2l-create-allowlist`
 - `hf2l-owner-fedavg`
 
 For example, `hf2l-client-download` is equivalent to

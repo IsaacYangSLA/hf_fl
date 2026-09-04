@@ -10,7 +10,7 @@ from pathlib import Path
 
 from hf2l.client_steps import download_client_round, upload_client_update
 from hf2l.hub_helpers import make_api
-from hf2l.plugin_loader import load_local_plugin, parse_plugin_args, require_callable
+from hf2l.plugin_loader import load_plugin, parse_plugin_args, require_callable
 
 
 def parse_args() -> argparse.Namespace:
@@ -25,9 +25,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--plugin",
-        type=Path,
         required=True,
-        help="Trusted local Python file defining train_model(base_dir, output_dir, options)",
+        help=(
+            "Built-in plugin name (lenet or vgg-cifar10), or a trusted local Python "
+            "file defining train_model(base_dir, output_dir, options)"
+        ),
     )
     parser.add_argument(
         "--plugin-arg",
@@ -46,7 +48,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     try:
-        plugin = load_local_plugin(args.plugin)
+        plugin = load_plugin(args.plugin)
         train_model = require_callable(plugin, "train_model")
         options = parse_plugin_args(args.plugin_arg)
         options["participant"] = args.participant

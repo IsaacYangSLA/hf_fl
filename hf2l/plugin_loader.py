@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Load explicitly trusted, local model/training plugins."""
+"""Load bundled or explicitly trusted local model/training plugins."""
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import json
 import re
@@ -13,6 +14,10 @@ from typing import Any, Callable
 
 
 PLUGIN_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
+BUILTIN_PLUGINS = {
+    "lenet": "hf2l.plugins.lenet_poc",
+    "vgg-cifar10": "hf2l.plugins.vgg_cifar10_poc",
+}
 
 
 def parse_plugin_args(values: list[str] | None) -> dict[str, Any]:
@@ -51,6 +56,21 @@ def load_local_plugin(path: Path) -> ModuleType:
         sys.modules.pop(module_name, None)
         raise
     return module
+
+
+def load_plugin(reference: str | Path) -> ModuleType:
+    """Load a known bundled plugin alias or an explicitly supplied local file."""
+    value = str(reference)
+    module_name = BUILTIN_PLUGINS.get(value)
+    if module_name is not None:
+        return importlib.import_module(module_name)
+    return load_local_plugin(Path(value))
+
+
+def plugin_reference_name(reference: str | Path) -> str:
+    """Return a non-sensitive plugin label suitable for repository metadata."""
+    value = str(reference)
+    return value if value in BUILTIN_PLUGINS else Path(value).name
 
 
 def require_callable(plugin: ModuleType, name: str) -> Callable[..., Any]:

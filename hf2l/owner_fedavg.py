@@ -13,6 +13,7 @@ from typing import Any
 import torch
 from huggingface_hub import CommitOperationAdd
 
+from hf2l.allowlist import load_allowlist
 from hf2l.checkpoint_utils import (
     aggregate_checkpoints,
     average_tensor,
@@ -31,7 +32,7 @@ from hf2l.hub_helpers import (
     utc_now,
     write_json,
 )
-from hf2l.plugin_loader import load_local_plugin, parse_plugin_args, require_callable
+from hf2l.plugin_loader import load_plugin, parse_plugin_args, require_callable
 
 
 @dataclass(frozen=True)
@@ -39,33 +40,6 @@ class PullRequestCandidate:
     number: int
     revision: str
     author: str
-
-
-def load_allowlist(path: Path) -> dict[str, str]:
-    """Load a one-to-one mapping of HF username to manifest participant ID."""
-    raw = read_json(path)
-    if not raw:
-        raise ValueError(f"Allowlist must not be empty: {path}")
-    allowlist: dict[str, str] = {}
-    participant_to_author: dict[str, str] = {}
-    for raw_author, raw_participant in raw.items():
-        author = raw_author.strip() if isinstance(raw_author, str) else ""
-        if not author or not isinstance(raw_participant, str):
-            raise ValueError("Allowlist entries must map a non-empty HF username to a string")
-        participant = raw_participant.strip()
-        if not participant:
-            raise ValueError(f"Allowlist participant must not be empty for author {author!r}")
-        normalized_author = author.casefold()
-        if normalized_author in allowlist:
-            raise ValueError(f"Duplicate HF username in allowlist: {author}")
-        if participant in participant_to_author:
-            raise ValueError(
-                f"Participant {participant!r} is mapped to both "
-                f"{participant_to_author[participant]!r} and {author!r}"
-            )
-        allowlist[normalized_author] = participant
-        participant_to_author[participant] = author
-    return allowlist
 
 
 def discover_open_pull_requests(
@@ -242,8 +216,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--plugin",
-        type=Path,
-        help="Optional trusted local plugin defining evaluate_model(model_dir, options)",
+        help=(
+            "Optional built-in plugin name (lenet or vgg-cifar10), or a trusted "
+            "local Python file defining evaluate_model(model_dir, options)"
+        ),
     )
     parser.add_argument(
         "--plugin-arg",
@@ -421,7 +397,7 @@ def main() -> None:
 
         evaluation: dict[str, Any] | None = None
         if args.plugin:
-            plugin = load_local_plugin(args.plugin)
+            plugin = load_plugin(args.plugin)
             evaluate_model = require_callable(plugin, "evaluate_model")
             evaluation = evaluate_model(aggregate_dir, parse_plugin_args(args.plugin_arg))
             if not isinstance(evaluation, dict):

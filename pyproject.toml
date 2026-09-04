@@ -40,6 +40,7 @@ hf2l-init-repo = "hf2l.init_repo:main"
 hf2l-client-download = "hf2l.client_download:main"
 hf2l-client-train = "hf2l.client_train:main"
 hf2l-client-upload = "hf2l.client_upload:main"
+hf2l-create-allowlist = "hf2l.create_allowlist:main"
 hf2l-owner-fedavg = "hf2l.owner_fedavg:main"
 
 [tool.setuptools]

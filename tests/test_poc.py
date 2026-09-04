@@ -23,6 +23,7 @@ from hf2l.client_steps import upload_client_update  # noqa: E402
 from examples.lenet_model import LeNet  # noqa: E402
 from examples.mnist_data import load_npz_dataset, synthetic_dataset  # noqa: E402
 from examples.vgg_model import VGG  # noqa: E402
+from hf2l.create_allowlist import create_allowlist  # noqa: E402
 from hf2l.hub_helpers import CLIENT_CONTEXT_FILE, SCHEMA_VERSION, write_json  # noqa: E402
 from hf2l.owner_fedavg import (  # noqa: E402
     discover_open_pull_requests,
@@ -31,7 +32,7 @@ from hf2l.owner_fedavg import (  # noqa: E402
     load_allowlist,
     validate_submission_manifest,
 )
-from hf2l.plugin_loader import parse_plugin_args  # noqa: E402
+from hf2l.plugin_loader import load_plugin, parse_plugin_args  # noqa: E402
 
 
 class PocTests(unittest.TestCase):
@@ -238,6 +239,47 @@ class PocTests(unittest.TestCase):
     def test_plugin_arguments_decode_json_values(self) -> None:
         values = parse_plugin_args(["epochs=3", "enabled=true", "name=alice"])
         self.assertEqual(values, {"epochs": 3, "enabled": True, "name": "alice"})
+
+    def test_builtin_and_local_plugins_can_be_loaded(self) -> None:
+        self.assertEqual(load_plugin("lenet").__name__, "hf2l.plugins.lenet_poc")
+        self.assertEqual(
+            load_plugin("vgg-cifar10").__name__,
+            "hf2l.plugins.vgg_cifar10_poc",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            plugin_path = Path(temporary) / "custom_plugin.py"
+            plugin_path.write_text(
+                "def train_model(base_dir, output_dir, options):\n"
+                "    return {'num_examples': 1}\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(callable(load_plugin(plugin_path).train_model))
+
+    def test_create_allowlist_writes_valid_normalized_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "allowlist.json"
+            created = create_allowlist(
+                ["Alice-HF=alice", "bob-hf=bob"],
+                path,
+            )
+            self.assertEqual(created, {"alice-hf": "alice", "bob-hf": "bob"})
+            self.assertEqual(load_allowlist(path), created)
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                create_allowlist(["carol-hf=carol"], path)
+
+    def test_create_allowlist_rejects_ambiguous_mappings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaisesRegex(ValueError, "Duplicate HF username"):
+                create_allowlist(
+                    ["Alice-HF=alice", "alice-hf=alice-duplicate"],
+                    root / "duplicate-author.json",
+                )
+            with self.assertRaisesRegex(ValueError, "mapped to both"):
+                create_allowlist(
+                    ["alice-hf=participant", "bob-hf=participant"],
+                    root / "duplicate-participant.json",
+                )
 
     def test_allowlist_binds_hf_author_to_participant(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
