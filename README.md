@@ -174,6 +174,94 @@ def evaluate_model(model_dir, options):
 Each repeated `--plugin-arg KEY=VALUE` is JSON-decoded when possible, so
 numbers, booleans, arrays, and objects retain their types.
 
+## Cyclic federated learning without FedAvg
+
+The same client scripts can also implement cyclic federated learning, sometimes
+called cyclical weight transfer. There is no averaging: exactly one participant
+trains the checkpoint and hands that result to the next participant. For four
+participants, the lineage is:
+
+```text
+main@C0
+  -> Alice PR@A1
+  -> Bob PR@B1
+  -> Carol PR@C1
+  -> Dave PR@D1
+  -> Alice PR@A2
+  -> ...
+```
+
+More precisely, after Dave produces `D1`, Alice downloads `D1`, trains it, and
+creates the next PR. The order repeats as `Alice -> Bob -> Carol -> Dave ->
+Alice`. With two participants it is simply `Alice -> Bob -> Alice`.
+
+Each handoff uses an immutable commit SHA:
+
+1. Alice starts with the initial `main` SHA, uses the download/train/upload
+   workflow above, and sends Bob her PR revision and PR head SHA.
+2. Bob passes Alice's PR head SHA as `--base-revision`, trains that checkpoint,
+   uploads his result, and sends his new PR head SHA to the next participant.
+3. Every later participant repeats the same operation using only the immediate
+   predecessor's PR head SHA. After the last participant, control returns to
+   Alice.
+
+For example, Bob's download command is:
+
+```bash
+.venv/bin/python client_download.py \
+  --repo-id OWNER_OR_ORG/my-fedavg-model \
+  --base-revision ALICE_PR_HEAD_SHA \
+  --work-dir work/bob-cycle-1
+```
+
+Bob then trains `work/bob-cycle-1/base_model` and runs `client_upload.py` as
+shown above with `--participant bob`. The upload creates a new Hub PR whose
+parent is Alice's pinned commit. Hugging Face stores PRs as repository refs, so
+Bob's commit retains Alice's commit as an ancestor even though neither PR has
+yet been merged into `main`. See the Hub documentation for [PR refs and local
+access](https://huggingface.co/docs/hub/en/repositories-pull-requests-discussions)
+and the [`parent_commit` behavior of
+`create_commit`](https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api#huggingface_hub.HfApi.create_commit).
+
+Use the exact PR head SHA for a handoff, not only `refs/pr/N`, because the ref
+can move if its author updates the PR. `client_download.py` resolves either form
+to a SHA and records it as `base_commit` in `fedavg_client_context.json`.
+
+### Operating rules for the cycle
+
+- Only the designated next participant should extend the chain. HF can store
+  two PRs with the same parent, so `parent_commit` preserves ancestry but does
+  not prevent two participants from creating a fork.
+- Do not merge intermediate PRs. Keep `main` fixed while the chain is active,
+  then merge only the latest accepted PR at the chosen release boundary.
+- Never run `owner_fedavg.py` on the cyclic PRs. It requires multiple updates
+  from one common `main` commit and computes an average, which is a different
+  protocol.
+- Keep using new work directories. The upload step verifies that each trained
+  checkpoint has the same tensor names, shapes, dtypes, configuration, and
+  shard layout as its immediate predecessor.
+- Put non-secret cyclic metadata such as `protocol`, `cycle`, `position`, and
+  `predecessor_commit` in `--metadata-json`. Each commit preserves the manifest
+  that was current at that point, providing an auditable lineage.
+- Do not execute code from a predecessor's PR. Use reviewed local training code
+  and treat the downloaded content as model data.
+
+At a checkpoint or release boundary, the repository owner can review and merge
+only the newest PR in the chain; its ancestry contains all preceding cyclic
+updates. The owner should first verify that the newest PR still descends from
+the intended `main` SHA and close the older, superseded PRs after the merge.
+The Hub supports merging through its UI or
+[`HfApi.merge_pull_request`](https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api#huggingface_hub.HfApi.merge_pull_request).
+
+The current `fedavg_round.json` value does not advance at each cyclic handoff;
+it belongs to the FedAvg publishing path. Use the training metadata for manual
+cyclic tracking. A fully automated cyclic deployment should add a dedicated
+state record containing the ordered participant list, cycle number, expected
+next participant, predecessor SHA, and latest accepted PR. An [HF
+webhook](https://huggingface.co/docs/hub/en/webhooks) can notify an external
+coordinator when a PR changes, but that coordinator must still enforce the
+order and select a single successor.
+
 ## Owner: validate and average client PRs
 
 ### Automatically discover the current round
