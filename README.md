@@ -26,7 +26,6 @@
   - [Automatically discover the current round](#automatically-discover-the-current-round)
   - [Explicitly select PRs](#explicitly-select-prs)
 - [Large models](#large-models)
-- [Security and protocol limitations](#security-and-protocol-limitations)
 - [Local validation](#local-validation)
 
 The Hub repository provides versioned model transport without hard-coding a
@@ -477,18 +476,6 @@ shards reasonably sized when exporting the initial model.
 tensors remain float64. Use `--accumulator-dtype float64` when the added
 precision justifies roughly doubling accumulator memory. Disk must still hold
 the base, every selected PR snapshot, and the aggregate.
-
-## Security and protocol limitations
-
-This orchestration proof of concept (POC) is not a secure or Byzantine-robust
-FL system:
-
-- The owner can inspect every client model, and updates can leak training data.
-- Example counts and participant names are self-reported.
-- There is no secure aggregation, differential privacy, signing, attestation,
-  malware sandboxing, or poisoning defense.
-- Plugins are trusted local code. Never execute code supplied by a client PR.
-- All clients in one round must use the same architecture and checkpoint layout.
 
 ## Local validation
 
