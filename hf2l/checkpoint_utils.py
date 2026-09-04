@@ -13,7 +13,7 @@ from typing import Any
 import torch
 from safetensors.torch import safe_open, save_file
 
-from hub_helpers import ROUND_FILE, SUBMISSION_FILE, read_json
+from hf2l.hub_helpers import ROUND_FILE, SUBMISSION_FILE, read_json
 
 
 CONFIG_FILE = "config.json"

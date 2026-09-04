@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset
 
-from data_utils import stable_seed
+from hf2l.data_utils import stable_seed
 
 
 _CIFAR10_MEAN = torch.tensor((0.4914, 0.4822, 0.4465)).view(1, 3, 1, 1)

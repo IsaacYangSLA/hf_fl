@@ -4,7 +4,6 @@ include participant_allowlist.example.json
 recursive-include docs *.md *.pdf
 recursive-include examples *.py
 recursive-include hf2l *.py
-recursive-include plugins *.py
 recursive-include tests *.py
 global-exclude *.py[cod]
 global-exclude __pycache__

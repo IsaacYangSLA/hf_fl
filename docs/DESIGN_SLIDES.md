@@ -79,10 +79,10 @@ style: |
 
 | Step | Actor | Operation | Required guard |
 |---:|:---|:---|:---|
-| 1 | Owner | Run `init_repo.py`; publish round 0 | Record returned commit `C0` |
+| 1 | Owner | Run `python -m hf2l.init_repo`; publish round 0 | Record returned commit `C0` |
 | 2 | Owner | Send repository ID and `C0` to A and B | Send the SHA—not “latest” |
-| 3 | A + B | Run `client_download.py`, then any local trainer | Write a separate compatible checkpoint |
-| 4 | A + B | Run `client_upload.py` to validate and open PRs | `parent_commit=C0`; private data stays local |
+| 3 | A + B | Run `python -m hf2l.client_download`, then any local trainer | Write a separate compatible checkpoint |
+| 4 | A + B | Run `python -m hf2l.client_upload` to validate and open PRs | `parent_commit=C0`; private data stays local |
 | 5 | Owner | Discover open PRs or use explicit refs; pin SHAs | Allowlisted authors; current base + round |
 | 6 | Owner | Dry-run validation, weighted FedAvg, optional evaluation | Reject stale, incompatible or non-finite updates |
 | 7 | Owner | Publish aggregate and optional round tag | Commit to `main` with parent `C0` |

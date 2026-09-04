@@ -12,10 +12,10 @@ from typing import Any
 import numpy as np
 import torch
 
-from data_utils import stable_seed
+from hf2l.data_utils import stable_seed
 from examples.cifar10_data import get_dataset
 from examples.vgg_model import VGG
-from training import choose_device, evaluate, train
+from hf2l.training import choose_device, evaluate, train
 
 
 def _integer(options: dict[str, Any], name: str, default: int) -> int:
@@ -51,7 +51,7 @@ def initialize_model(output_dir: Path, options: dict[str, Any]) -> dict[str, Any
         dropout=dropout,
     ).save_pretrained(output_dir)
     shutil.copy2(
-        Path(__file__).resolve().parents[1] / "examples" / "vgg_model.py",
+        Path(__file__).resolve().parents[2] / "examples" / "vgg_model.py",
         output_dir / "vgg_model.py",
     )
     (output_dir / "README.md").write_text(

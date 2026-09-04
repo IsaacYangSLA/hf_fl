@@ -7,8 +7,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from client_steps import upload_client_update
-from hub_helpers import make_api, read_json
+from hf2l.client_steps import upload_client_update
+from hf2l.hub_helpers import make_api, read_json
 
 
 def parse_args() -> argparse.Namespace:

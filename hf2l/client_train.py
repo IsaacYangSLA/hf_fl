@@ -8,9 +8,9 @@ import json
 import sys
 from pathlib import Path
 
-from client_steps import download_client_round, upload_client_update
-from hub_helpers import make_api
-from plugin_loader import load_local_plugin, parse_plugin_args, require_callable
+from hf2l.client_steps import download_client_round, upload_client_update
+from hf2l.hub_helpers import make_api
+from hf2l.plugin_loader import load_local_plugin, parse_plugin_args, require_callable
 
 
 def parse_args() -> argparse.Namespace:

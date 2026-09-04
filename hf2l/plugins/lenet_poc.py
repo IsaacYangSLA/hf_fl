@@ -12,10 +12,10 @@ from typing import Any
 import numpy as np
 import torch
 
-from data_utils import stable_seed
+from hf2l.data_utils import stable_seed
 from examples.lenet_model import LeNet
 from examples.mnist_data import get_dataset
-from training import choose_device, evaluate, train
+from hf2l.training import choose_device, evaluate, train
 
 
 def _integer(options: dict[str, Any], name: str, default: int) -> int:
@@ -38,7 +38,7 @@ def initialize_model(output_dir: Path, options: dict[str, Any]) -> dict[str, Any
     torch.manual_seed(seed)
     LeNet(num_classes=10).save_pretrained(output_dir)
     shutil.copy2(
-        Path(__file__).resolve().parents[1] / "examples" / "lenet_model.py",
+        Path(__file__).resolve().parents[2] / "examples" / "lenet_model.py",
         output_dir / "lenet_model.py",
     )
     (output_dir / "README.md").write_text(

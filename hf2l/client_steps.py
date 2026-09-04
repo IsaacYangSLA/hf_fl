@@ -8,8 +8,8 @@ from typing import Any
 
 from huggingface_hub import CommitOperationAdd
 
-from checkpoint_utils import discover_checkpoint, validate_compatible
-from hub_helpers import (
+from hf2l.checkpoint_utils import discover_checkpoint, validate_compatible
+from hf2l.hub_helpers import (
     CLIENT_CONTEXT_FILE,
     ROUND_FILE,
     SCHEMA_VERSION,

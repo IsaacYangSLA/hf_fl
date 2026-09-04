@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torch.utils.data import TensorDataset
 
-from data_utils import stable_seed
+from hf2l.data_utils import stable_seed
 
 
 def synthetic_dataset(name: str, num_examples: int, seed: int) -> TensorDataset:

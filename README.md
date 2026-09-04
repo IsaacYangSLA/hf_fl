@@ -10,8 +10,8 @@ model training through Hugging Face repositories and pull requests.
 | Design | What it enables |
 |:---|:---|
 | **1. Pluggable models and client training** | Model-specific initialization, training, and evaluation can live in local plugins. Alice, Bob, and other clients may use different reviewed training implementations, frameworks, hyperparameters, and private datasets as long as they produce the same checkpoint schema. The included LeNet/MNIST and VGG/CIFAR-10 plugins demonstrate switching models by joining a differently initialized HF repository without changing Hub transport or FedAvg code. |
-| **2. Two client integration approaches** | Use three independent steps—download, train with arbitrary local code, and upload—or use the plugin-style `client_train.py` command to run all three around a trusted local training plugin. |
-| **3. Multiple federated-learning styles** | Synchronous **FedAvg** is implemented by `owner_fedavg.py`; sequential **cyclic federated learning** uses immutable PR-to-PR handoffs without averaging. A linear **swarm** follows the cyclic handoff pattern, while a branching swarm can follow the FedAvg fan-out/fan-in pattern when peers train from the same base. Swarm peer selection and coordination remain policy-specific. |
+| **2. Two client integration approaches** | Use three independent steps—download, train with arbitrary local code, and upload—or use the plugin-style `python -m hf2l.client_train` command to run all three around a trusted local training plugin. |
+| **3. Multiple federated-learning styles** | Synchronous **FedAvg** is implemented by `python -m hf2l.owner_fedavg`; sequential **cyclic federated learning** uses immutable PR-to-PR handoffs without averaging. A linear **swarm** follows the cyclic handoff pattern, while a branching swarm can follow the FedAvg fan-out/fan-in pattern when peers train from the same base. Swarm peer selection and coordination remain policy-specific. |
 
 ## Contents
 
@@ -76,7 +76,7 @@ their own credentials and need permission to open pull requests.
 Initialize from any intentional, local HF-style model export:
 
 ```bash
-.venv/bin/python init_repo.py \
+.venv/bin/python -m hf2l.init_repo \
   --repo-id OWNER_OR_ORG/my-fedavg-model \
   --model-dir /path/to/exported-model
 ```
@@ -96,9 +96,9 @@ Its model and data implementations are
 [`examples/mnist_data.py`](examples/mnist_data.py).
 
 ```bash
-.venv/bin/python init_repo.py \
+.venv/bin/python -m hf2l.init_repo \
   --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
-  --plugin plugins/lenet_poc.py \
+  --plugin hf2l/plugins/lenet_poc.py \
   --plugin-arg seed=20260903
 ```
 
@@ -114,17 +114,18 @@ Its model and data implementations are
 [`examples/cifar10_data.py`](examples/cifar10_data.py).
 
 ```bash
-.venv/bin/python init_repo.py \
+.venv/bin/python -m hf2l.init_repo \
   --repo-id OWNER_OR_ORG/vgg-cifar10-fedavg-poc \
-  --plugin plugins/vgg_cifar10_poc.py \
+  --plugin hf2l/plugins/vgg_cifar10_poc.py \
   --plugin-arg seed=20260903 \
   --plugin-arg width_multiplier=0.25
 ```
 
 The `0.25` width multiplier keeps the POC lightweight while retaining the
 VGG-11 layer topology. Use `width_multiplier=1.0` for the standard channel
-widths. Once initialized, this repository uses the same `client_download.py`,
-`client_upload.py`, and `owner_fedavg.py` as LeNet. Do not mix LeNet and VGG
+widths. Once initialized, this repository uses the same
+`python -m hf2l.client_download`, `python -m hf2l.client_upload`, and
+`python -m hf2l.owner_fedavg` modules as LeNet. Do not mix LeNet and VGG
 checkpoints in one repository or round; their tensor schemas are intentionally
 different.
 
@@ -133,7 +134,7 @@ different.
 ### 1. Download the exact base
 
 ```bash
-.venv/bin/python client_download.py \
+.venv/bin/python -m hf2l.client_download \
   --repo-id OWNER_OR_ORG/my-fedavg-model \
   --base-revision OWNER_SUPPLIED_COMMIT_SHA \
   --work-dir work/alice-round-0
@@ -179,7 +180,7 @@ Optionally create a non-secret metadata object:
 ### 3. Validate and upload a PR
 
 ```bash
-.venv/bin/python client_upload.py \
+.venv/bin/python -m hf2l.client_upload \
   --work-dir work/alice-round-0 \
   --trained-dir work/alice-round-0/trained_model \
   --participant alice \
@@ -193,16 +194,16 @@ a PR whose parent is the exact base commit. Send the printed `pr_revision`
 
 ## Client option B: trusted training plugin
 
-`client_train.py` composes the same download and upload functions around a
+`python -m hf2l.client_train` composes the same download and upload functions around a
 trusted local plugin. A participant joining the LeNet repository runs:
 
 ```bash
-.venv/bin/python client_train.py \
+.venv/bin/python -m hf2l.client_train \
   --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
   --base-revision OWNER_SUPPLIED_COMMIT_SHA \
   --participant alice \
   --work-dir work/alice-round-0 \
-  --plugin plugins/lenet_poc.py \
+  --plugin hf2l/plugins/lenet_poc.py \
   --plugin-arg synthetic_examples=1000 \
   --plugin-arg epochs=8 \
   --plugin-arg learning_rate=0.2
@@ -216,12 +217,12 @@ The same participant can join the separate VGG/CIFAR-10 repository by changing
 only the repository, plugin, data, and training options:
 
 ```bash
-.venv/bin/python client_train.py \
+.venv/bin/python -m hf2l.client_train \
   --repo-id OWNER_OR_ORG/vgg-cifar10-fedavg-poc \
   --base-revision VGG_REPO_MAIN_COMMIT_SHA \
   --participant alice \
   --work-dir work/alice-vgg-round-0 \
-  --plugin plugins/vgg_cifar10_poc.py \
+  --plugin hf2l/plugins/vgg_cifar10_poc.py \
   --plugin-arg dataset_npz=/private/alice-cifar10.npz \
   --plugin-arg epochs=5 \
   --plugin-arg learning_rate=0.01
@@ -296,13 +297,14 @@ Each handoff uses an immutable commit SHA:
 For example, Bob's download command is:
 
 ```bash
-.venv/bin/python client_download.py \
+.venv/bin/python -m hf2l.client_download \
   --repo-id OWNER_OR_ORG/my-fedavg-model \
   --base-revision ALICE_PR_HEAD_SHA \
   --work-dir work/bob-cycle-1
 ```
 
-Bob then trains `work/bob-cycle-1/base_model` and runs `client_upload.py` as
+Bob then trains `work/bob-cycle-1/base_model` and runs
+`python -m hf2l.client_upload` as
 shown above with `--participant bob`. The upload creates a new Hub PR whose
 parent is Alice's pinned commit. Hugging Face stores PRs as repository refs, so
 Bob's commit retains Alice's commit as an ancestor even though neither PR has
@@ -312,7 +314,8 @@ and the [`parent_commit` behavior of
 `create_commit`](https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api#huggingface_hub.HfApi.create_commit).
 
 Use the exact PR head SHA for a handoff, not only `refs/pr/N`, because the ref
-can move if its author updates the PR. `client_download.py` resolves either form
+can move if its author updates the PR. `python -m hf2l.client_download`
+resolves either form
 to a SHA and records it as `base_commit` in `fedavg_client_context.json`.
 
 ### Operating rules for the cycle
@@ -322,7 +325,7 @@ to a SHA and records it as `base_commit` in `fedavg_client_context.json`.
   not prevent two participants from creating a fork.
 - Do not merge intermediate PRs. Keep `main` fixed while the chain is active,
   then merge only the latest accepted PR at the chosen release boundary.
-- Never run `owner_fedavg.py` on the cyclic PRs. It requires multiple updates
+- Never run `python -m hf2l.owner_fedavg` on the cyclic PRs. It requires multiple updates
   from one common `main` commit and computes an average, which is a different
   protocol.
 - Keep using new work directories. The upload step verifies that each trained
@@ -382,7 +385,7 @@ remain a placeholder template.
 Then discover eligible open PRs and aggregate without changing HF:
 
 ```bash
-.venv/bin/python owner_fedavg.py \
+.venv/bin/python -m hf2l.owner_fedavg \
   --repo-id OWNER_OR_ORG/my-fedavg-model \
   --discover-prs \
   --allowlist participant_allowlist.json \
@@ -418,7 +421,7 @@ updates.
 Manual selection remains available:
 
 ```bash
-.venv/bin/python owner_fedavg.py \
+.venv/bin/python -m hf2l.owner_fedavg \
   --repo-id OWNER_OR_ORG/my-fedavg-model \
   --pr 1 \
   --pr 2 \
@@ -446,23 +449,24 @@ well-defined.
 Evaluation is optional and must come from an owner-trusted local plugin:
 
 ```bash
-.venv/bin/python owner_fedavg.py \
+.venv/bin/python -m hf2l.owner_fedavg \
   --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
   --pr 1 --pr 2 \
   --output-dir work/owner-check-round-1 \
-  --plugin plugins/lenet_poc.py \
+  --plugin hf2l/plugins/lenet_poc.py \
   --plugin-arg eval_examples=1000
 ```
 
 For the VGG repository, use `--repo-id
-OWNER_OR_ORG/vgg-cifar10-fedavg-poc` and `--plugin
-plugins/vgg_cifar10_poc.py`. Aggregation itself remains model-agnostic; only
+OWNER_OR_ORG/vgg-cifar10-fedavg-poc` and
+`--plugin hf2l/plugins/vgg_cifar10_poc.py`. Aggregation itself remains
+model-agnostic; only
 optional evaluation needs the model-specific plugin.
 
 After inspecting the aggregate, rerun into a new directory and publish:
 
 ```bash
-.venv/bin/python owner_fedavg.py \
+.venv/bin/python -m hf2l.owner_fedavg \
   --repo-id OWNER_OR_ORG/my-fedavg-model \
   --discover-prs \
   --allowlist participant_allowlist.json \
@@ -510,7 +514,8 @@ python3 -m venv /path/to/consumer-venv
 /path/to/consumer-venv/bin/python -m pip install dist/hf2l-0.1.0-py3-none-any.whl
 ```
 
-The wheel installs these console commands:
+The examples above use Python module execution. Installing the package also
+creates these equivalent console-command aliases:
 
 - `hf2l-init-repo`
 - `hf2l-client-download`
@@ -518,8 +523,8 @@ The wheel installs these console commands:
 - `hf2l-client-upload`
 - `hf2l-owner-fedavg`
 
-The original `.venv/bin/python SCRIPT.py ...` commands remain available when
-working from a source checkout. The package has not been published to PyPI;
+For example, `hf2l-client-download` is equivalent to
+`python -m hf2l.client_download`. The package has not been published to PyPI;
 confirm that the `hf2l` project name is available before publishing it.
 
 ## Local validation

@@ -36,24 +36,11 @@ Repository = "https://github.com/IsaacYangSLA/hf_fl"
 Documentation = "https://github.com/IsaacYangSLA/hf_fl#readme"
 
 [project.scripts]
-hf2l-init-repo = "init_repo:main"
-hf2l-client-download = "client_download:main"
-hf2l-client-train = "client_train:main"
-hf2l-client-upload = "client_upload:main"
-hf2l-owner-fedavg = "owner_fedavg:main"
+hf2l-init-repo = "hf2l.init_repo:main"
+hf2l-client-download = "hf2l.client_download:main"
+hf2l-client-train = "hf2l.client_train:main"
+hf2l-client-upload = "hf2l.client_upload:main"
+hf2l-owner-fedavg = "hf2l.owner_fedavg:main"
 
 [tool.setuptools]
-packages = ["hf2l", "examples", "plugins"]
-py-modules = [
-  "checkpoint_utils",
-  "client_download",
-  "client_steps",
-  "client_train",
-  "client_upload",
-  "data_utils",
-  "hub_helpers",
-  "init_repo",
-  "owner_fedavg",
-  "plugin_loader",
-  "training",
-]
+packages = ["hf2l", "hf2l.plugins", "examples"]

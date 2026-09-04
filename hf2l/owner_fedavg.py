@@ -13,14 +13,14 @@ from typing import Any
 import torch
 from huggingface_hub import CommitOperationAdd
 
-from checkpoint_utils import (
+from hf2l.checkpoint_utils import (
     aggregate_checkpoints,
     average_tensor,
     discover_checkpoint,
     validate_coefficients,
     validate_compatible,
 )
-from hub_helpers import (
+from hf2l.hub_helpers import (
     ROUND_FILE,
     SCHEMA_VERSION,
     SUBMISSION_FILE,
@@ -31,7 +31,7 @@ from hub_helpers import (
     utc_now,
     write_json,
 )
-from plugin_loader import load_local_plugin, parse_plugin_args, require_callable
+from hf2l.plugin_loader import load_local_plugin, parse_plugin_args, require_callable
 
 
 @dataclass(frozen=True)

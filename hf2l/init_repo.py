@@ -10,9 +10,9 @@ import tempfile
 import textwrap
 from pathlib import Path
 
-from checkpoint_utils import copy_model_directory, discover_checkpoint
-from hub_helpers import ROUND_FILE, SCHEMA_VERSION, SUBMISSION_FILE, make_api, utc_now, write_json
-from plugin_loader import load_local_plugin, parse_plugin_args, require_callable
+from hf2l.checkpoint_utils import copy_model_directory, discover_checkpoint
+from hf2l.hub_helpers import ROUND_FILE, SCHEMA_VERSION, SUBMISSION_FILE, make_api, utc_now, write_json
+from hf2l.plugin_loader import load_local_plugin, parse_plugin_args, require_callable
 
 
 def generic_model_card(repo_id: str) -> str:
