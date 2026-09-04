@@ -31,6 +31,7 @@ model training through Hugging Face repositories and pull requests.
   - [Automatically discover the current round](#automatically-discover-the-current-round)
   - [Explicitly select PRs](#explicitly-select-prs)
 - [Large models](#large-models)
+- [Build and install the wheel](#build-and-install-the-wheel)
 - [Local validation](#local-validation)
 
 The Hub repository provides versioned model transport without hard-coding a
@@ -61,7 +62,7 @@ Each person uses a separate HF account and local environment:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install -e .
 .venv/bin/hf auth login
 ```
 
@@ -490,6 +491,36 @@ shards reasonably sized when exporting the initial model.
 tensors remain float64. Use `--accumulator-dtype float64` when the added
 precision justifies roughly doubling accumulator memory. Disk must still hold
 the base, every selected PR snapshot, and the aggregate.
+
+## Build and install the wheel
+
+The ASCII Python distribution name for HF²L is `hf2l`. Build a wheel from a
+clean checkout using the project virtual environment:
+
+```bash
+.venv/bin/python -m pip install -e '.[build]'
+.venv/bin/python -m build
+.venv/bin/python -m twine check dist/*
+```
+
+Install the resulting wheel into another environment with:
+
+```bash
+python3 -m venv /path/to/consumer-venv
+/path/to/consumer-venv/bin/python -m pip install dist/hf2l-0.1.0-py3-none-any.whl
+```
+
+The wheel installs these console commands:
+
+- `hf2l-init-repo`
+- `hf2l-client-download`
+- `hf2l-client-train`
+- `hf2l-client-upload`
+- `hf2l-owner-fedavg`
+
+The original `.venv/bin/python SCRIPT.py ...` commands remain available when
+working from a source checkout. The package has not been published to PyPI;
+confirm that the `hf2l` project name is available before publishing it.
 
 ## Local validation
 

@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hf2l"
+version = "0.1.0"
+description = "Hugging Face Federated Learning proof of concept"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "huggingface_hub>=0.32.0",
+  "numpy>=1.26.0",
+  "safetensors>=0.4.0",
+  "torch>=2.2.0",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+keywords = ["federated-learning", "hugging-face", "fedavg", "pytorch"]
+
+[project.optional-dependencies]
+build = [
+  "build>=1.2.2",
+  "twine>=5.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/IsaacYangSLA/hf_fl"
+Repository = "https://github.com/IsaacYangSLA/hf_fl"
+Documentation = "https://github.com/IsaacYangSLA/hf_fl#readme"
+
+[project.scripts]
+hf2l-init-repo = "init_repo:main"
+hf2l-client-download = "client_download:main"
+hf2l-client-train = "client_train:main"
+hf2l-client-upload = "client_upload:main"
+hf2l-owner-fedavg = "owner_fedavg:main"
+
+[tool.setuptools]
+packages = ["hf2l", "examples", "plugins"]
+py-modules = [
+  "checkpoint_utils",
+  "client_download",
+  "client_steps",
+  "client_train",
+  "client_upload",
+  "data_utils",
+  "hub_helpers",
+  "init_repo",
+  "owner_fedavg",
+  "plugin_loader",
+  "training",
+]
