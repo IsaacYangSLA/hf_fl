@@ -1,4 +1,4 @@
-# HF²L
+# HF²L (HF2L/HFFL): Hugging Face Federated Learning
 
 **HF²L** stands for **Hugging Face Federated Learning**. It can also be written
 as **HFFL**; the project name stylizes the two consecutive `F` characters as
