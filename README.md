@@ -1,4 +1,9 @@
-# Generic Hugging Face federated learning proof of concept (POC)
+# HF²L
+
+**HF²L** stands for **Hugging Face Federated Learning**. It can also be written
+as **HFFL**; the project name stylizes the two consecutive `F` characters as
+`F²`. This repository is a proof of concept (POC) for coordinating federated
+model training through Hugging Face repositories and pull requests.
 
 ## Three design pillars
 
