@@ -16,7 +16,7 @@ sys.path.insert(0, str(PROJECT_DIR))
 
 from checkpoint_utils import aggregate_checkpoints, discover_checkpoint  # noqa: E402
 from client_steps import upload_client_update  # noqa: E402
-from demo_data import load_npz_dataset, synthetic_dataset  # noqa: E402
+from poc_data import load_npz_dataset, synthetic_dataset  # noqa: E402
 from hub_helpers import CLIENT_CONTEXT_FILE, SCHEMA_VERSION, write_json  # noqa: E402
 from lenet_model import LeNet  # noqa: E402
 from owner_fedavg import (  # noqa: E402
@@ -29,7 +29,7 @@ from owner_fedavg import (  # noqa: E402
 from plugin_loader import parse_plugin_args  # noqa: E402
 
 
-class DemoTests(unittest.TestCase):
+class PocTests(unittest.TestCase):
     def test_lenet_shape_and_hf_round_trip(self) -> None:
         model = LeNet()
         output = model(torch.zeros(3, 1, 28, 28))

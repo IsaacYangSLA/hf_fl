@@ -19,7 +19,7 @@ __pycache__/
 *.pt
 *.pth
 
-# Local demo runs and downloaded Hub snapshots
+# Local POC runs and downloaded Hub snapshots
 work/
 *_work/
 bear/

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LeNet initialization, training, and evaluation plugin used by the demo."""
+"""LeNet initialization, training, and evaluation plugin used by the POC."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from demo_data import get_dataset, stable_seed
+from poc_data import get_dataset, stable_seed
 from lenet_model import LeNet
 from training import choose_device, evaluate, train
 
@@ -51,7 +51,7 @@ def initialize_model(output_dir: Path, options: dict[str, Any]) -> dict[str, Any
             - lenet
             ---
 
-            # LeNet FedAvg demo
+            # LeNet FedAvg proof of concept (POC)
 
             This is the example LeNet checkpoint for `{repo_id}`. It classifies
             `[N, 1, 28, 28]` grayscale images into ten classes. The repository is

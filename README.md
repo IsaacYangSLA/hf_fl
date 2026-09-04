@@ -1,4 +1,4 @@
-# Generic Hugging Face federated learning demo
+# Generic Hugging Face federated learning proof of concept (POC)
 
 > **Supported workflows:** this repository supports both synchronous **FedAvg**
 > and sequential **cyclic federated learning**. Swarm learning follows the same
@@ -80,12 +80,12 @@ those files are copied during initialization. Local `.git`, `.cache`,
 `__pycache__`, and symlinks are excluded. Review the directory before upload.
 
 Or initialize using a trusted local plugin. The included plugin preserves the
-original LeNet demo:
+original LeNet proof of concept (POC):
 
 ```bash
 .venv/bin/python init_repo.py \
-  --repo-id OWNER_OR_ORG/lenet-fedavg-demo \
-  --plugin plugins/lenet_demo.py \
+  --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
+  --plugin plugins/lenet_poc.py \
   --plugin-arg seed=20260903
 ```
 
@@ -162,11 +162,11 @@ trusted local plugin:
 
 ```bash
 .venv/bin/python client_train.py \
-  --repo-id OWNER_OR_ORG/lenet-fedavg-demo \
+  --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
   --base-revision OWNER_SUPPLIED_COMMIT_SHA \
   --participant alice \
   --work-dir work/alice-round-0 \
-  --plugin plugins/lenet_demo.py \
+  --plugin plugins/lenet_poc.py \
   --plugin-arg synthetic_examples=1000 \
   --plugin-arg epochs=8 \
   --plugin-arg learning_rate=0.2
@@ -386,10 +386,10 @@ Evaluation is optional and must come from an owner-trusted local plugin:
 
 ```bash
 .venv/bin/python owner_fedavg.py \
-  --repo-id OWNER_OR_ORG/lenet-fedavg-demo \
+  --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
   --pr 1 --pr 2 \
   --output-dir work/owner-check-round-1 \
-  --plugin plugins/lenet_demo.py \
+  --plugin plugins/lenet_poc.py \
   --plugin-arg eval_examples=1000
 ```
 
@@ -428,7 +428,8 @@ the base, every selected PR snapshot, and the aggregate.
 
 ## Security and protocol limitations
 
-This is an orchestration demo, not a secure or Byzantine-robust FL system:
+This orchestration proof of concept (POC) is not a secure or Byzantine-robust
+FL system:
 
 - The owner can inspect every client model, and updates can leak training data.
 - Example counts and participant names are self-reported.

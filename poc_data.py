@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dataset loading and deterministic synthetic data for the LeNet demo."""
+"""Dataset loading and deterministic synthetic data for the LeNet POC."""
 
 from __future__ import annotations
 

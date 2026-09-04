@@ -38,8 +38,9 @@ def generic_model_card(repo_id: str) -> str:
         commit. Do not merge a client PR directly: a PR contains one local
         model, not the aggregate.
 
-        This is an educational demo. It does not implement secure aggregation,
-        differential privacy, client authentication, or poisoning defenses.
+        This is an educational proof of concept (POC). It does not implement
+        secure aggregation, differential privacy, client authentication, or
+        poisoning defenses.
         """
     )
 
