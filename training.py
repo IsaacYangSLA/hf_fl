@@ -9,8 +9,6 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
-from lenet_model import LeNet
-
 
 @dataclass(frozen=True)
 class TrainMetrics:
@@ -27,7 +25,7 @@ def choose_device(requested: str) -> torch.device:
     return device
 
 
-def evaluate(model: LeNet, dataset: Dataset, batch_size: int, device: torch.device) -> float:
+def evaluate(model: nn.Module, dataset: Dataset, batch_size: int, device: torch.device) -> float:
     model.eval()
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
     correct = 0
@@ -43,7 +41,7 @@ def evaluate(model: LeNet, dataset: Dataset, batch_size: int, device: torch.devi
 
 
 def train(
-    model: LeNet,
+    model: nn.Module,
     dataset: Dataset,
     *,
     epochs: int,

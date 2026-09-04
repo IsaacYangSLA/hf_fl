@@ -1,15 +1,21 @@
 # Generic Hugging Face federated learning proof of concept (POC)
 
-> **Supported workflows:** this repository supports both synchronous **FedAvg**
-> and sequential **cyclic federated learning**. Swarm learning follows the same
-> immutable PR-to-PR checkpoint handoff; the swarm's peer-selection policy is
-> an external coordination concern.
+## Three design pillars
+
+| Design | What it enables |
+|:---|:---|
+| **1. Pluggable models and client training** | Model-specific initialization, training, and evaluation can live in local plugins. Alice, Bob, and other clients may use different reviewed training implementations, frameworks, hyperparameters, and private datasets as long as they produce the same checkpoint schema. The included LeNet/MNIST and VGG/CIFAR-10 plugins demonstrate switching models by joining a differently initialized HF repository without changing Hub transport or FedAvg code. |
+| **2. Two client integration approaches** | Use three independent steps—download, train with arbitrary local code, and upload—or use the plugin-style `client_train.py` command to run all three around a trusted local training plugin. |
+| **3. Multiple federated-learning styles** | Synchronous **FedAvg** is implemented by `owner_fedavg.py`; sequential **cyclic federated learning** uses immutable PR-to-PR handoffs without averaging. A linear **swarm** follows the cyclic handoff pattern, while a branching swarm can follow the FedAvg fan-out/fan-in pattern when peers train from the same base. Swarm peer selection and coordination remain policy-specific. |
 
 ## Contents
 
+- [Three design pillars](#three-design-pillars)
 - [Design overview](#design-overview)
 - [Install and authenticate](#install-and-authenticate)
 - [Owner: initialize a repository](#owner-initialize-a-repository)
+  - [LeNet with MNIST-shaped data](#lenet-with-mnist-shaped-data)
+  - [VGG with CIFAR-10 data](#vgg-with-cifar-10-data)
 - [Client option A: three independent steps](#client-option-a-three-independent-steps)
   - [Download the exact base](#1-download-the-exact-base)
   - [Train with any local code](#2-train-with-any-local-code)
@@ -24,12 +30,8 @@
 - [Local validation](#local-validation)
 
 The Hub repository provides versioned model transport without hard-coding a
-model class, dataset, or training loop into the workflow. In FedAvg mode,
-multiple clients train from one common commit and the owner averages their
-updates. In cyclic mode, one client trains the preceding client's PR checkpoint
-and passes a new PR to the next client. A linear swarm uses the cyclic pattern;
-a branching swarm can use the FedAvg path when several peers train from the
-same checkpoint.
+model class, dataset, training loop, or federation schedule into that transport
+layer.
 
 The shared checkpoint contract is deliberately small:
 
@@ -38,10 +40,8 @@ The shared checkpoint contract is deliberately small:
 - identical tensor names, shapes, dtypes, configuration, and shard filenames
   across the round
 
-Clients can either use one trusted local Python plugin for the complete flow or
-run download, arbitrary training, and upload as three separate commands. Only
-weights, configuration, and non-secret submission metadata are added to a
-client PR. Client datasets remain local.
+Only weights, configuration, and non-secret submission metadata are added to a
+client PR. Client datasets and training code remain local.
 
 ## Design overview
 
@@ -79,8 +79,11 @@ The directory may also contain model code, tokenizer files, and a model card;
 those files are copied during initialization. Local `.git`, `.cache`,
 `__pycache__`, and symlinks are excluded. Review the directory before upload.
 
-Or initialize using a trusted local plugin. The included plugin preserves the
-original LeNet proof of concept (POC):
+Or initialize using one of the trusted local example plugins.
+
+### LeNet with MNIST-shaped data
+
+The compact LeNet POC uses grayscale `[N, 1, 28, 28]` inputs:
 
 ```bash
 .venv/bin/python init_repo.py \
@@ -91,6 +94,25 @@ original LeNet proof of concept (POC):
 
 The script validates the checkpoint before creating the HF repository and
 prints the initial `main` commit SHA. Give that exact SHA to all clients.
+
+### VGG with CIFAR-10 data
+
+Create a separate repository containing the VGG-11-style CIFAR-10 checkpoint:
+
+```bash
+.venv/bin/python init_repo.py \
+  --repo-id OWNER_OR_ORG/vgg-cifar10-fedavg-poc \
+  --plugin plugins/vgg_cifar10_poc.py \
+  --plugin-arg seed=20260903 \
+  --plugin-arg width_multiplier=0.25
+```
+
+The `0.25` width multiplier keeps the POC lightweight while retaining the
+VGG-11 layer topology. Use `width_multiplier=1.0` for the standard channel
+widths. Once initialized, this repository uses the same `client_download.py`,
+`client_upload.py`, and `owner_fedavg.py` as LeNet. Do not mix LeNet and VGG
+checkpoints in one repository or round; their tensor schemas are intentionally
+different.
 
 ## Client option A: three independent steps
 
@@ -119,7 +141,7 @@ Your trainer is entirely independent of these scripts. It must load
 `base_model` and write a complete checkpoint to another directory:
 
 ```bash
-python /private/my_train.py \
+.venv/bin/python /private/my_train.py \
   --input work/alice-round-0/base_model \
   --output work/alice-round-0/trained_model \
   --dataset /private/alice-data
@@ -158,7 +180,7 @@ a PR whose parent is the exact base commit. Send the printed `pr_revision`
 ## Client option B: trusted training plugin
 
 `client_train.py` composes the same download and upload functions around a
-trusted local plugin:
+trusted local plugin. A participant joining the LeNet repository runs:
 
 ```bash
 .venv/bin/python client_train.py \
@@ -175,6 +197,31 @@ trusted local plugin:
 For private LeNet NPZ data, add
 `--plugin-arg dataset_npz=/private/alice-images.npz`. The example NPZ format is
 `x` shaped `[N, 28, 28]` or `[N, 1, 28, 28]` and integer `y` shaped `[N]`.
+
+The same participant can join the separate VGG/CIFAR-10 repository by changing
+only the repository, plugin, data, and training options:
+
+```bash
+.venv/bin/python client_train.py \
+  --repo-id OWNER_OR_ORG/vgg-cifar10-fedavg-poc \
+  --base-revision VGG_REPO_MAIN_COMMIT_SHA \
+  --participant alice \
+  --work-dir work/alice-vgg-round-0 \
+  --plugin plugins/vgg_cifar10_poc.py \
+  --plugin-arg dataset_npz=/private/alice-cifar10.npz \
+  --plugin-arg epochs=5 \
+  --plugin-arg learning_rate=0.01
+```
+
+The CIFAR-10 NPZ format uses integer `y` shaped `[N]` and `x` shaped either
+`[N, 32, 32, 3]` or `[N, 3, 32, 32]`. Pixels may be `uint8` values in
+`[0, 255]` or floating-point values in `[0, 1]`; the plugin applies standard
+CIFAR-10 channel normalization. Omitting `dataset_npz` uses deterministic
+synthetic RGB data for an offline smoke test, not for meaningful evaluation.
+
+Users of the three-step workflow make the same switch in their own trainer:
+load the VGG repository checkpoint, train it on local CIFAR-10 data, and write a
+complete compatible checkpoint before running the unchanged upload command.
 
 Plugins are ordinary Python and execute with the caller's permissions. Use
 only reviewed local files; the scripts never load code from an HF PR.
@@ -392,6 +439,11 @@ Evaluation is optional and must come from an owner-trusted local plugin:
   --plugin plugins/lenet_poc.py \
   --plugin-arg eval_examples=1000
 ```
+
+For the VGG repository, use `--repo-id
+OWNER_OR_ORG/vgg-cifar10-fedavg-poc` and `--plugin
+plugins/vgg_cifar10_poc.py`. Aggregation itself remains model-agnostic; only
+optional evaluation needs the model-specific plugin.
 
 After inspecting the aggregate, rerun into a new directory and publish:
 

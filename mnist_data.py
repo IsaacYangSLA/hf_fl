@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
-"""Dataset loading and deterministic synthetic data for the LeNet POC."""
+"""MNIST-shaped NPZ loading and deterministic synthetic data for the LeNet POC."""
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 import numpy as np
 import torch
 from torch.utils.data import TensorDataset
 
-
-def stable_seed(name: str, seed: int) -> int:
-    digest = hashlib.sha256(name.encode("utf-8")).digest()
-    return (int.from_bytes(digest[:8], "little") + seed) % (2**63 - 1)
+from data_utils import stable_seed
 
 
 def synthetic_dataset(name: str, num_examples: int, seed: int) -> TensorDataset:

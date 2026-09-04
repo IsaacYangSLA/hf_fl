@@ -15,8 +15,12 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR))
 
 from checkpoint_utils import aggregate_checkpoints, discover_checkpoint  # noqa: E402
+from cifar10_data import (  # noqa: E402
+    load_npz_dataset as load_cifar10_npz_dataset,
+    synthetic_dataset as synthetic_cifar10_dataset,
+)
 from client_steps import upload_client_update  # noqa: E402
-from poc_data import load_npz_dataset, synthetic_dataset  # noqa: E402
+from mnist_data import load_npz_dataset, synthetic_dataset  # noqa: E402
 from hub_helpers import CLIENT_CONTEXT_FILE, SCHEMA_VERSION, write_json  # noqa: E402
 from lenet_model import LeNet  # noqa: E402
 from owner_fedavg import (  # noqa: E402
@@ -27,6 +31,7 @@ from owner_fedavg import (  # noqa: E402
     validate_submission_manifest,
 )
 from plugin_loader import parse_plugin_args  # noqa: E402
+from vgg_model import VGG  # noqa: E402
 
 
 class PocTests(unittest.TestCase):
@@ -37,6 +42,18 @@ class PocTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             model.save_pretrained(temporary)
             loaded = LeNet.from_pretrained(temporary)
+            for expected, actual in zip(model.parameters(), loaded.parameters(), strict=True):
+                torch.testing.assert_close(expected, actual)
+
+    def test_vgg_shape_and_hf_round_trip(self) -> None:
+        model = VGG(width_multiplier=0.03125, dropout=0.0)
+        output = model(torch.zeros(2, 3, 32, 32))
+        self.assertEqual(output.shape, (2, 10))
+        with tempfile.TemporaryDirectory() as temporary:
+            model.save_pretrained(temporary)
+            loaded = VGG.from_pretrained(temporary)
+            self.assertEqual(loaded.width_multiplier, 0.03125)
+            self.assertEqual(loaded.dropout, 0.0)
             for expected, actual in zip(model.parameters(), loaded.parameters(), strict=True):
                 torch.testing.assert_close(expected, actual)
 
@@ -58,6 +75,24 @@ class PocTests(unittest.TestCase):
             )
             dataset = load_npz_dataset(path)
             self.assertEqual(dataset.tensors[0].shape, (4, 1, 28, 28))
+            self.assertEqual(dataset.tensors[0].dtype, torch.float32)
+
+    def test_cifar10_data_shapes_and_reproducibility(self) -> None:
+        alice_1 = synthetic_cifar10_dataset("alice", 12, 7)
+        alice_2 = synthetic_cifar10_dataset("alice", 12, 7)
+        self.assertEqual(alice_1.tensors[0].shape, (12, 3, 32, 32))
+        torch.testing.assert_close(alice_1.tensors[0], alice_2.tensors[0])
+        torch.testing.assert_close(alice_1.tensors[1], alice_2.tensors[1])
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "cifar10.npz"
+            np.savez(
+                path,
+                x=np.zeros((4, 32, 32, 3), dtype=np.uint8),
+                y=np.array([0, 1, 2, 3], dtype=np.int64),
+            )
+            dataset = load_cifar10_npz_dataset(path)
+            self.assertEqual(dataset.tensors[0].shape, (4, 3, 32, 32))
             self.assertEqual(dataset.tensors[0].dtype, torch.float32)
 
     def test_fedavg_uses_supplied_coefficients(self) -> None:
@@ -99,6 +134,25 @@ class PocTests(unittest.TestCase):
             result = load_file(output / "model.safetensors")
             torch.testing.assert_close(result["weight"], torch.tensor([5.0, 5.0]))
             torch.testing.assert_close(result["constant"], torch.tensor([7]))
+
+    def test_vgg_uses_the_generic_checkpoint_aggregator(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            layouts = []
+            for name, value in (("base", 0.0), ("alice", 2.0), ("bob", 6.0)):
+                model_dir = root / name
+                model = VGG(width_multiplier=0.03125, dropout=0.0)
+                with torch.no_grad():
+                    for parameter in model.parameters():
+                        parameter.fill_(value)
+                model.save_pretrained(model_dir)
+                layouts.append(discover_checkpoint(model_dir))
+
+            output = root / "aggregate"
+            aggregate_checkpoints(layouts[0], layouts[1:], [0.25, 0.75], output)
+            aggregate = VGG.from_pretrained(output)
+            for parameter in aggregate.parameters():
+                torch.testing.assert_close(parameter, torch.full_like(parameter, 5.0))
 
     def test_sharded_checkpoint_index_is_discovered(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

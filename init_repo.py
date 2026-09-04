@@ -143,7 +143,7 @@ def main() -> None:
 
         print(f"Repository: {repo_url}")
         print(f"Initial main commit: {result.oid}")
-        print("Give this repo ID and commit SHA to both participants.")
+        print("Give this repo ID and commit SHA to all participants.")
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
