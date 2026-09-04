@@ -19,7 +19,13 @@ from client_steps import upload_client_update  # noqa: E402
 from demo_data import load_npz_dataset, synthetic_dataset  # noqa: E402
 from hub_helpers import CLIENT_CONTEXT_FILE, SCHEMA_VERSION, write_json  # noqa: E402
 from lenet_model import LeNet  # noqa: E402
-from owner_fedavg import fedavg_states  # noqa: E402
+from owner_fedavg import (  # noqa: E402
+    discover_open_pull_requests,
+    explicit_pull_requests,
+    fedavg_states,
+    load_allowlist,
+    validate_submission_manifest,
+)
 from plugin_loader import parse_plugin_args  # noqa: E402
 
 
@@ -178,6 +184,82 @@ class DemoTests(unittest.TestCase):
     def test_plugin_arguments_decode_json_values(self) -> None:
         values = parse_plugin_args(["epochs=3", "enabled=true", "name=alice"])
         self.assertEqual(values, {"epochs": 3, "enabled": True, "name": "alice"})
+
+    def test_allowlist_binds_hf_author_to_participant(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "allowlist.json"
+            write_json(path, {"Alice-HF": "alice", "bob-hf": "bob"})
+            allowlist = load_allowlist(path)
+            self.assertEqual(allowlist, {"alice-hf": "alice", "bob-hf": "bob"})
+
+            manifest = {
+                "schema_version": SCHEMA_VERSION,
+                "repo_id": "owner/model",
+                "base_commit": "abc123",
+                "source_round": 4,
+                "participant": "alice",
+                "num_examples": 12,
+            }
+            participant, count = validate_submission_manifest(
+                manifest,
+                repo_id="owner/model",
+                base_commit="abc123",
+                current_round=4,
+                revision="refs/pr/1",
+                expected_participant=allowlist["alice-hf"],
+            )
+            self.assertEqual((participant, count), ("alice", 12))
+            with self.assertRaisesRegex(ValueError, "approved only as participant"):
+                validate_submission_manifest(
+                    {**manifest, "participant": "mallory"},
+                    repo_id="owner/model",
+                    base_commit="abc123",
+                    current_round=4,
+                    revision="refs/pr/1",
+                    expected_participant=allowlist["alice-hf"],
+                )
+
+    def test_pr_discovery_keeps_only_allowlisted_authors(self) -> None:
+        class FakeApi:
+            def get_repo_discussions(self, **kwargs):
+                self.arguments = kwargs
+                return iter(
+                    [
+                        SimpleNamespace(
+                            num=8, author="mallory-hf", is_pull_request=True
+                        ),
+                        SimpleNamespace(num=5, author="Bob-HF", is_pull_request=True),
+                        SimpleNamespace(num=3, author="alice-hf", is_pull_request=True),
+                    ]
+                )
+
+        api = FakeApi()
+        candidates, skipped = discover_open_pull_requests(
+            api, "owner/model", {"alice-hf": "alice", "bob-hf": "bob"}
+        )
+        self.assertEqual([candidate.number for candidate in candidates], [3, 5])
+        self.assertEqual(candidates[1].author, "Bob-HF")
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual(api.arguments["discussion_type"], "pull_request")
+        self.assertEqual(api.arguments["discussion_status"], "open")
+
+    def test_explicit_pr_selection_also_enforces_allowlist(self) -> None:
+        class FakeApi:
+            def get_discussion_details(self, **kwargs):
+                authors = {3: "alice-hf", 5: "mallory-hf"}
+                return SimpleNamespace(
+                    author=authors[kwargs["discussion_num"]], is_pull_request=True
+                )
+
+        api = FakeApi()
+        candidates = explicit_pull_requests(
+            api, "owner/model", ["3"], {"alice-hf": "alice"}
+        )
+        self.assertEqual(candidates[0].revision, "refs/pr/3")
+        with self.assertRaisesRegex(ValueError, "not in the allowlist"):
+            explicit_pull_requests(
+                api, "owner/model", ["5"], {"alice-hf": "alice"}
+            )
 
 
 if __name__ == "__main__":

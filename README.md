@@ -16,9 +16,12 @@ run download, arbitrary training, and upload as three separate commands. Only
 weights, configuration, and non-secret submission metadata are added to a
 client PR. Client datasets remain local.
 
-See [`DESIGN_SLIDES.md`](DESIGN_SLIDES.md) or the rendered
-[`DESIGN_SLIDES.pdf`](DESIGN_SLIDES.pdf) for the architecture, operating
-sequence, credentials, and large-model design.
+## Design overview
+
+[`DESIGN_SLIDES.md`](DESIGN_SLIDES.md) is a concise four-slide overview of the
+system architecture, client and owner operation sequence, credential boundaries,
+and large-model transfer and aggregation strategy. A rendered version is also
+available as [`DESIGN_SLIDES.pdf`](DESIGN_SLIDES.pdf).
 
 ## Install and authenticate
 
@@ -173,7 +176,70 @@ numbers, booleans, arrays, and objects retain their types.
 
 ## Owner: validate and average client PRs
 
-First aggregate locally without changing HF:
+### Automatically discover the current round
+
+With `--discover-prs`, the owner does not need to supply individual `--pr`
+arguments. The script lists the repository's open pull requests and selects
+the submissions that are eligible for the current round.
+
+The recommended discovery mode also uses an allowlist that binds each approved
+HF username to the participant ID that must appear in that user's submission
+manifest. Copy and edit the example:
+
+```bash
+cp participant_allowlist.example.json participant_allowlist.json
+```
+
+```json
+{
+  "alice-hf": "alice",
+  "bob-hf": "bob"
+}
+```
+
+HF usernames are matched case-insensitively; participant IDs are matched
+exactly. Each username and participant ID must appear only once, so the file
+defines a one-to-one identity mapping. Do not commit the real allowlist if its
+membership is sensitive; `participant_allowlist.example.json` is intended to
+remain a placeholder template.
+
+Then discover eligible open PRs and aggregate without changing HF:
+
+```bash
+.venv/bin/python owner_fedavg.py \
+  --repo-id OWNER_OR_ORG/my-fedavg-model \
+  --discover-prs \
+  --allowlist participant_allowlist.json \
+  --output-dir work/owner-check-round-1
+```
+
+For each run, automatic discovery:
+
+1. Pins the current `main` commit and reads its current FedAvg round.
+2. Lists open model-repository PRs and rejects authors outside the allowlist.
+3. Pins each candidate PR's head commit and confirms it descends from current
+   `main`.
+4. Downloads only `fedavg_submission.json` and verifies its repository, base
+   commit, source round, participant ID, and positive example count.
+5. Downloads full checkpoints only for eligible PRs, then validates their
+   tensor and shard layouts before aggregation.
+
+In discovery mode, unauthorized, stale, or invalid-manifest PRs are reported as
+`skipped_pr=...` and do not stop the round. At least two eligible PRs are
+required. A checkpoint-layout mismatch still stops aggregation because the
+models cannot be averaged safely. If multiple eligible PRs claim the same
+participant ID, aggregation also stops so the owner can close the superseded
+PR or explicitly choose one with `--pr`.
+
+Running `--discover-prs` without `--allowlist` is supported but prints a
+warning and considers every compatible open PR. Do not use that mode for an
+untrusted or public HF repository: participant names and example counts are
+self-reported, and compatibility checks do not protect against poisoned model
+updates.
+
+### Explicitly select PRs
+
+Manual selection remains available:
 
 ```bash
 .venv/bin/python owner_fedavg.py \
@@ -183,9 +249,14 @@ First aggregate locally without changing HF:
   --output-dir work/owner-check-round-1
 ```
 
-The owner verifies that current `main` is the clients' declared base, every PR
-descends from it, participant IDs are distinct, example counts are positive,
-and checkpoint schemas match. It computes dataset-size-weighted FedAvg:
+You may also add `--allowlist participant_allowlist.json` to manual selection;
+the selected PR authors must then match their mapped participant IDs.
+
+For either selection mode, the owner verifies that current `main` is the
+clients' declared base, every PR descends from it, HF authors and participant
+IDs satisfy the optional allowlist, participant IDs are distinct, example
+counts are positive, and checkpoint schemas match. It computes
+dataset-size-weighted FedAvg:
 
 ```text
 theta_next = sum(num_examples_i * theta_i) / sum(num_examples_i)
@@ -212,7 +283,8 @@ After inspecting the aggregate, rerun into a new directory and publish:
 ```bash
 .venv/bin/python owner_fedavg.py \
   --repo-id OWNER_OR_ORG/my-fedavg-model \
-  --pr 1 --pr 2 \
+  --discover-prs \
+  --allowlist participant_allowlist.json \
   --output-dir work/owner-publish-round-1 \
   --publish \
   --tag fedavg-round-1
@@ -221,7 +293,10 @@ After inspecting the aggregate, rerun into a new directory and publish:
 Publication uses `parent_commit=BASE_SHA`; HF rejects it if `main` changed
 after validation. The script then reads `main` back and verifies the published
 SHA. Client PRs remain unmerged because each contains one local model, not the
-aggregate.
+aggregate. The new `fedavg_round.json` records whether PRs were discovered or
+selected explicitly, whether an allowlist was enforced, and each accepted PR's
+HF author, participant ID, pinned commit, example count, and aggregation
+coefficient.
 
 ## Large models
 

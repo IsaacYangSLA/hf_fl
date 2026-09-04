@@ -66,7 +66,7 @@ style: |
 
 | Inputs | Repository owner | Output |
 |:---|:---|:---|
-| Pinned PR A commit<br>Pinned PR B commit | Validate ancestry, round, schema, shapes and counts<br>**FedAvg + optional owner evaluation** | Commit `C_(r+1)` to `main`<br>Record manifest + optional tag |
+| Pinned PR A commit<br>Pinned PR B commit | Validate author allowlist, ancestry, round, schema, shapes and counts<br>**FedAvg + optional owner evaluation** | Commit `C_(r+1)` to `main`<br>Record manifest + optional tag |
 
 > The Hub stores and transports checkpoints. It is not a privacy boundary:
 > raw data stays local, but uploaded weights are visible to authorized readers.
@@ -83,7 +83,7 @@ style: |
 | 2 | Owner | Send repository ID and `C0` to A and B | Send the SHA—not “latest” |
 | 3 | A + B | Run `client_download.py`, then any local trainer | Write a separate compatible checkpoint |
 | 4 | A + B | Run `client_upload.py` to validate and open PRs | `parent_commit=C0`; private data stays local |
-| 5 | Owner | Resolve PR refs to commit SHAs and download | Both descend from current `main` |
+| 5 | Owner | Discover open PRs or use explicit refs; pin SHAs | Allowlisted authors; current base + round |
 | 6 | Owner | Dry-run validation, weighted FedAvg, optional evaluation | Reject stale, incompatible or non-finite updates |
 | 7 | Owner | Publish aggregate and optional round tag | Commit to `main` with parent `C0` |
 
