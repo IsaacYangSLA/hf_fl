@@ -13,8 +13,8 @@ import numpy as np
 import torch
 
 from data_utils import stable_seed
-from lenet_model import LeNet
-from mnist_data import get_dataset
+from examples.lenet_model import LeNet
+from examples.mnist_data import get_dataset
 from training import choose_device, evaluate, train
 
 
@@ -38,7 +38,7 @@ def initialize_model(output_dir: Path, options: dict[str, Any]) -> dict[str, Any
     torch.manual_seed(seed)
     LeNet(num_classes=10).save_pretrained(output_dir)
     shutil.copy2(
-        Path(__file__).resolve().parents[1] / "lenet_model.py",
+        Path(__file__).resolve().parents[1] / "examples" / "lenet_model.py",
         output_dir / "lenet_model.py",
     )
     (output_dir / "README.md").write_text(

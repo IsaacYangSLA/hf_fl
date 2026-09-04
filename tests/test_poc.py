@@ -15,14 +15,15 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR))
 
 from checkpoint_utils import aggregate_checkpoints, discover_checkpoint  # noqa: E402
-from cifar10_data import (  # noqa: E402
+from examples.cifar10_data import (  # noqa: E402
     load_npz_dataset as load_cifar10_npz_dataset,
     synthetic_dataset as synthetic_cifar10_dataset,
 )
 from client_steps import upload_client_update  # noqa: E402
-from mnist_data import load_npz_dataset, synthetic_dataset  # noqa: E402
+from examples.lenet_model import LeNet  # noqa: E402
+from examples.mnist_data import load_npz_dataset, synthetic_dataset  # noqa: E402
+from examples.vgg_model import VGG  # noqa: E402
 from hub_helpers import CLIENT_CONTEXT_FILE, SCHEMA_VERSION, write_json  # noqa: E402
-from lenet_model import LeNet  # noqa: E402
 from owner_fedavg import (  # noqa: E402
     discover_open_pull_requests,
     explicit_pull_requests,
@@ -31,7 +32,6 @@ from owner_fedavg import (  # noqa: E402
     validate_submission_manifest,
 )
 from plugin_loader import parse_plugin_args  # noqa: E402
-from vgg_model import VGG  # noqa: E402
 
 
 class PocTests(unittest.TestCase):

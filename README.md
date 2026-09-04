@@ -44,10 +44,11 @@ client PR. Client datasets and training code remain local.
 
 ## Design overview
 
-[`DESIGN_SLIDES.md`](DESIGN_SLIDES.md) is a concise four-slide overview of the
-system architecture, client and owner operation sequence, credential boundaries,
-and large-model transfer and aggregation strategy. A rendered version is also
-available as [`DESIGN_SLIDES.pdf`](DESIGN_SLIDES.pdf).
+[`docs/DESIGN_SLIDES.md`](docs/DESIGN_SLIDES.md) is a concise four-slide
+overview of the system architecture, client and owner operation sequence,
+credential boundaries, and large-model transfer and aggregation strategy. A
+rendered version is also available as
+[`docs/DESIGN_SLIDES.pdf`](docs/DESIGN_SLIDES.pdf).
 
 ## Install and authenticate
 
@@ -84,6 +85,10 @@ Or initialize using one of the trusted local example plugins.
 
 The compact LeNet POC uses grayscale `[N, 1, 28, 28]` inputs:
 
+Its model and data implementations are
+[`examples/lenet_model.py`](examples/lenet_model.py) and
+[`examples/mnist_data.py`](examples/mnist_data.py).
+
 ```bash
 .venv/bin/python init_repo.py \
   --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
@@ -97,6 +102,10 @@ prints the initial `main` commit SHA. Give that exact SHA to all clients.
 ### VGG with CIFAR-10 data
 
 Create a separate repository containing the VGG-11-style CIFAR-10 checkpoint:
+
+Its model and data implementations are
+[`examples/vgg_model.py`](examples/vgg_model.py) and
+[`examples/cifar10_data.py`](examples/cifar10_data.py).
 
 ```bash
 .venv/bin/python init_repo.py \
