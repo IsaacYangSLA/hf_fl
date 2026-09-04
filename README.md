@@ -1,8 +1,35 @@
-# Generic Hugging Face FedAvg demo
+# Generic Hugging Face federated learning demo
 
-This demo coordinates a synchronous federated-learning round through a Hugging
-Face model repository without hard-coding a model class, dataset, or training
-loop into the Hub workflow.
+> **Supported workflows:** this repository supports both synchronous **FedAvg**
+> and sequential **cyclic federated learning**. Swarm learning follows the same
+> immutable PR-to-PR checkpoint handoff; the swarm's peer-selection policy is
+> an external coordination concern.
+
+## Contents
+
+- [Design overview](#design-overview)
+- [Install and authenticate](#install-and-authenticate)
+- [Owner: initialize a repository](#owner-initialize-a-repository)
+- [Client option A: three independent steps](#client-option-a-three-independent-steps)
+  - [Download the exact base](#1-download-the-exact-base)
+  - [Train with any local code](#2-train-with-any-local-code)
+  - [Validate and upload a PR](#3-validate-and-upload-a-pr)
+- [Client option B: trusted training plugin](#client-option-b-trusted-training-plugin)
+- [Cyclic federated learning without FedAvg](#cyclic-federated-learning-without-fedavg)
+- [FedAvg: validate, average, and publish client PRs](#fedavg-validate-average-and-publish-client-prs)
+  - [Automatically discover the current round](#automatically-discover-the-current-round)
+  - [Explicitly select PRs](#explicitly-select-prs)
+- [Large models](#large-models)
+- [Security and protocol limitations](#security-and-protocol-limitations)
+- [Local validation](#local-validation)
+
+The Hub repository provides versioned model transport without hard-coding a
+model class, dataset, or training loop into the workflow. In FedAvg mode,
+multiple clients train from one common commit and the owner averages their
+updates. In cyclic mode, one client trains the preceding client's PR checkpoint
+and passes a new PR to the next client. A linear swarm uses the cyclic pattern;
+a branching swarm can use the FedAvg path when several peers train from the
+same checkpoint.
 
 The shared checkpoint contract is deliberately small:
 
@@ -262,7 +289,7 @@ webhook](https://huggingface.co/docs/hub/en/webhooks) can notify an external
 coordinator when a PR changes, but that coordinator must still enforce the
 order and select a single successor.
 
-## Owner: validate and average client PRs
+## FedAvg: validate, average, and publish client PRs
 
 ### Automatically discover the current round
 
