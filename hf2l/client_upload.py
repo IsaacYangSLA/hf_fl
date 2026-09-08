@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Step 3: validate a locally trained checkpoint and submit it as an HF PR."""
+"""Step 3: validate and publish a locally trained checkpoint submission."""
 
 from __future__ import annotations
 
@@ -7,8 +7,9 @@ import argparse
 import sys
 from pathlib import Path
 
+from hf2l.backends import add_store_arguments, make_store
 from hf2l.client_steps import upload_client_update
-from hf2l.hub_helpers import make_api, read_json
+from hf2l.hub_helpers import read_json
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,10 +27,7 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Optional non-secret JSON object describing local training and metrics",
     )
-    parser.add_argument(
-        "--token",
-        help="Token override; prefer HF_TOKEN or `hf auth login` to avoid shell history",
-    )
+    add_store_arguments(parser)
     return parser.parse_args()
 
 
@@ -40,18 +38,22 @@ def main() -> None:
         trained_dir = (args.trained_dir or work_dir / "trained_model").resolve()
         metadata = read_json(args.metadata_json) if args.metadata_json else {}
         result, submission = upload_client_update(
-            make_api(args.token),
+            make_store(args.backend, args.token, args.endpoint),
             work_dir,
             trained_dir,
             args.participant,
             args.num_examples,
             metadata,
         )
-        print(f"base_commit={submission['base_commit']}")
+        print(f"backend={submission['backend']}")
+        print(f"base_revision={submission['base_revision']}")
         print(f"examples={submission['num_examples']}")
-        print(f"pr_revision={result.pr_revision}")
-        print(f"pr_url={result.pr_url}")
-        print("Send pr_revision to the repository owner; do not merge the PR directly.")
+        print(f"submission_revision={result.revision}")
+        if result.resolved_revision:
+            print(f"resolved_revision={result.resolved_revision}")
+        if result.url:
+            print(f"submission_url={result.url}")
+        print("Send submission_revision to the repository owner.")
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

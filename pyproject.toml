@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=77", "wheel"]
+requires = ["setuptools>=80", "setuptools-scm[simple]>=9.2", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "hf2l"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Hugging Face Federated Learning proof of concept"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,7 +27,11 @@ keywords = ["federated-learning", "hugging-face", "fedavg", "pytorch"]
 [project.optional-dependencies]
 build = [
   "build>=1.2.2",
+  "setuptools-scm>=9.2",
   "twine>=5.1.0",
+]
+jfrog = [
+  "huggingface_hub>=0.32.0,<=1.18.0",
 ]
 
 [project.urls]
@@ -44,4 +48,4 @@ hf2l-create-allowlist = "hf2l.create_allowlist:main"
 hf2l-owner-fedavg = "hf2l.owner_fedavg:main"
 
 [tool.setuptools]
-packages = ["hf2l", "hf2l.plugins", "examples"]
+packages = ["hf2l", "hf2l.backends", "hf2l.plugins", "examples"]

@@ -3,7 +3,7 @@ marp: true
 theme: default
 paginate: true
 size: 16:9
-title: Hugging Face Federated Averaging Design
+title: HF²L Multi-Backend Federated Learning Design
 style: |
   section {
     padding: 34px 46px;
@@ -53,25 +53,26 @@ style: |
 
 # 1. System architecture
 
-## Training fan-out — every client starts from the same immutable commit
+## Training fan-out — every client starts from the same immutable revision
 
-| Participant A | Hugging Face model repository | Participant B |
+| Participant A | Model repository | Participant B |
 |:---|:---:|---:|
 | Private dataset A | **`main @ C_r`** | Private dataset B |
-| ↓ exact-SHA download | model + config + round manifest | exact-SHA download ↓ |
+| ↓ exact-revision download | model + config + round manifest | exact-revision download ↓ |
 | download → own trainer → upload<br>or trusted local plugin | versioned coordination plane | download → own trainer → upload<br>or trusted local plugin |
-| local checkpoint → | **PR A** &nbsp;&nbsp; **PR B** | ← local checkpoint |
+| local checkpoint → | **submission A** &nbsp;&nbsp; **submission B** | ← local checkpoint |
 
 ## Aggregation fan-in — only the owner publishes the global model
 
 | Inputs | Repository owner | Output |
 |:---|:---|:---|
-| Pinned PR A commit<br>Pinned PR B commit | Validate author allowlist, ancestry, round, schema, shapes and counts<br>**FedAvg + optional owner evaluation** | Commit `C_(r+1)` to `main`<br>Record manifest + optional tag |
+| Pinned A revision<br>Pinned B revision | Validate uploader allowlist, base, round, hashes and tensor schema<br>**FedAvg + optional owner evaluation** | Publish `C_(r+1)` to `main`<br>Record manifest + optional tag |
 
-> The Hub stores and transports checkpoints. It is not a privacy boundary:
+> Hugging Face Hub uses PR refs; JFrog HuggingFaceML uses unique named
+> revisions discovered with AQL. Neither backend is a privacy boundary:
 > raw data stays local, but uploaded weights are visible to authorized readers.
 
-<!-- _footer: "Trust boundaries: each participant, the repository owner, and the Hugging Face Hub." -->
+<!-- _footer: "Trust boundaries: each participant, the repository owner, and the configured model store." -->
 
 ---
 
@@ -79,22 +80,22 @@ style: |
 
 | Step | Actor | Operation | Required guard |
 |---:|:---|:---|:---|
-| 1 | Owner | Run `python -m hf2l.init_repo`; publish round 0 | Record returned commit `C0` |
-| 2 | Owner | Send repository ID and `C0` to A and B | Send the SHA—not “latest” |
+| 1 | Owner | Run `python -m hf2l.init_repo`; publish round 0 | Record returned revision `C0` |
+| 2 | Owner | Send repository ID and `C0` to A and B | Send immutable ID—not “latest” |
 | 3 | A + B | Run `python -m hf2l.client_download`, then any local trainer | Write a separate compatible checkpoint |
-| 4 | A + B | Run `python -m hf2l.client_upload` to validate and open PRs | `parent_commit=C0`; private data stays local |
-| 5 | Owner | Discover open PRs or use explicit refs; pin SHAs | Allowlisted authors; current base + round |
+| 4 | A + B | Run `python -m hf2l.client_upload` | Hub PR or unique JFrog revision; data stays local |
+| 5 | Owner | Discover or explicitly select submissions | Allowlisted uploaders; current base + round |
 | 6 | Owner | Dry-run validation, weighted FedAvg, optional evaluation | Reject stale, incompatible or non-finite updates |
-| 7 | Owner | Publish aggregate and optional round tag | Commit to `main` with parent `C0` |
+| 7 | Owner | Publish aggregate and optional round tag/revision | Hub CAS or single JFrog coordinator |
 
 **Round transition**
 
-`main @ C0` → parallel client PRs → owner aggregation → `main @ C1` → repeat
+`main @ C0` → parallel client submissions → owner aggregation → `main @ C1` → repeat
 
-> If `main` changed after validation, Hugging Face rejects publication. The
-> owner restarts from the new base instead of overwriting concurrent work.
+> Hub provides atomic `parent_commit` protection. JFrog is rechecked before
+> publication and requires one writer or an external coordinator lock.
 
-<!-- _footer: "Client PRs are closed after aggregation; neither local checkpoint is merged directly." -->
+<!-- _footer: "Client submissions remain separate; no local checkpoint is published directly to main." -->
 
 ---
 
@@ -102,23 +103,26 @@ style: |
 
 | Actor | Capability | Credential policy |
 |:---|:---|:---|
-| Owner: initialization | Create repository and first commit | Narrowly scoped owner write token |
-| Participant | Read `C_r`; authenticate and upload a PR | Each participant's own token; never the owner's token |
-| Owner: aggregation | Read PR refs; update only `main` | Separate repository-scoped write token |
+| Owner: initialization | Create/initialize repository and first revision | Narrowly scoped owner write token |
+| Participant | Read `C_r`; upload an isolated submission | Each participant's own token; never the owner's token |
+| Owner: aggregation | Read submissions; update only `main` | Separate repository-scoped write token |
 | Automated publisher | Publish one repository from CI | Prefer a short-lived trusted-publisher token |
 
 **Resolution used by the scripts**
 
-`--token` → `HF_TOKEN` → active `hf auth login` cache
+Hub: `--token` → `HF_TOKEN` → active `hf auth login` cache<br>
+JFrog: `--token` → `JFROG_ACCESS_TOKEN` → `HF_TOKEN`
 
 - Interactive workstation: use `hf auth login`, then verify with
   `hf auth whoami`.
-- Automation: inject `HF_TOKEN` from a secret manager; mask logs and rotate it.
+- JFrog: set `HF_ENDPOINT=.../api/huggingfaceml/REPO_KEY`; create the local
+  repository as an administrator and disable participant overwrite permission.
+- Automation: inject tokens from a secret manager; mask logs and rotate them.
 - Avoid `--token` for routine use because arguments may appear in history and
   process listings. Never commit tokens, `.env` files, or credential caches.
-- Public repo: enable PRs. Private repo: grant explicit organization access.
+- Hub: enable PRs. JFrog: scope read/deploy rights by repository and identity.
 
-<!-- _footer: "Sources: [HF authentication](https://huggingface.co/docs/huggingface_hub/en/quick-start) · [Access tokens](https://huggingface.co/docs/hub/security-tokens) · [HF pull requests](https://huggingface.co/docs/hub/repositories-pull-requests-discussions)" -->
+<!-- _footer: "Backends: Hugging Face Hub and JFrog Artifactory HuggingFaceML." -->
 
 ---
 
@@ -130,9 +134,9 @@ style: |
 | Stage | Scalable design |
 |:---|:---|
 | **Package** | Deterministic sharded SafeTensors + index. All clients use the same architecture, names, dtypes and shard layout. |
-| **Transfer** | Use `huggingface_hub >= 0.32`, exact revisions and a fast local Xet cache. Hub APIs handle large-file transfer. |
+| **Transfer** | Use exact revisions and a local cache. Hub supports Xet; current JFrog HuggingFaceML versions can enable Xet for files over 50 GB. |
 | **Aggregate** | Process one shard/tensor from every accepted client, accumulate in FP32/FP64 on CPU, write the output shard, then release input memory. |
-| **Finalize** | Validate config, index, tensor schemas and non-finite values. Publish the model plus a round manifest with `parent_commit=C_r`. |
+| **Finalize** | Validate hashes, config, index, tensor schemas and non-finite values. Publish the model plus a round manifest naming `base_revision=C_r`. |
 
 **Resource profile:** memory is bounded by one output shard plus active tensors
 and the FP32/FP64 accumulator; disk holds every selected snapshot and one output.
@@ -142,4 +146,4 @@ adapts transfer concurrency. Dense training may alter bytes throughout every
 weight file, so deduplication can be limited. Deltas or adapters reduce traffic
 only when the protocol defines how they are reconstructed and aggregated.
 
-<!-- _footer: "HF docs: [Xet](https://huggingface.co/docs/hub/xet/deduplication) · [uploads](https://huggingface.co/docs/huggingface_hub/guides/upload) · [checkpoint sharding](https://huggingface.co/docs/transformers/models)" -->
+<!-- _footer: "Use backend-supported huggingface_hub and hf_xet versions; aggregate one deterministic SafeTensors shard at a time." -->

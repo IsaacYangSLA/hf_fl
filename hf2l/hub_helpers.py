@@ -1,31 +1,23 @@
 #!/usr/bin/env python3
-"""Small helpers shared by the Hugging Face Hub scripts."""
+"""Small protocol and file helpers shared by HF²L commands."""
 
 from __future__ import annotations
 
 import json
-import os
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from huggingface_hub import HfApi
-
-
 SUBMISSION_FILE = "fedavg_submission.json"
 ROUND_FILE = "fedavg_round.json"
 CLIENT_CONTEXT_FILE = "fedavg_client_context.json"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSIONS = frozenset((1, 2))
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-def make_api(explicit_token: str | None) -> HfApi:
-    """Use --token, then HF_TOKEN, then the token cached by `hf auth login`."""
-    token = explicit_token or os.environ.get("HF_TOKEN")
-    return HfApi(token=token)
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -53,10 +45,53 @@ def require_new_directory(path: Path) -> None:
     path.mkdir(parents=True)
 
 
-def normalize_pr(value: str) -> str:
-    value = value.strip()
-    if value.isdigit():
-        return f"refs/pr/{value}"
-    if value.startswith("refs/pr/") and value.removeprefix("refs/pr/").isdigit():
-        return value
-    raise ValueError(f"PR must be a number or refs/pr/N, received {value!r}")
+def require_supported_schema(value: dict[str, Any], label: str) -> int:
+    version = value.get("schema_version")
+    if version not in SUPPORTED_SCHEMA_VERSIONS:
+        raise ValueError(f"The {label} uses an unsupported schema")
+    return int(version)
+
+
+def base_revision_from(value: dict[str, Any]) -> str:
+    """Read a v2 base revision or its schema-v1 base_commit alias."""
+
+    return str(value.get("base_revision") or value.get("base_commit") or "").strip()
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def artifact_hashes(root: Path, paths: tuple[str, ...] | list[str]) -> dict[str, str]:
+    return {path: file_sha256(root / path) for path in paths}
+
+
+def validate_artifact_hashes(
+    root: Path, paths: tuple[str, ...] | list[str], expected: object, label: str
+) -> None:
+    if not isinstance(expected, dict) or not expected:
+        raise ValueError(f"{label} is missing checkpoint_files_sha256")
+    normalized = {
+        str(path): str(digest)
+        for path, digest in expected.items()
+        if isinstance(path, str) and isinstance(digest, str)
+    }
+    actual = artifact_hashes(root, paths)
+    if normalized != actual:
+        raise ValueError(f"Checkpoint checksum mismatch in {label}")
+
+
+def regular_file_paths(root: Path) -> list[str]:
+    """Return safe relative paths for every regular file under root."""
+
+    paths: list[str] = []
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise ValueError(f"Refusing to upload symlink: {path}")
+        if path.is_file():
+            paths.append(path.relative_to(root).as_posix())
+    return sorted(paths)

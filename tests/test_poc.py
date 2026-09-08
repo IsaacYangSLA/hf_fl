@@ -15,6 +15,9 @@ PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR))
 
 from hf2l.checkpoint_utils import aggregate_checkpoints, discover_checkpoint  # noqa: E402
+from hf2l.backends.base import PublishResult  # noqa: E402
+from hf2l.backends.huggingface import HuggingFaceStore  # noqa: E402
+from hf2l.backends.jfrog import JFrogStore  # noqa: E402
 from examples.cifar10_data import (  # noqa: E402
     load_npz_dataset as load_cifar10_npz_dataset,
     synthetic_dataset as synthetic_cifar10_dataset,
@@ -24,10 +27,15 @@ from examples.lenet_model import LeNet  # noqa: E402
 from examples.mnist_data import load_npz_dataset, synthetic_dataset  # noqa: E402
 from examples.vgg_model import VGG  # noqa: E402
 from hf2l.create_allowlist import create_allowlist  # noqa: E402
-from hf2l.hub_helpers import CLIENT_CONTEXT_FILE, SCHEMA_VERSION, write_json  # noqa: E402
+from hf2l.hub_helpers import (  # noqa: E402
+    CLIENT_CONTEXT_FILE,
+    SCHEMA_VERSION,
+    artifact_hashes,
+    base_revision_from,
+    validate_artifact_hashes,
+    write_json,
+)
 from hf2l.owner_fedavg import (  # noqa: E402
-    discover_open_pull_requests,
-    explicit_pull_requests,
     fedavg_states,
     load_allowlist,
     validate_submission_manifest,
@@ -193,14 +201,19 @@ class PocTests(unittest.TestCase):
             torch.testing.assert_close(second_shard["b"], torch.full((3,), 5.0))
 
     def test_external_training_output_can_be_submitted(self) -> None:
-        class FakeApi:
-            def __init__(self) -> None:
-                self.operations = []
+        class FakeStore:
+            name = "huggingface"
 
-            def create_commit(self, **kwargs):
-                self.operations = kwargs["operations"]
-                self.parent_commit = kwargs["parent_commit"]
-                return SimpleNamespace(pr_revision="refs/pr/9", pr_url="https://example/pr/9")
+            def __init__(self) -> None:
+                self.paths = []
+
+            def new_submission_revision(self, participant, source_round):
+                return None
+
+            def publish_submission(self, repo_id, folder, paths, **kwargs):
+                self.paths = paths
+                self.base_revision = kwargs["base_revision"]
+                return PublishResult("refs/pr/9", "https://example/pr/9")
 
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary) / "work"
@@ -218,22 +231,27 @@ class PocTests(unittest.TestCase):
                 work / CLIENT_CONTEXT_FILE,
                 {
                     "schema_version": SCHEMA_VERSION,
+                    "backend": "huggingface",
                     "repo_id": "owner/model",
-                    "base_commit": "abc123",
+                    "base_revision": "abc123",
                     "source_round": 4,
                     "base_model_dir": "base_model",
                 },
             )
-            api = FakeApi()
+            store = FakeStore()
             result, manifest = upload_client_update(
-                api, work, trained, "alice", 12, {"trainer": "private"}
+                store, work, trained, "alice", 12, {"trainer": "private"}
             )
-            self.assertEqual(result.pr_revision, "refs/pr/9")
-            self.assertEqual(api.parent_commit, "abc123")
+            self.assertEqual(result.revision, "refs/pr/9")
+            self.assertEqual(store.base_revision, "abc123")
             self.assertEqual(manifest["training"]["trainer"], "private")
             self.assertEqual(
-                {operation.path_in_repo for operation in api.operations},
+                set(store.paths),
                 {"config.json", "model.safetensors", "fedavg_submission.json"},
+            )
+            self.assertEqual(
+                manifest["checkpoint_files_sha256"],
+                artifact_hashes(trained, ["config.json", "model.safetensors"]),
             )
 
     def test_plugin_arguments_decode_json_values(self) -> None:
@@ -270,7 +288,7 @@ class PocTests(unittest.TestCase):
     def test_create_allowlist_rejects_ambiguous_mappings(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            with self.assertRaisesRegex(ValueError, "Duplicate HF username"):
+            with self.assertRaisesRegex(ValueError, "Duplicate repository identity"):
                 create_allowlist(
                     ["Alice-HF=alice", "alice-hf=alice-duplicate"],
                     root / "duplicate-author.json",
@@ -290,8 +308,9 @@ class PocTests(unittest.TestCase):
 
             manifest = {
                 "schema_version": SCHEMA_VERSION,
+                "backend": "huggingface",
                 "repo_id": "owner/model",
-                "base_commit": "abc123",
+                "base_revision": "abc123",
                 "source_round": 4,
                 "participant": "alice",
                 "num_examples": 12,
@@ -299,7 +318,7 @@ class PocTests(unittest.TestCase):
             participant, count = validate_submission_manifest(
                 manifest,
                 repo_id="owner/model",
-                base_commit="abc123",
+                base_revision="abc123",
                 current_round=4,
                 revision="refs/pr/1",
                 expected_participant=allowlist["alice-hf"],
@@ -309,7 +328,7 @@ class PocTests(unittest.TestCase):
                 validate_submission_manifest(
                     {**manifest, "participant": "mallory"},
                     repo_id="owner/model",
-                    base_commit="abc123",
+                    base_revision="abc123",
                     current_round=4,
                     revision="refs/pr/1",
                     expected_participant=allowlist["alice-hf"],
@@ -329,15 +348,17 @@ class PocTests(unittest.TestCase):
                     ]
                 )
 
-        api = FakeApi()
-        candidates, skipped = discover_open_pull_requests(
-            api, "owner/model", {"alice-hf": "alice", "bob-hf": "bob"}
+        store = object.__new__(HuggingFaceStore)
+        store.api = FakeApi()
+        candidates, skipped = store.discover_submissions("owner/model")
+        self.assertEqual(
+            [candidate.identifier for candidate in candidates],
+            ["refs/pr/3", "refs/pr/5", "refs/pr/8"],
         )
-        self.assertEqual([candidate.number for candidate in candidates], [3, 5])
         self.assertEqual(candidates[1].author, "Bob-HF")
-        self.assertEqual(len(skipped), 1)
-        self.assertEqual(api.arguments["discussion_type"], "pull_request")
-        self.assertEqual(api.arguments["discussion_status"], "open")
+        self.assertEqual(skipped, [])
+        self.assertEqual(store.api.arguments["discussion_type"], "pull_request")
+        self.assertEqual(store.api.arguments["discussion_status"], "open")
 
     def test_explicit_pr_selection_also_enforces_allowlist(self) -> None:
         class FakeApi:
@@ -347,15 +368,111 @@ class PocTests(unittest.TestCase):
                     author=authors[kwargs["discussion_num"]], is_pull_request=True
                 )
 
-        api = FakeApi()
-        candidates = explicit_pull_requests(
-            api, "owner/model", ["3"], {"alice-hf": "alice"}
-        )
+        store = object.__new__(HuggingFaceStore)
+        store.api = FakeApi()
+        candidates = store.explicit_submissions("owner/model", ["3"])
         self.assertEqual(candidates[0].revision, "refs/pr/3")
-        with self.assertRaisesRegex(ValueError, "not in the allowlist"):
-            explicit_pull_requests(
-                api, "owner/model", ["5"], {"alice-hf": "alice"}
-            )
+        self.assertEqual(candidates[0].author, "alice-hf")
+
+    def test_jfrog_submission_revision_is_valid_and_unique(self) -> None:
+        store = object.__new__(JFrogStore)
+        first = store.new_submission_revision("Alice Example", 3)
+        second = store.new_submission_revision("Alice Example", 3)
+        self.assertRegex(first, r"^r0003-Alice-Example-[a-f0-9]{12}$")
+        self.assertNotEqual(first, second)
+
+    def test_jfrog_upload_repairs_placeholder_commit_url(self) -> None:
+        class FakeApi:
+            def upload_folder(self, **kwargs):
+                from huggingface_hub import hf_api
+
+                self.result = hf_api.CommitInfo(
+                    commit_url="commitUrl",
+                    commit_message="upload",
+                    commit_description="",
+                    oid="0123456789abcdef",
+                    _endpoint="https://company.jfrog.io/api/huggingfaceml/hf-local",
+                )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / "config.json").write_text("{}", encoding="utf-8")
+            store = object.__new__(JFrogStore)
+            store.endpoint = "https://company.jfrog.io/api/huggingfaceml/hf-local"
+            store.api = FakeApi()
+            store._upload_folder("owner/model", folder, "main")
+            self.assertEqual(store.api.result.repo_url.repo_id, "owner/model")
+            self.assertEqual(store.api.result.oid, "0123456789abcdef")
+
+    def test_jfrog_rejects_invalid_explicit_revision(self) -> None:
+        store = object.__new__(JFrogStore)
+        store.discover_submissions = lambda repo_id: ([], [])  # type: ignore[method-assign]
+        with self.assertRaisesRegex(ValueError, "only letters"):
+            store.explicit_submissions("owner/model", ["refs/pr/1"])
+
+    def test_jfrog_discovery_uses_manifest_revision_and_uploader(self) -> None:
+        store = object.__new__(JFrogStore)
+        store._manifest_items = lambda repo_id: (  # type: ignore[method-assign]
+            [
+                {
+                    "item": {"created_by": "alice-jfrog", "path": "some/path"},
+                    "manifest": {
+                        "repo_id": repo_id,
+                        "submission_revision": "r0003-alice-abc123",
+                    },
+                }
+            ],
+            [],
+        )
+        candidates, skipped = store.discover_submissions("owner/model")
+        self.assertEqual(skipped, [])
+        self.assertEqual(candidates[0].revision, "r0003-alice-abc123")
+        self.assertEqual(candidates[0].author, "alice-jfrog")
+
+    def test_jfrog_endpoint_and_aql_manifest_discovery(self) -> None:
+        store = JFrogStore(
+            "secret-token",
+            "https://company.jfrog.io/artifactory/api/huggingfaceml/hf-local",
+        )
+        requests = []
+
+        def fake_request(url, *, data=None, content_type=None):
+            requests.append((url, data, content_type))
+            if url.endswith("/api/search/aql"):
+                return (
+                    b'{"results":[{"repo":"hf-local",'
+                    b'"path":"models/org/model/rev",'
+                    b'"name":"fedavg_submission.json","created_by":"alice"}]}'
+                )
+            return b'{"repo_id":"org/model","submission_revision":"r0001-alice-abc"}'
+
+        store._request = fake_request  # type: ignore[method-assign]
+        records, skipped = store._manifest_items("org/model")
+        self.assertEqual(skipped, [])
+        self.assertEqual(records[0]["item"]["created_by"], "alice")
+        self.assertIn(b'"repo":{"$eq":"hf-local"}', requests[0][1])
+        self.assertEqual(requests[0][2], "text/plain")
+        self.assertEqual(
+            requests[1][0],
+            "https://company.jfrog.io/artifactory/hf-local/"
+            "models/org/model/rev/fedavg_submission.json",
+        )
+
+    def test_schema_v1_base_commit_remains_readable(self) -> None:
+        self.assertEqual(base_revision_from({"base_commit": "legacy-sha"}), "legacy-sha")
+
+    def test_checkpoint_hash_validation_detects_tampering(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "config.json"
+            path.write_text("original", encoding="utf-8")
+            expected = artifact_hashes(root, ["config.json"])
+            validate_artifact_hashes(root, ["config.json"], expected, "submission")
+            path.write_text("tampered", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+                validate_artifact_hashes(
+                    root, ["config.json"], expected, "submission"
+                )
 
 
 if __name__ == "__main__":

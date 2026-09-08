@@ -4,44 +4,36 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
-from huggingface_hub import CommitOperationAdd
-
+from hf2l.backends.base import ModelStore, PublishResult
 from hf2l.checkpoint_utils import discover_checkpoint, validate_compatible
 from hf2l.hub_helpers import (
     CLIENT_CONTEXT_FILE,
     ROUND_FILE,
     SCHEMA_VERSION,
     SUBMISSION_FILE,
+    artifact_hashes,
+    base_revision_from,
     read_json,
     require_new_directory,
+    require_supported_schema,
     utc_now,
     write_json,
 )
 
 
 def download_client_round(
-    api: Any, repo_id: str, base_revision: str, work_dir: Path
-) -> dict[str, Any]:
+    store: ModelStore, repo_id: str, base_revision: str, work_dir: Path
+) -> dict[str, object]:
     work_dir = work_dir.resolve()
     require_new_directory(work_dir)
-    info = api.model_info(repo_id, revision=base_revision)
-    base_commit = info.sha
-    if not base_commit:
-        raise RuntimeError("Hugging Face did not return the base commit SHA")
+    resolved_base = store.resolve_revision(repo_id, base_revision)
 
     base_dir = work_dir / "base_model"
-    api.snapshot_download(
-        repo_id=repo_id,
-        repo_type="model",
-        revision=base_commit,
-        local_dir=base_dir,
-    )
+    store.download_snapshot(repo_id, resolved_base, base_dir)
     discover_checkpoint(base_dir)
     round_record = read_json(base_dir / ROUND_FILE)
-    if round_record.get("schema_version") != SCHEMA_VERSION:
-        raise ValueError("The base model uses an unsupported FedAvg schema")
+    require_supported_schema(round_record, "base model")
     try:
         source_round = int(round_record["round"])
     except (KeyError, TypeError, ValueError) as exc:
@@ -49,9 +41,10 @@ def download_client_round(
 
     context = {
         "schema_version": SCHEMA_VERSION,
+        "backend": store.name,
         "repo_id": repo_id,
         "requested_revision": base_revision,
-        "base_commit": base_commit,
+        "base_revision": resolved_base,
         "source_round": source_round,
         "base_model_dir": "base_model",
         "downloaded_at": utc_now(),
@@ -61,22 +54,26 @@ def download_client_round(
 
 
 def upload_client_update(
-    api: Any,
+    store: ModelStore,
     work_dir: Path,
     trained_dir: Path,
     participant: str,
     num_examples: int,
-    training_metadata: dict[str, Any] | None = None,
-) -> tuple[Any, dict[str, Any]]:
+    training_metadata: dict[str, object] | None = None,
+) -> tuple[PublishResult, dict[str, object]]:
     work_dir = work_dir.resolve()
     trained_dir = trained_dir.resolve()
     context = read_json(work_dir / CLIENT_CONTEXT_FILE)
-    if context.get("schema_version") != SCHEMA_VERSION:
-        raise ValueError("The client context uses an unsupported schema")
+    require_supported_schema(context, "client context")
     repo_id = str(context.get("repo_id", "")).strip()
-    base_commit = str(context.get("base_commit", "")).strip()
-    if not repo_id or not base_commit:
-        raise ValueError("The client context is missing repo_id or base_commit")
+    base_revision = base_revision_from(context)
+    if not repo_id or not base_revision:
+        raise ValueError("The client context is missing repo_id or base_revision")
+    context_backend = str(context.get("backend", "huggingface"))
+    if context_backend != store.name:
+        raise ValueError(
+            f"Client context backend is {context_backend!r}, not {store.name!r}"
+        )
     participant = participant.strip()
     if not participant:
         raise ValueError("Participant must not be empty")
@@ -90,32 +87,31 @@ def upload_client_update(
     trained = discover_checkpoint(trained_dir)
     validate_compatible(reference, trained)
 
+    source_round = int(context["source_round"])
+    submission_revision = store.new_submission_revision(participant, source_round)
+
     submission = {
         "schema_version": SCHEMA_VERSION,
+        "backend": store.name,
         "repo_id": repo_id,
         "participant": participant,
-        "base_commit": base_commit,
-        "source_round": int(context["source_round"]),
+        "base_revision": base_revision,
+        "source_round": source_round,
+        "submission_revision": submission_revision,
         "num_examples": num_examples,
         "training": training_metadata or {},
+        "checkpoint_files_sha256": artifact_hashes(trained_dir, trained.artifact_paths),
         "submitted_at": utc_now(),
     }
     write_json(trained_dir / SUBMISSION_FILE, submission)
     upload_paths = [*trained.artifact_paths, SUBMISSION_FILE]
-    operations = [
-        CommitOperationAdd(path_in_repo=path, path_or_fileobj=trained_dir / path)
-        for path in upload_paths
-    ]
-    result = api.create_commit(
-        repo_id=repo_id,
-        repo_type="model",
-        operations=operations,
-        commit_message=(
-            f"FedAvg client update from {participant} for round {submission['source_round']}"
-        ),
-        parent_commit=base_commit,
-        create_pr=True,
+    result = store.publish_submission(
+        repo_id,
+        trained_dir,
+        upload_paths,
+        participant=participant,
+        source_round=source_round,
+        base_revision=base_revision,
+        submission_revision=submission_revision,
     )
-    if not result.pr_revision:
-        raise RuntimeError("The Hub did not return a PR revision")
     return result, submission

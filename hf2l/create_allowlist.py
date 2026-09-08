@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a validated HF username-to-participant allowlist."""
+"""Create a validated repository-identity-to-participant allowlist."""
 
 from __future__ import annotations
 
@@ -12,9 +12,11 @@ from hf2l.hub_helpers import write_json
 
 
 def parse_participant(value: str) -> tuple[str, str]:
-    """Parse one HF_USERNAME=PARTICIPANT_ID argument."""
+    """Parse one REPOSITORY_IDENTITY=PARTICIPANT_ID argument."""
     if "=" not in value:
-        raise ValueError(f"Participant mapping must be HF_USERNAME=PARTICIPANT_ID: {value!r}")
+        raise ValueError(
+            f"Participant mapping must be REPOSITORY_IDENTITY=PARTICIPANT_ID: {value!r}"
+        )
     author, participant = value.split("=", 1)
     return author, participant
 
@@ -36,8 +38,8 @@ def parse_args() -> argparse.Namespace:
         "--participant",
         action="append",
         required=True,
-        metavar="HF_USERNAME=PARTICIPANT_ID",
-        help="Approved HF username and required manifest participant ID; repeat as needed",
+        metavar="REPOSITORY_IDENTITY=PARTICIPANT_ID",
+        help="Approved repository identity and required participant ID; repeat as needed",
     )
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()

@@ -11,14 +11,14 @@ from hf2l.hub_helpers import read_json
 def normalize_allowlist(
     entries: Iterable[tuple[object, object]], *, label: str = "allowlist"
 ) -> dict[str, str]:
-    """Validate a one-to-one mapping and normalize HF usernames for matching."""
+    """Validate a one-to-one mapping and normalize repository identities."""
     allowlist: dict[str, str] = {}
     participant_to_author: dict[str, str] = {}
     for raw_author, raw_participant in entries:
         author = raw_author.strip() if isinstance(raw_author, str) else ""
         if not author or not isinstance(raw_participant, str):
             raise ValueError(
-                "Allowlist entries must map a non-empty HF username to a string"
+                "Allowlist entries must map a non-empty repository identity to a string"
             )
         participant = raw_participant.strip()
         if not participant:
@@ -27,7 +27,7 @@ def normalize_allowlist(
             )
         normalized_author = author.casefold()
         if normalized_author in allowlist:
-            raise ValueError(f"Duplicate HF username in allowlist: {author}")
+            raise ValueError(f"Duplicate repository identity in allowlist: {author}")
         if participant in participant_to_author:
             raise ValueError(
                 f"Participant {participant!r} is mapped to both "

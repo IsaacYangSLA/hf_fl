@@ -56,7 +56,8 @@ def initialize_model(output_dir: Path, options: dict[str, Any]) -> dict[str, Any
 
             This is the example LeNet checkpoint for `{repo_id}`. It classifies
             `[N, 1, 28, 28]` grayscale images into ten classes. The repository is
-            updated by validated FedAvg commits; client PRs are not merged directly.
+            updated by validated FedAvg revisions; client submissions are not
+            published to `main` directly.
 
             This educational workflow does not provide secure aggregation,
             differential privacy, authentication, or poisoning defenses.
