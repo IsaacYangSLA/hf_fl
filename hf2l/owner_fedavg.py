@@ -161,6 +161,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
+        "--check-only",
+        action="store_true",
+        help="Check submission metadata and write readiness.json without downloading checkpoints",
+    )
+    parser.add_argument(
+        "--expected-base-revision",
+        help="Require main to still match this immutable revision before aggregation",
+    )
+    parser.add_argument(
         "--weighting",
         choices=("examples", "uniform"),
         default="examples",
@@ -210,6 +219,8 @@ def main() -> None:
     try:
         if args.tag and not args.publish:
             raise ValueError("--tag requires --publish")
+        if args.check_only and (args.publish or args.plugin or args.plugin_arg):
+            raise ValueError("--check-only cannot publish or evaluate a model")
         allowlist = load_allowlist(args.allowlist) if args.allowlist else None
         automatic = args.discover_submissions or args.discover_prs
         if args.backend == "jfrog" and (args.pr or args.discover_prs):
@@ -227,11 +238,17 @@ def main() -> None:
         require_new_directory(output_dir)
         store = make_store(args.backend, args.token, args.endpoint)
         base_revision = store.resolve_revision(args.repo_id, "main")
+        if args.expected_base_revision and base_revision != args.expected_base_revision:
+            raise ValueError(
+                f"Main changed since readiness check: expected {args.expected_base_revision}; "
+                f"found {base_revision}"
+            )
 
         base_dir = output_dir / "downloads" / "base"
-        store.download_snapshot(args.repo_id, base_revision, base_dir)
+        store.download_snapshot(
+            args.repo_id, base_revision, base_dir, allow_patterns=ROUND_FILE
+        )
         current_round = _read_round(base_dir, "main")
-        reference = discover_checkpoint(base_dir)
         base_round_record = read_json(base_dir / ROUND_FILE)
         if int(base_round_record.get("schema_version", 1)) >= 2:
             if base_round_record.get("backend") != store.name:
@@ -239,12 +256,6 @@ def main() -> None:
                     f"Main declares backend {base_round_record.get('backend')!r}; "
                     f"expected {store.name!r}"
                 )
-            validate_artifact_hashes(
-                base_dir,
-                reference.artifact_paths,
-                base_round_record.get("checkpoint_files_sha256"),
-                "main",
-            )
 
         if automatic:
             candidates, skipped = store.discover_submissions(args.repo_id)
@@ -322,6 +333,16 @@ def main() -> None:
                 (candidate, resolved_revision, manifest, participant, num_examples)
             )
 
+        if args.check_only:
+            readiness = {
+                "ready": len(prepared) >= 2,
+                "base_revision": base_revision,
+                "eligible_count": len(prepared),
+            }
+            write_json(output_dir / "readiness.json", readiness)
+            print(json.dumps(readiness, sort_keys=True))
+            return
+
         if len(prepared) < 2:
             mode = "eligible" if automatic else "selected"
             raise ValueError(
@@ -331,6 +352,16 @@ def main() -> None:
             print(
                 f"eligible_submission={candidate.identifier} revision={resolved_revision} "
                 f"author={candidate.author} participant={participant}"
+            )
+
+        store.download_snapshot(args.repo_id, base_revision, base_dir)
+        reference = discover_checkpoint(base_dir)
+        if int(base_round_record.get("schema_version", 1)) >= 2:
+            validate_artifact_hashes(
+                base_dir,
+                reference.artifact_paths,
+                base_round_record.get("checkpoint_files_sha256"),
+                "main",
             )
 
         submissions: list[dict[str, Any]] = []

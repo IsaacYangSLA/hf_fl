@@ -440,6 +440,9 @@ same kind of external coordinator.
 
 ## FedAvg: validate, average, and publish submissions
 
+To run FedAvg automatically when two eligible HF PRs are ready, see the
+[webhook-triggered GitHub workflow setup](docs/FEDAVG_WORKFLOW.md).
+
 ### Automatically discover the current round
 
 With `--discover-submissions`, the owner does not need to supply individual
