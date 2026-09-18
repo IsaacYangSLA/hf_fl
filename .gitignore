@@ -14,6 +14,7 @@ dist/
 .env.*
 !.env.example
 .cache/
+*.exchange-upload.json
 
 # Datasets and model checkpoints do not belong in the GitHub source repo
 *.npz

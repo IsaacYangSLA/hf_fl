@@ -59,6 +59,10 @@ credential boundaries, and large-model transfer and aggregation strategy. A
 rendered version is also available as
 [`docs/DESIGN_SLIDES.pdf`](docs/DESIGN_SLIDES.pdf).
 
+The [exchange service](docs/EXCHANGE_SERVICE.md) adds a third backend with
+authenticated metadata exchange, PostgreSQL, and authorized S3 blob transfers.
+See its [design](docs/EXCHANGE_SERVICE_DESIGN.md) for the resource model.
+
 ## Install and authenticate
 
 Create a local environment:

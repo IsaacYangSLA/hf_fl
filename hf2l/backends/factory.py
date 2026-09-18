@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
 
 from hf2l.backends.base import ModelStore
 from hf2l.backends.huggingface import HuggingFaceStore
@@ -13,7 +14,7 @@ from hf2l.backends.jfrog import JFrogStore
 def add_store_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--backend",
-        choices=("huggingface", "jfrog"),
+        choices=("huggingface", "jfrog", "exchange"),
         default="huggingface",
         help="Model repository backend (default: huggingface)",
     )
@@ -36,6 +37,16 @@ def make_store(
     explicit_token: str | None = None,
     endpoint: str | None = None,
 ) -> ModelStore:
+    if backend == "exchange":
+        from hf2l.backends.exchange import ExchangeStore
+        endpoint = endpoint or os.environ.get("EXCHANGE_ENDPOINT")
+        token = explicit_token or os.environ.get("EXCHANGE_TOKEN")
+        if not token and os.environ.get("EXCHANGE_TOKEN_FILE"):
+            token_path = Path(os.environ["EXCHANGE_TOKEN_FILE"])
+            token = lambda: token_path.read_text(encoding="utf-8").strip()
+        if not endpoint or not token:
+            raise ValueError("Exchange requires EXCHANGE_ENDPOINT and EXCHANGE_TOKEN (or --endpoint/--token)")
+        return ExchangeStore(token, endpoint)
     endpoint = endpoint or os.environ.get("HF_ENDPOINT")
     if backend == "jfrog":
         token = (

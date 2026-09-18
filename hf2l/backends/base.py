@@ -14,6 +14,7 @@ class SubmissionCandidate:
     identifier: str
     revision: str
     author: str
+    participant: str | None = None
 
 
 @dataclass(frozen=True)

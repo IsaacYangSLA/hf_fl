@@ -154,6 +154,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="HF compatibility alias for --discover-submissions",
     )
+    selection.add_argument("--claim-submissions", action="store_true",
+                           help="Exchange only: acquire a fenced claim for current-round submissions")
+    selection.add_argument("--claim-id", help="Exchange only: resume a known active claim")
+    parser.add_argument("--claim-lease-seconds", type=int, default=3600,
+                        help="Exchange claim lease duration (30 to 86400 seconds)")
     parser.add_argument(
         "--allowlist",
         type=Path,
@@ -221,13 +226,16 @@ def main() -> None:
             raise ValueError("--tag requires --publish")
         if args.check_only and (args.publish or args.plugin or args.plugin_arg):
             raise ValueError("--check-only cannot publish or evaluate a model")
+        if args.claim_submissions or args.claim_id:
+            if args.backend != "exchange" or args.check_only or not args.publish:
+                raise ValueError("Claims require --backend exchange and --publish; cannot use --check-only")
         allowlist = load_allowlist(args.allowlist) if args.allowlist else None
         automatic = args.discover_submissions or args.discover_prs
-        if args.backend == "jfrog" and (args.pr or args.discover_prs):
+        if args.backend != "huggingface" and (args.pr or args.discover_prs):
             raise ValueError(
-                "JFrog has no pull requests; use --submission or --discover-submissions"
+                "This backend has no pull requests; use --submission or --discover-submissions"
             )
-        if automatic and allowlist is None:
+        if automatic and allowlist is None and args.backend != "exchange":
             print(
                 "warning: automatic discovery without --allowlist accepts every "
                 "compatible repository submission",
@@ -257,7 +265,9 @@ def main() -> None:
                     f"expected {store.name!r}"
                 )
 
-        if automatic:
+        if args.claim_submissions or args.claim_id:
+            candidates = store.claim_submissions(args.repo_id, args.claim_id, args.claim_lease_seconds)
+        elif automatic:
             candidates, skipped = store.discover_submissions(args.repo_id)
             for reason in skipped:
                 print(f"skipped_submission={reason}", file=sys.stderr)
@@ -304,8 +314,10 @@ def main() -> None:
             try:
                 manifest = read_json(manifest_dir / SUBMISSION_FILE)
                 expected_participant = (
-                    allowlist[candidate.author.casefold()] if allowlist is not None else None
+                    allowlist[candidate.author.casefold()] if allowlist is not None else candidate.participant
                 )
+                if candidate.participant is not None and expected_participant != candidate.participant:
+                    raise ValueError("Allowlist differs from server-bound participant identity")
                 participant, num_examples = validate_submission_manifest(
                     manifest,
                     repo_id=args.repo_id,
