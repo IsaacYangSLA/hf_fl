@@ -34,6 +34,17 @@ export AWS_DEFAULT_REGION='us-east-1'
 export EXCHANGE_S3_ENDPOINT='https://objects.example.com'
 ```
 
+Optional tuning variables, with defaults: `EXCHANGE_GRANT_SECONDS` (300, transfer
+URL lifetime), `EXCHANGE_UPLOAD_SECONDS` (86400, draft transfer window, renewed
+when a blob reaches verification), `EXCHANGE_PART_BYTES` (64 MiB),
+`EXCHANGE_MAX_BODY_BYTES` (1 MiB), `EXCHANGE_WORKER_INTERVAL` (5 s),
+`EXCHANGE_WORKER_BATCH` (256 blobs per work class per pass),
+`EXCHANGE_WORKER_CONCURRENCY` (4 parallel verifications per worker process),
+`EXCHANGE_WORKER_LEASE_SECONDS` (3600, per-blob lease so several worker
+processes partition work instead of duplicating it) and
+`EXCHANGE_WORKER_RECOVER_AFTER` (30 s before an interrupted initiation or
+completion is repaired, so the worker does not race the API's own transition).
+
 Use the normal AWS credential provider chain for the service workload. On
 self-hosted storage, inject its S3 access key and secret through the environment
 or a credentials provider. End clients must not receive these credentials.
@@ -55,16 +66,30 @@ Run these as separate supervised processes with the same configuration:
 .venv/bin/python -m hf2l.exchange.cli worker
 ```
 
+Both emit structured logs (`--log-level`, default `INFO`). Every API response
+carries `X-Request-ID`; error bodies repeat it as `request_id`, and the same
+value appears in the server log line for that request, including storage and
+database failures (`storage_unavailable`, `database_unavailable`). The worker
+logs each failed transition with the blob and record IDs, its state and the
+storage error code, and prints per-pass counters. Several worker processes may
+run concurrently: each leases the blobs it works on. `worker --once` runs a
+single pass.
+
 Expose the API through an HTTPS reverse proxy. Apply connection/request timeouts
 and rate limits there; the API limits request bodies to 1 MiB and record metadata
 to 64 KiB. Interactive API documentation is at `/docs`, and the machine-readable
-contract is `/openapi.json`. No file bytes are proxied through the API.
+contract is `/openapi.json`; block or gate these paths at the proxy if the API
+is reachable from untrusted networks. No file bytes are proxied through the API.
 
 The bucket must deny public access and untrusted deletion. Service permissions
-cover initiating/listing/completing/aborting multipart uploads, reading object
-versions, listing versions for recovery, and generating PUT/GET grants. The
-cleanup worker additionally needs deletion of object versions. Grant cleanup
-rights only to the worker identity where your deployment separates credentials.
+cover `s3:GetBucketVersioning` (startup check), initiating/listing/completing/
+aborting multipart uploads, reading object versions, `s3:ListBucket` (needed so a
+missing key reports 404 rather than 403 during completion recovery), listing
+versions for recovery, and generating PUT/GET grants. The cleanup worker
+additionally needs deletion of object versions. Grant cleanup rights only to
+the worker identity where your deployment separates credentials. The configured
+S3 endpoint is also the host embedded in the transfer URLs handed to
+participants, so it must be reachable by them over HTTPS.
 Configure encryption at rest. Do not expire noncurrent versions indiscriminately:
 a live record can deliberately point to a noncurrent version.
 
@@ -105,6 +130,14 @@ admin, coordinator, and reader roles. Space admins can manage memberships;
 admin alone is not a data-reader or publisher role. All spaces require membership,
 including access by the bootstrap admin to spaces whose membership was changed.
 
+Admins read space policy with `GET /v1/spaces/{id}` and change `quota_bytes`,
+`principal_quota_bytes` or `rules` with `PATCH /v1/spaces/{id}` and the returned
+`If-Match` generation (`client.get_space` / `client.update_space`). The
+per-principal quota bounds the draft reservations one member can hold at a time
+and defaults to a quarter of the space quota. Admins can also cancel any
+member's draft with `DELETE /records/{id}`, and revoking a member (roles `[]`)
+cancels that member's drafts and releases their reservations immediately.
+
 ## Exchange small information and large files
 
 As an enrolled contributor:
@@ -137,11 +170,21 @@ client.close()
 ```
 
 The worker must be running for file-backed records to become verified. The SDK
-waits for verification and publication. Preserve `state_path` to resume after
-an interruption; reuse it only for identical files, metadata, and destination.
-Use a new state path for a new record. Resume data contains record IDs and
-idempotency keys, not access tokens or signed URLs. Download partial files are
-also resumable and are checked against the full-file digest before replacement.
+waits for verification and publication (`wait_seconds`, default 3600; the
+FedAvg adapter reads `EXCHANGE_WAIT_SECONDS`). Preserve `state_path` to resume
+after an interruption: a retry with the same files, kind, base and destination
+resumes the same draft and sends only missing parts, even if metadata such as
+timestamps changed (the draft's metadata is updated). A retry with different
+files cancels the stale draft and starts a new record. The state file is
+removed once the record is ready, so a later call with the same path creates a
+new record. If a blob fails verification, the SDK cancels the draft to release
+its reservation and raises `blob_verification_failed`. The FedAvg adapter keeps
+its state file next to the uploaded directory as
+`<directory>.exchange-upload.json`. Resume data contains record IDs and
+idempotency keys, not access tokens or signed URLs. Transient control-plane
+failures (connection errors, 429, 502-504) are retried with backoff. Download
+partial files are also resumable and are checked against the full-file digest
+before replacement.
 
 Default kinds are `message`, `configuration`, `training.update`, `model.global`,
 and `evaluation.result`. Space creation can supply custom kind rules with
@@ -151,12 +194,19 @@ and training updates; only coordinators can publish global models/configuration.
 Training updates are private to their creator and coordinators. Shared ready
 records are readable by enrolled readers/contributors. Drafts are creator-only.
 
-One record can contain up to 256 named attachments. Attachment descriptors are
-returned with the record; record listings use bounded pages with a publication
-time boundary. Space byte quotas count both unfinished reservations and retained
-records. Cancel an unpublished record with `DELETE /records/{id}` to release
-its reservation. Failed/aborted uploads need a new record; completed records
-are immutable and cannot be deleted through the public API.
+One record can contain up to 256 named attachments; names must not collide as
+file and directory (`a` and `a/b`). Attachment descriptors are returned with
+the record; record listings use bounded pages with a publication time boundary.
+Space byte quotas count both unfinished reservations and retained records.
+Cancel an unpublished record with `DELETE /records/{id}` to release its
+reservation. Failed/aborted uploads need a new record. Ready records are
+immutable, but their creator (or a space admin) can withdraw one with the same
+`DELETE` call: the record becomes `withdrawn`, disappears from reads and
+discovery, releases its quota and its storage versions are reclaimed by the
+worker. Withdrawal is refused with `record_referenced`, `record_is_base` or
+`record_claimed` while a reference points at the record, another record builds
+on it, or an active claim has frozen it. `POST /records`, `PUT /refs/{name}`
+and `POST /v1/spaces` require an `Idempotency-Key` header (the SDK supplies one).
 
 ## Existing federated-learning commands
 
@@ -197,16 +247,29 @@ automated coordinators, acquire a durable claim and freeze the input set:
   --output-dir work/owner-round-1 --publish
 ```
 
-The claim ID and fence are printed. Another acquisition while the lease is
-active fails with `claim_busy`; fewer than two candidates fails with
-`insufficient_submissions`. Both are expected coordinator control conditions.
-Domain validation still happens in the owner command before aggregation.
-After lease expiry, a new acquisition retains the frozen inputs and advances
-the fence. Stale workers cannot publish or bypass the claim by directly updating
-`main`. A known active claim can be explicitly resumed with `--claim-id ID` in
-a new output directory. A running coordinator can renew through
-`POST /claims/{id}:renew` with its fence and `lease_seconds`; the CLI does not
-automatically renew, so select a sufficient lease duration (up to 24 hours).
+The claim ID and fence are printed. `POST /claims` freezes the newest ready
+`training.update` per participant for the current `main` base; older updates
+from the same participant are reported as `superseded` (the CLI prints them as
+`skipped_submission`). A coordinator may instead pass an explicit `inputs`
+list of ready update IDs. Another acquisition while the lease is active fails
+with `claim_busy`; fewer than two candidates fails with
+`insufficient_submissions`; a base whose claim already produced a result fails
+with `claim_completed`. These are expected coordinator control conditions.
+Domain validation still happens in the owner command: in claim mode an input
+that fails manifest or allowlist checks is skipped, and the published aggregate
+declares exactly the inputs it used, which must be a subset of the frozen set.
+If the round fails after acquisition (for example an incompatible checkpoint),
+the CLI abandons the claim so `main` is not left frozen; the holder can also
+call `POST /claims/{id}:abandon` with its fence, and a space admin can abandon
+any claim without one. Withdraw the offending update, then claim again.
+After lease expiry, a new acquisition retains the frozen inputs (or accepts a
+new explicit `inputs` list) and advances the fence; an expired lease no longer
+blocks a plain generation-fenced `PUT /refs/main`. Stale holders cannot publish
+or bypass an active claim by directly updating `main`. A known active claim can
+be explicitly resumed with `--claim-id ID` in a new output directory. A running
+coordinator can renew through `POST /claims/{id}:renew` with its fence and
+`lease_seconds`; the CLI does not automatically renew, so select a sufficient
+lease duration (up to 24 hours).
 
 Each successful publication stores an event transactionally with its state
 change. Poll `GET /events?cursor=...` using the returned `next_cursor`, persist
@@ -220,17 +283,24 @@ webhook workflow remains HF-specific and is not silently redirected.
 
 The worker verifies SHA-256 by streaming the exact stored version. This costs
 one additional storage read and bounded memory. It reconciles interrupted
-initialization/completion and expires unfinished drafts after 24 hours. Cleanup
-waits for upload expiry plus the transfer-grant interval, then removes versions
-and multipart uploads at that draft's server-generated keys. It never sweeps
-live records by prefix. Worker storage failures remain retryable states.
+initialization/completion and expires unfinished drafts after the transfer
+window (24 hours by default). The window is renewed when a blob reaches
+verification, and a draft is never expired while one of its blobs is being
+completed or verified. Cleanup of expired, cancelled and withdrawn records waits
+for upload expiry plus the transfer-grant interval, then removes versions and
+multipart uploads at that record's server-generated keys. Each work class
+(recovery/verification and cleanup) is selected in its own bounded, ordered
+batch so a cleanup backlog cannot starve verification. It never sweeps live
+records by prefix. Worker storage failures remain retryable states and are
+logged with identifiers.
 
 An S3 operation and a database transaction cannot commit atomically. Ready
 records are exposed only after successful verification; lost responses are
 reconciled from reserved keys and fixed versions. A CAS conflict may leave an
-unreferenced ready aggregate for inspection. Ready-record retention/garbage
-collection is deliberately an administrative operation, outside the current
-public API, so automatic cleanup cannot remove a live result.
+unreferenced ready aggregate for inspection; its creator or an admin can
+withdraw it. Retention of referenced or lineage-bearing ready records remains
+an administrative decision: the API refuses to withdraw them, so automatic
+cleanup cannot remove a live result.
 
 Schema v1 initialization uses SQLAlchemy `create_all` for a new database; it
 does not migrate older deployments. Production schema changes need a reviewed
@@ -249,10 +319,12 @@ Install the optional test dependencies and run the offline suite:
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-The exchange tests default to SQLite and Moto S3 emulation. To test real
-PostgreSQL and an S3-compatible server, set `EXCHANGE_TEST_DATABASE_URL` and
-`EXCHANGE_TEST_S3_ENDPOINT`, and supply test-only S3 credentials through the
-normal AWS environment variables. Then run:
+The exchange tests default to SQLite and an in-process Moto S3 server, which
+also exercises the client SDK's presigned transfers, resume paths and a full
+two-participant FedAvg round including claim abandonment and withdrawal. To
+test real PostgreSQL and an S3-compatible server, set
+`EXCHANGE_TEST_DATABASE_URL` and `EXCHANGE_TEST_S3_ENDPOINT`, and supply
+test-only S3 credentials through the normal AWS environment variables. Then run:
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -p test_exchange.py -v
@@ -260,7 +332,7 @@ normal AWS environment variables. Then run:
 
 Tests create and remove uniquely named PostgreSQL schemas and S3 buckets.
 Use dedicated test services and credentials that permit those operations.
-Live coverage includes signed direct transfers and a full two-participant
-FedAvg round. Moto is useful for application behavior; it is not proof of a
-storage provider's signature enforcement. Run the live tests for each chosen
+Live coverage adds the provider's signature enforcement on tampered and expired
+grants. Moto is useful for application behavior; it is not proof of a storage
+provider's signature enforcement. Run the live tests for each chosen
 provider/version before deployment.

@@ -32,7 +32,15 @@ class SpaceInput(Input):
     name: str = Field(min_length=1, max_length=128)
     tenant: str = Field(min_length=1, max_length=128)
     quota_bytes: int = Field(default=1024**4, gt=0, le=2**62)
+    # Outstanding draft reservations one principal may hold; defaults to a quarter of the space quota.
+    principal_quota_bytes: int | None = Field(default=None, gt=0, le=2**62)
     rules: dict[str, KindRule] = Field(default_factory=default_rules, max_length=64)
+
+
+class SpacePatch(Input):
+    quota_bytes: int | None = Field(default=None, gt=0, le=2**62)
+    principal_quota_bytes: int | None = Field(default=None, gt=0, le=2**62)
+    rules: dict[str, KindRule] | None = Field(default=None, max_length=64)
 
 
 class MemberInput(Input):
@@ -97,10 +105,16 @@ class ClaimInput(Input):
     workflow: str = Field(default="fedavg", min_length=1, max_length=128)
     minimum: int = Field(default=2, ge=2, le=256)
     lease_seconds: int = Field(default=3600, ge=30, le=86400)
+    # Explicit coordinator-chosen inputs; otherwise the newest ready update per participant is frozen.
+    inputs: list[str] | None = Field(default=None, min_length=1, max_length=256)
 
 
 class ClaimResult(RefInput):
     fence: int = Field(ge=1)
+
+
+class ClaimAbandon(Input):
+    fence: int | None = Field(default=None, ge=1)
 
 
 class LeaseInput(Input):

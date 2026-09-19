@@ -10,6 +10,8 @@ import uuid
 
 import httpx
 
+RETRYABLE_STATUS = (429, 502, 503, 504)
+
 
 class ExchangeError(RuntimeError):
     def __init__(self, status, code):
@@ -36,12 +38,13 @@ def save_state(path, value):
 
 
 class ExchangeClient:
-    def __init__(self, endpoint, token, *, http=None, transfer=None):
+    def __init__(self, endpoint, token, *, http=None, transfer=None, retries=3):
         self.endpoint = endpoint.rstrip("/")
         address = urlparse(self.endpoint)
         if address.scheme != "https" and not (address.scheme == "http" and address.hostname in ("127.0.0.1", "localhost", "testserver")):
             raise ValueError("Exchange endpoint requires HTTPS except on localhost")
         self.token = token
+        self.retries = retries
         self.http = http or httpx.Client(timeout=60, follow_redirects=False)
         # A separate client ensures the API bearer token never reaches object storage.
         self.transfer = transfer or httpx.Client(timeout=300, follow_redirects=False)
@@ -51,20 +54,28 @@ class ExchangeClient:
         self.transfer.close()
 
     def request(self, method, path, *, body=None, headers=None, params=None):
-        token = self.token() if callable(self.token) else self.token
-        request_headers = {"Authorization": "Bearer " + token, **(headers or {})}
-        try:
-            response = self.http.request(method, self.endpoint + path, json=body,
-                                         headers=request_headers, params=params)
-        except httpx.TransportError:
-            raise ExchangeError(503, "connection_failed") from None
-        if response.status_code >= 300:
+        # Every control-plane call is idempotent (keys, state machines, CAS), so transient failures are retried.
+        for attempt in range(self.retries):
+            token = self.token() if callable(self.token) else self.token
+            request_headers = {"Authorization": "Bearer " + token, **(headers or {})}
             try:
-                code = response.json().get("code", "request_failed")
-            except ValueError:
-                code = "request_failed"
-            raise ExchangeError(response.status_code, code)
-        return response.json()
+                response = self.http.request(method, self.endpoint + path, json=body,
+                                             headers=request_headers, params=params)
+            except httpx.TransportError:
+                if attempt + 1 == self.retries:
+                    raise ExchangeError(503, "connection_failed") from None
+                time.sleep(2 ** attempt)
+                continue
+            if response.status_code in RETRYABLE_STATUS and attempt + 1 < self.retries:
+                time.sleep(2 ** attempt)
+                continue
+            if response.status_code >= 300:
+                try:
+                    code = response.json().get("code", "request_failed")
+                except ValueError:
+                    code = "request_failed"
+                raise ExchangeError(response.status_code, code)
+            return response.json()
 
     def path(self, space, suffix=""):
         return "/v1/spaces/" + quote(space, safe="") + suffix
@@ -73,6 +84,12 @@ class ExchangeClient:
         return self.request("POST", "/v1/spaces", body={"name": name, "tenant": tenant, **options},
                             headers={"Idempotency-Key": idempotency_key or uuid.uuid4().hex})
 
+    def get_space(self, space):
+        return self.request("GET", self.path(space))
+
+    def update_space(self, space, generation, **changes):
+        return self.request("PATCH", self.path(space), body=changes, headers={"If-Match": f'"{generation}"'})
+
     def set_member(self, space, issuer, subject, roles, participant=None):
         principal = hashlib.sha256(json.dumps([issuer, subject], separators=(",", ":")).encode()).hexdigest()
         return self.request("PUT", self.path(space, "/members/" + principal),
@@ -80,6 +97,9 @@ class ExchangeClient:
 
     def get_record(self, space, record):
         return self.request("GET", self.path(space, "/records/" + quote(record, safe="")))
+
+    def cancel_record(self, space, record):
+        return self.request("DELETE", self.path(space, "/records/" + quote(record, safe="")))
 
     def records(self, space, **filters):
         cursor = ""
@@ -108,12 +128,15 @@ class ExchangeClient:
         body = {"kind": kind, "metadata": metadata, "base_record_id": base_record_id,
                 "attachments": [{"name": name, "size_bytes": path.stat().st_size, "sha256": sha256(path)}
                                 for name, path in files.items()]}
-        fingerprint = hashlib.sha256(json.dumps([self.endpoint, space, body], sort_keys=True).encode()).hexdigest()
-        state = json.loads(Path(state_path).read_text()) if state_path and Path(state_path).exists() else {
-            "fingerprint": fingerprint, "key": uuid.uuid4().hex,
-        }
-        if state["fingerprint"] != fingerprint:
-            raise ValueError("Resume state belongs to different metadata, files or destination")
+        # Metadata is deliberately excluded: a retry with refreshed timestamps must resume the same transfer.
+        fingerprint = hashlib.sha256(json.dumps(
+            [self.endpoint, space, kind, base_record_id, body["attachments"]], sort_keys=True).encode()).hexdigest()
+        state_path = Path(state_path) if state_path else None
+        state = json.loads(state_path.read_text()) if state_path and state_path.exists() else {}
+        if state.get("fingerprint") != fingerprint:
+            if state.get("record_id"):
+                self._discard(space, state["record_id"])
+            state = {"fingerprint": fingerprint, "key": uuid.uuid4().hex}
         if state_path:
             save_state(state_path, state)
         if "record_id" not in state:
@@ -124,7 +147,13 @@ class ExchangeClient:
                 save_state(state_path, state)
         record = self.get_record(space, state["record_id"])
         if record["state"] == "ready":
-            return record
+            return self._finish(record, state_path)
+        if record["state"] != "draft":
+            self._forget(state_path)
+            raise ExchangeError(409, "record_not_uploadable")
+        if record["metadata"] != metadata:
+            record = self.request("PATCH", self.path(space, f"/records/{record['id']}"), body={"metadata": metadata},
+                                  headers={"If-Match": f'"{record["generation"]}"'})
         deadline = time.monotonic() + wait_seconds
         for attachment in record["attachments"]:
             if attachment["state"] == "verified":
@@ -132,18 +161,44 @@ class ExchangeClient:
             self._upload(space, record["id"], attachment, files[attachment["name"]], deadline)
         while True:
             try:
-                return self.request("POST", self.path(space, f"/records/{record['id']}:publish"))
+                return self._finish(self.request("POST", self.path(space, f"/records/{record['id']}:publish")), state_path)
             except ExchangeError as exc:
                 if exc.code != "blobs_not_verified" or time.monotonic() >= deadline:
                     raise
                 status = self.get_record(space, record["id"])
                 if any(blob["state"] in ("failed", "aborted") for blob in status["attachments"]):
+                    # The draft can never publish; release its reservation so the next attempt starts clean.
+                    self._discard(space, record["id"])
+                    self._forget(state_path)
                     raise ExchangeError(409, "blob_verification_failed") from None
                 time.sleep(1)
 
+    def _finish(self, record, state_path):
+        self._forget(state_path)
+        return record
+
+    @staticmethod
+    def _forget(state_path):
+        if state_path:
+            Path(state_path).unlink(missing_ok=True)
+
+    def _discard(self, space, record):
+        try:
+            self.cancel_record(space, record)
+        except ExchangeError:
+            pass
+
     def _upload(self, space, record, attachment, file, deadline):
         identifier = attachment["id"]
-        started = self.request("POST", self.path(space, f"/records/{record}/blobs/{identifier}/uploads"))
+        while True:
+            try:
+                started = self.request("POST", self.path(space, f"/records/{record}/blobs/{identifier}/uploads"))
+                break
+            except ExchangeError as exc:
+                # The worker repairs an interrupted initialization within one tick.
+                if exc.code != "upload_initialization_pending" or time.monotonic() >= deadline:
+                    raise
+                time.sleep(1)
         if started["state"] in ("verifying", "verified"):
             return
         if started["state"] in ("completing",):
@@ -186,7 +241,7 @@ class ExchangeClient:
             raise ValueError("Refusing symlink partial download")
         for attempt in range(3):
             offset = partial.stat().st_size if partial.exists() else 0
-            if offset == attachment["size_bytes"] and partial.exists():
+            if offset >= attachment["size_bytes"] and partial.exists():
                 break
             grant = self.request("POST", self.path(space, f"/records/{record}/blobs/{attachment['id']}:download"))
             headers = {"Range": f"bytes={offset}-"} if offset else {}
@@ -199,7 +254,10 @@ class ExchangeClient:
                             target.write(chunk)
             except httpx.TransportError:
                 continue
-        if not partial.exists() or partial.stat().st_size != attachment["size_bytes"] or sha256(partial) != attachment["sha256"]:
+        if not partial.exists() or partial.stat().st_size < attachment["size_bytes"]:
+            # Keep the partial file: the next attempt resumes from its current offset.
+            raise ExchangeError(503, "download_incomplete")
+        if partial.stat().st_size != attachment["size_bytes"] or sha256(partial) != attachment["sha256"]:
             partial.unlink(missing_ok=True)
             raise ExchangeError(409, "download_integrity_failed")
         partial.replace(output)

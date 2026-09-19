@@ -153,7 +153,8 @@ download URLs.
 | Method and path | Purpose |
 | --- | --- |
 | `POST /v1/spaces` | Authorized administrator creates a space |
-| `PUT /members/{principal_id}` | Administrator assigns explicit space roles |
+| `GET /v1/spaces/{id}`, `PATCH /v1/spaces/{id}` | Space admin reads or changes quota, per-principal quota and kind rules with `If-Match` |
+| `PUT /members/{principal_id}` | Administrator assigns explicit space roles; empty roles revoke and release the member's drafts |
 | `GET /refs/{name}` | Resolve a named reference to an immutable record and generation |
 | `POST /records` | Create a draft with metadata and declared attachment names, sizes, SHA-256 values |
 | `PATCH /records/{id}` | Update own draft metadata using `If-Match`; attachment declarations freeze once transfer begins |
@@ -165,6 +166,8 @@ download URLs.
 | `POST /uploads/{id}:complete` | Ask the service to complete and verify an upload |
 | `DELETE /uploads/{id}` | Abort an owned unfinished upload; cleanup is retryable |
 | `POST /records/{id}:publish` | Freeze metadata and atomically make a record ready after all blobs verify |
+| `DELETE /records/{id}` | Cancel an own draft (admins: any draft), or withdraw an own unreferenced ready record |
+| `POST /claims`, `GET /claims/{id}`, `POST /claims/{id}:renew`, `POST /claims/{id}:publish`, `POST /claims/{id}:abandon` | Coordinator freezes newest-per-participant (or explicit) inputs under a fenced lease, publishes a subset-provenanced result, or releases the claim |
 | `POST /records/{id}/blobs/{blob_id}:download` | Authorize a GET/range transfer of the exact published object version |
 | `PUT /refs/{name}` | Coordinator updates a reference with `If-Match` generation, or creates with `If-None-Match: *` |
 | `GET /events?cursor=...` | Read a resumable, authorized event stream |
@@ -250,10 +253,11 @@ for every declared attachment.
 
 Blob lifecycle: `reserved -> uploading -> verifying -> verified`, with
 `failed` and `aborted` terminal outcomes for that attempt. Record lifecycle:
-`draft -> ready`; cancelled/expired drafts are never discovery candidates.
-Ready content cannot be edited; later withdrawal is a separate audited
-visibility flag. Published referenced records remain retained and readable
-according to policy.
+`draft -> ready -> withdrawn`; cancelled/expired drafts and withdrawn records
+are never discovery candidates. Ready content cannot be edited; withdrawal is
+an audited state change that releases quota and is refused while a reference,
+a dependent record's lineage or an active claim depends on the record.
+Published referenced records remain retained and readable according to policy.
 
 The service generates an unguessable key, binds it to one blob/upload, and
 records the exact object version returned by storage. It alone completes
@@ -343,15 +347,20 @@ FedAvg uses the generic service through an application profile:
 3. A `record.ready` event causes the coordinator to query ready updates for the
    current base and count distinct server-bound participant identities.
 4. Once the threshold is reached, a coordinator transaction claims work for
-   `(space, workflow, base, policy_version)` and freezes exact input record IDs.
+   `(space, workflow, base)` and freezes exact input record IDs: the newest
+   ready update per participant, or an explicit coordinator-supplied list.
    A unique claim prevents independent runners from selecting two competing
    input sets. Retries reuse the frozen set; late arrivals belong to a later
    owner decision and do not silently change in-flight work.
 5. The worker downloads those blobs, validates checkpoint compatibility and
-   application metadata, computes the aggregate, and publishes a result record.
-6. The coordinator advances `main` with the captured reference generation and
-   records the accepted input set and output. Stale workers fail the reference
-   precondition; a crashed worker resumes from its durable claim.
+   application metadata, computes the aggregate over the inputs that passed,
+   and publishes a result record declaring exactly those inputs.
+6. The coordinator advances `main` with the captured reference generation; the
+   service accepts the result only if its declared inputs are a subset of the
+   frozen set. Stale workers fail the reference precondition; a crashed worker
+   resumes from its durable claim. A round that cannot complete abandons its
+   claim (holder with fence, or admin), so a single bad input never freezes
+   `main`; the offending update is withdrawn and the base is claimed again.
 
 The work claim is an optional coordinator table/API extension, not a requirement
 for ordinary record exchange. If execution uses expiring leases, increment a

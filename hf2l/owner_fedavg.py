@@ -221,6 +221,7 @@ def _read_round(path: Path, label: str) -> int:
 
 def main() -> None:
     args = parse_args()
+    store = None
     try:
         if args.tag and not args.publish:
             raise ValueError("--tag requires --publish")
@@ -230,7 +231,9 @@ def main() -> None:
             if args.backend != "exchange" or args.check_only or not args.publish:
                 raise ValueError("Claims require --backend exchange and --publish; cannot use --check-only")
         allowlist = load_allowlist(args.allowlist) if args.allowlist else None
-        automatic = args.discover_submissions or args.discover_prs
+        claiming = bool(args.claim_submissions or args.claim_id)
+        # Automatic and claim modes skip ineligible submissions instead of failing the whole round.
+        automatic = args.discover_submissions or args.discover_prs or claiming
         if args.backend != "huggingface" and (args.pr or args.discover_prs):
             raise ValueError(
                 "This backend has no pull requests; use --submission or --discover-submissions"
@@ -265,7 +268,7 @@ def main() -> None:
                     f"expected {store.name!r}"
                 )
 
-        if args.claim_submissions or args.claim_id:
+        if claiming:
             candidates = store.claim_submissions(args.repo_id, args.claim_id, args.claim_lease_seconds)
         elif automatic:
             candidates, skipped = store.discover_submissions(args.repo_id)
@@ -305,13 +308,13 @@ def main() -> None:
                 raise ValueError(reason)
 
             manifest_dir = output_dir / "discovery" / f"submission-{candidate_index}"
-            store.download_snapshot(
-                args.repo_id,
-                resolved_revision,
-                manifest_dir,
-                allow_patterns=SUBMISSION_FILE,
-            )
             try:
+                store.download_snapshot(
+                    args.repo_id,
+                    resolved_revision,
+                    manifest_dir,
+                    allow_patterns=SUBMISSION_FILE,
+                )
                 manifest = read_json(manifest_dir / SUBMISSION_FILE)
                 expected_participant = (
                     allowlist[candidate.author.casefold()] if allowlist is not None else candidate.participant
@@ -330,7 +333,7 @@ def main() -> None:
                         candidate.revision if store.name == "jfrog" else None
                     ),
                 )
-            except ValueError as exc:
+            except (ValueError, OSError) as exc:
                 if automatic:
                     print(f"skipped_submission={revision}: {exc}", file=sys.stderr)
                     continue
@@ -338,7 +341,7 @@ def main() -> None:
             if participant in seen_participants:
                 raise ValueError(
                     f"Duplicate participant {participant!r} among eligible submissions; "
-                    "remove the superseded submission or select revisions explicitly"
+                    "withdraw the superseded submission or select revisions explicitly"
                 )
             seen_participants.add(participant)
             prepared.append(
@@ -493,6 +496,12 @@ def main() -> None:
             print("Not published. Re-run with a new --output-dir and --publish after review.")
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
+        if store is not None:
+            try:
+                # A held claim must not outlive a failed round, or main stays frozen for its base.
+                store.abandon_claim(args.repo_id)
+            except Exception as release_error:
+                print(f"warning: could not abandon claim: {release_error}", file=sys.stderr)
         raise SystemExit(1) from exc
 
 

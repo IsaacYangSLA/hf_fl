@@ -101,3 +101,13 @@ class ModelStore(ABC):
         """Return a unique named revision when the backend does not use PR refs."""
 
         return None
+
+    def claim_submissions(
+        self, repo_id: str, claim_id: str | None = None, lease_seconds: int = 3600
+    ) -> list[SubmissionCandidate]:
+        """Acquire a fenced claim freezing this round's inputs, when the backend supports one."""
+
+        raise ValueError(f"The {self.name} backend does not support claims")
+
+    def abandon_claim(self, repo_id: str) -> None:
+        """Release a held claim so another coordinator can decide the round."""

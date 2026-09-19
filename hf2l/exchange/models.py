@@ -1,7 +1,7 @@
 """Schema v1. PostgreSQL for deployment; SQLite for local development/tests."""
 import time
 from sqlalchemy import (
-    BigInteger, ForeignKeyConstraint, Integer, JSON, String, UniqueConstraint,
+    BigInteger, ForeignKeyConstraint, Index, Integer, JSON, String, UniqueConstraint,
     create_engine, event,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
@@ -17,8 +17,10 @@ class Space(Base):
     tenant: Mapped[str] = mapped_column(String(128))
     name: Mapped[str] = mapped_column(String(128))
     quota: Mapped[int] = mapped_column(BigInteger)
+    principal_quota: Mapped[int] = mapped_column(BigInteger)
     allocated: Mapped[int] = mapped_column(BigInteger, default=0)
     rules: Mapped[dict] = mapped_column(JSON)
+    generation: Mapped[int] = mapped_column(Integer, default=1)
 
 
 class Member(Base):
@@ -53,6 +55,8 @@ class Record(Base):
         UniqueConstraint("space_id", "id"),
         ForeignKeyConstraint(["space_id"], ["exchange_spaces.id"]),
         ForeignKeyConstraint(["space_id", "base_id"], ["exchange_records.space_id", "exchange_records.id"]),
+        Index("ix_exchange_records_discovery", "space_id", "kind", "state", "base_id", "published_at"),
+        Index("ix_exchange_records_creator_state", "space_id", "creator", "state"),
     )
 
 
@@ -71,8 +75,11 @@ class Blob(Base):
     state: Mapped[str] = mapped_column(String(24), default="reserved", index=True)
     part_bytes: Mapped[int] = mapped_column(BigInteger)
     expires_at: Mapped[float] = mapped_column()
+    updated_at: Mapped[float] = mapped_column(default=time.time)
+    worker_lease_until: Mapped[float | None] = mapped_column(nullable=True)
     __table_args__ = (
         UniqueConstraint("record_id", "name"),
+        Index("ix_exchange_blobs_state_updated", "state", "updated_at"),
         ForeignKeyConstraint(["space_id", "record_id"], ["exchange_records.space_id", "exchange_records.id"]),
     )
 
@@ -97,13 +104,14 @@ class Operation(Base):
 
 class Event(Base):
     __tablename__ = "exchange_events"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    space_id: Mapped[str] = mapped_column(String(64), index=True)
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    space_id: Mapped[str] = mapped_column(String(64))
     kind: Mapped[str] = mapped_column(String(64))
     record_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     principal: Mapped[str] = mapped_column(String(64))
     data: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[float] = mapped_column(default=time.time)
+    __table_args__ = (Index("ix_exchange_events_space_id_id", "space_id", "id"),)
 
 
 class Claim(Base):
