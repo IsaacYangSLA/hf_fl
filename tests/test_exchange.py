@@ -29,7 +29,7 @@ try:
     from hf2l.exchange.auth import principal_id
     from hf2l.exchange.client import ExchangeClient, ExchangeError
     from hf2l.exchange.config import Settings
-    from hf2l.exchange.models import Base, Blob, Claim, Record, Space
+    from hf2l.exchange.models import Base, Blob, Claim, Event, Member, Record, Space
     from hf2l.exchange.storage import S3BlobStore
     from hf2l.exchange.worker import tick
     EXCHANGE_AVAILABLE = True
@@ -288,6 +288,8 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(self.client.post(self.prefix + f"/uploads/{blob_id}/parts:authorize", headers=self.auth("alice"), json={"part_numbers": [1]}).status_code, 404)
 
     def test_reference_cas_lineage_and_duplicate_retry(self):
+        note = self.ready("alice", "message")
+        self.assertEqual(self.code(self.ref(note)), "aggregate_kind_mismatch")
         base = self.ready()
         self.assertEqual(self.ref(base).status_code, 200)
         first, second = self.ready(base=base["id"]), self.ready(base=base["id"])
@@ -295,8 +297,15 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(self.ref(first, 1, key="publish").status_code, 200)
         self.assertEqual(self.code(self.ref(second, 1)), "reference_changed")
         self.assertEqual(self.code(self.ref(second, 2)), "aggregate_base_mismatch")
-        baseless = self.ready("owner", "configuration")
+        baseless = self.ready()
         self.assertEqual(self.code(self.ref(baseless, 2)), "aggregate_base_mismatch")
+        # main only ever names a global model, even when the target builds on the current main; other refs are free.
+        configured = self.ready("owner", "configuration", base=first["id"])
+        self.assertEqual(self.code(self.ref(configured, 2)), "aggregate_kind_mismatch")
+        tagged = self.client.put(self.prefix + "/refs/latest-config", headers={**self.headers, "Idempotency-Key": "cfg", "If-None-Match": "*"},
+                                 json={"record_id": configured["id"]})
+        self.assertEqual(tagged.status_code, 200, tagged.text)
+        self.assertEqual(self.client.get(self.prefix + "/refs/main", headers=self.headers).json(), {"record_id": first["id"], "generation": 2})
         self.assertEqual(self.ref(second, 2, subject="alice").status_code, 403)
 
     def test_worker_recovers_lost_completion_and_expired_uploads(self):
@@ -354,7 +363,8 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         claim = response.json()
         self.assertEqual(set(claim["inputs"]), {r["id"] for r in updates})
-        self.assertEqual(self.code(self.claim()), "claim_busy")
+        self.member("carol", ["coordinator"])
+        self.assertEqual(self.code(self.claim("carol")), "claim_busy")
         with self.service.sessions.begin() as session:
             session.get(Claim, claim["id"]).lease_until = 1
         replacement = self.claim().json()
@@ -385,7 +395,10 @@ class ExchangeTests(unittest.TestCase):
         # After abandonment main is free again, and a coordinator may choose explicit inputs.
         explicit = self.claim("carol", inputs=[old["id"], bob["id"]])
         self.assertEqual(explicit.status_code, 200, explicit.text)
-        self.assertEqual(self.code(self.claim("carol", inputs=[old["id"], new["id"]])), "claim_busy")
+        # The holder's repeated acquisition returns the frozen set unchanged; another coordinator is refused.
+        repeated = self.claim("carol", inputs=[old["id"], new["id"]])
+        self.assertEqual((repeated.status_code, set(repeated.json()["inputs"])), (200, {old["id"], bob["id"]}))
+        self.assertEqual(self.code(self.claim()), "claim_busy")
         # The admin can abandon another holder's claim without knowing its fence.
         self.assertEqual(self.client.post(self.prefix + f"/claims/{explicit.json()['id']}:abandon", headers=self.headers, json={}).status_code, 200)
         self.assertEqual(self.code(self.claim("carol", inputs=[old["id"], "rec_missing"])), "claim_inputs_invalid")
@@ -402,6 +415,262 @@ class ExchangeTests(unittest.TestCase):
             session.get(Claim, explicit.json()["id"]).lease_until = 1
         following = self.ready(base=subset["id"])
         self.assertEqual(self.ref(following, 2).status_code, 200)
+
+    def test_claim_is_idempotent_for_holder_listable_and_persisted_by_adapter(self):
+        base = self.ready()
+        self.ref(base)
+        for participant in ("alice", "bob"):
+            self.ready(participant, "training.update", base["id"])
+        self.member("carol", ["coordinator", "reader"])
+        self.member("dave", ["admin"])
+        claim = self.claim().json()
+        again = self.claim()
+        self.assertEqual(again.status_code, 200, again.text)
+        self.assertEqual((again.json()["id"], again.json()["fence"]), (claim["id"], claim["fence"]))
+        busy = self.claim("carol")
+        self.assertEqual((busy.status_code, self.code(busy), busy.json()["claim_id"]), (409, "claim_busy", claim["id"]))
+        self.assertEqual(busy.json()["lease_until"], claim["lease_until"])
+        with self.assertRaises(ExchangeError) as refused:
+            self.sdk("carol").request("POST", f"{self.prefix}/claims", body={"lease_seconds": 60})
+        self.assertEqual(refused.exception.details["claim_id"], claim["id"])
+        listing = self.client.get(self.prefix + "/claims", headers=self.auth("carol"))
+        self.assertEqual([(c["id"], c["holder"], c["workflow"]) for c in listing.json()["items"]], [(claim["id"], claim["holder"], "fedavg")])
+        self.assertEqual(self.client.get(self.prefix + "/claims", headers=self.auth("dave")).status_code, 200)
+        self.assertEqual(self.client.get(self.prefix + "/claims", headers=self.auth("alice")).status_code, 403)
+        self.assertEqual(self.client.get(self.prefix + "/claims", params={"base_record_id": "rec_other"}, headers=self.headers).json()["items"], [])
+        self.assertEqual(self.sdk("carol").claims(self.space, workflow="other"), [])
+        self.assertEqual([c["id"] for c in self.sdk("carol").claims(self.space, workflow="fedavg", base_record_id=base["id"])], [claim["id"]])
+        # An expired lease without a result leaves the active listing but stays visible with active=false.
+        with self.service.sessions.begin() as session:
+            session.get(Claim, claim["id"]).lease_until = 1
+        self.assertEqual(self.sdk("carol").claims(self.space), [])
+        self.assertEqual([c["id"] for c in self.sdk("carol").claims(self.space, active=False)], [claim["id"]])
+        with self.service.sessions.begin() as session:
+            session.get(Claim, claim["id"]).lease_until = claim["lease_until"]
+        result = self.ready(base=base["id"], metadata={"input_record_ids": claim["inputs"]})
+        published = self.client.post(self.prefix + f"/claims/{claim['id']}:publish", headers=self.headers, json={"record_id": result["id"], "fence": claim["fence"]})
+        self.assertEqual(published.status_code, 200, published.text)
+        self.assertEqual(self.sdk("owner").claims(self.space), [])
+        self.assertEqual([c["result_record_id"] for c in self.sdk("owner").claims(self.space, active=False)], [result["id"]])
+        # The adapter persists the held claim in the round's output directory and clears it once released.
+        for participant in ("alice", "bob"):
+            self.ready(participant, "training.update", result["id"])
+        root = Path(self.temp.name) / "round"
+        root.mkdir()
+        owner = self.store("owner")
+        owner.resolve_revision(self.space, "main")
+        candidates = owner.claim_submissions(self.space, state_dir=root)
+        saved = json.loads((root / "exchange-claim.json").read_text())
+        self.assertEqual((saved["space"], saved["claim_id"], saved["fence"]), (self.space, owner.claim["id"], owner.claim["fence"]))
+        self.assertEqual(len(candidates), 2)
+        # A restarted coordinator pointed at the same directory resumes the persisted claim by ID, without acquiring.
+        resumed = self.store("owner")
+        resumed.resolve_revision(self.space, "main")
+        with patch.object(resumed.client, "request", wraps=resumed.client.request) as spy:
+            resumed.claim_submissions(self.space, state_dir=root)
+        self.assertEqual(resumed.claim["id"], saved["claim_id"])
+        self.assertEqual([c.args for c in spy.call_args_list if "/claims" in c.args[1]],
+                         [("GET", f"{self.prefix}/claims/{saved['claim_id']}")])
+        # An abandon that never reaches the server keeps the persisted ID for a manual abandon.
+        with patch.object(resumed.client, "request", side_effect=ExchangeError(503, "connection_failed")):
+            with self.assertRaises(ExchangeError):
+                resumed.abandon_claim(self.space)
+        self.assertTrue((root / "exchange-claim.json").exists())
+        self.assertEqual([c["id"] for c in self.sdk("owner").claims(self.space)], [saved["claim_id"]])
+        # Once the persisted claim is no longer active an explicit --claim-id still fails, but a stale state file
+        # is discarded in favour of a fresh acquisition, which here re-acquires the expired claim with a new fence.
+        with self.service.sessions.begin() as session:
+            session.get(Claim, saved["claim_id"]).lease_until = 1
+        fresh = self.store("owner")
+        fresh.resolve_revision(self.space, "main")
+        with self.assertRaises(ExchangeError) as stale:
+            fresh.claim_submissions(self.space, claim_id=saved["claim_id"], state_dir=root)
+        self.assertEqual(stale.exception.code, "claim_not_active")
+        self.assertTrue((root / "exchange-claim.json").exists())
+        fresh.claim_submissions(self.space, state_dir=root)
+        rewritten = json.loads((root / "exchange-claim.json").read_text())
+        self.assertEqual((rewritten["claim_id"], rewritten["fence"], fresh.claim["fence"]), (saved["claim_id"], 2, 2))
+        fresh.abandon_claim(self.space)
+        self.assertFalse((root / "exchange-claim.json").exists())
+        self.assertEqual(self.sdk("owner").claims(self.space), [])
+
+    def test_participant_rebinding_invalidates_drafts_and_stale_updates(self):
+        base = self.ready()
+        self.ref(base)
+        self.member("erin", ["contributor", "reader"], "erin")
+        alice_update = self.ready("alice", "training.update", base["id"])
+        bob_update = self.ready("bob", "training.update", base["id"])
+        erin_update = self.ready("erin", "training.update", base["id"])
+        # A ready update whose creator was rebound is skipped by automatic freezing and refused as an explicit input.
+        self.member("alice", ["contributor", "reader"], "alice-2")
+        claim = self.claim()
+        self.assertEqual(claim.status_code, 200, claim.text)
+        self.assertEqual((set(claim.json()["inputs"]), claim.json()["skipped"]), ({bob_update["id"], erin_update["id"]}, [alice_update["id"]]))
+        self.client.post(self.prefix + f"/claims/{claim.json()['id']}:abandon", headers=self.headers, json={"fence": claim.json()["fence"]})
+        blocked = self.claim(inputs=[alice_update["id"], bob_update["id"]])
+        self.assertEqual((blocked.status_code, self.code(blocked), blocked.json()["record_id"]), (409, "participant_binding_changed", alice_update["id"]))
+        # A REST revocation that keeps the participant string (roles []) also drops the member's ready update.
+        self.member("bob", [], "bob")
+        revoked = self.claim()
+        self.assertEqual((self.code(revoked), set(revoked.json()["skipped"])),
+                         ("insufficient_submissions", {alice_update["id"], bob_update["id"]}))
+        blocked = self.claim(inputs=[bob_update["id"], erin_update["id"]])
+        self.assertEqual((blocked.status_code, self.code(blocked), blocked.json()["record_id"]), (409, "participant_binding_changed", bob_update["id"]))
+        self.member("bob", ["contributor", "reader"], "bob")
+        # Too few attributable updates fail the acquisition and name the ones that were skipped.
+        self.member("erin", ["contributor", "reader"], None)
+        short = self.claim()
+        self.assertEqual((self.code(short), set(short.json()["skipped"])), ("insufficient_submissions", {alice_update["id"], erin_update["id"]}))
+        self.member("alice", ["contributor", "reader"], "alice")
+        self.member("erin", ["contributor", "reader"], "erin")
+        # A rebinding after freezing is caught at publication, and re-acquiring the expired claim drops the update.
+        claim = self.claim().json()
+        self.assertEqual(set(claim["inputs"]), {alice_update["id"], bob_update["id"], erin_update["id"]})
+        self.member("alice", ["contributor", "reader"], "alice-2")
+        result = self.ready(base=base["id"], metadata={"input_record_ids": claim["inputs"]})
+        route = self.prefix + f"/claims/{claim['id']}:publish"
+        stale = self.client.post(route, headers=self.headers, json={"record_id": result["id"], "fence": claim["fence"]})
+        self.assertEqual((stale.status_code, self.code(stale), stale.json()["record_id"]), (409, "participant_binding_changed", alice_update["id"]))
+        with self.service.sessions.begin() as session:
+            session.get(Claim, claim["id"]).lease_until = 1
+        reacquired = self.claim().json()
+        self.assertEqual((reacquired["fence"], set(reacquired["inputs"]), reacquired["skipped"]),
+                         (2, {bob_update["id"], erin_update["id"]}, [alice_update["id"]]))
+        self.assertEqual(self.code(self.client.post(route, headers=self.headers, json={"record_id": result["id"], "fence": 2})), "claim_inputs_mismatch")
+        subset = self.ready(base=base["id"], metadata={"input_record_ids": reacquired["inputs"]})
+        self.assertEqual(self.client.post(route, headers=self.headers, json={"record_id": subset["id"], "fence": 2}).status_code, 200)
+        # Rebinding or clearing the binding during the draft window cancels only the member's participant-bound
+        # drafts and releases their quota; other kinds and a first-time binding leave drafts alone.
+        self.member("alice", ["contributor", "reader"], "alice")
+        draft = self.create("alice", "training.update", base["id"], data=b"abc").json()
+        note = self.create("alice", "message", data=b"xy").json()
+        self.member("alice", ["contributor", "reader"], "alice-2")
+        states = {r: self.client.get(self.prefix + f"/records/{r}", headers=self.auth("alice")).json()["state"] for r in (draft["id"], note["id"])}
+        self.assertEqual(states, {draft["id"]: "cancelled", note["id"]: "draft"})
+        self.assertEqual(self.client.get(self.prefix, headers=self.headers).json()["allocated_bytes"], 2)
+        checkpoint = self.create("owner", "model.global", subset["id"], data=b"ckpt").json()
+        self.member("owner", ["admin", "coordinator", "reader"], "owner-site")
+        self.assertEqual(self.client.get(self.prefix + f"/records/{checkpoint['id']}", headers=self.headers).json()["state"], "draft")
+        draft = self.create("bob", "training.update", base["id"]).json()
+        self.member("bob", ["contributor", "reader"], None)
+        self.assertEqual(self.code(self.client.post(self.prefix + f"/records/{draft['id']}:publish", headers=self.auth("bob"))), "record_expired")
+        self.assertEqual(self.code(self.create("bob", "training.update", base["id"])), "participant_and_base_required")
+        # A role change that keeps the binding leaves drafts alone.
+        bound_draft = self.create("alice", "training.update", base["id"]).json()
+        self.member("alice", ["contributor", "reader", "coordinator"], "alice-2")
+        states = {r: self.client.get(self.prefix + f"/records/{r}", headers=self.auth("alice")).json()["state"] for r in (bound_draft["id"], note["id"])}
+        self.assertEqual(states, {bound_draft["id"]: "draft", note["id"]: "draft"})
+        # Publish itself re-validates the binding even if the membership row changed without cancellation.
+        self.member("bob", ["contributor", "reader"], "bob")
+        draft = self.create("bob", "training.update", base["id"]).json()
+        bob_id = principal_id(self.settings.issuer, "bob")
+        with self.service.sessions.begin() as session:
+            session.get(Member, (self.space, bob_id)).participant = "bob-2"
+        stale = self.client.post(self.prefix + f"/records/{draft['id']}:publish", headers=self.auth("bob"))
+        self.assertEqual((stale.status_code, self.code(stale)), (409, "participant_binding_changed"))
+        with self.service.sessions.begin() as session:
+            session.get(Member, (self.space, bob_id)).participant = "bob"
+        self.assertEqual(self.client.post(self.prefix + f"/records/{draft['id']}:publish", headers=self.auth("bob")).status_code, 200)
+
+    def test_abort_upload_only_before_completion_and_upload_id_cleared(self):
+        record = self.create(data=b"abc").json()
+        blob_id = record["attachments"][0]["id"]
+        route = self.prefix + f"/uploads/{blob_id}"
+        self.upload(record, b"abc")
+        with self.service.sessions.begin() as session:
+            blob = session.get(Blob, blob_id)
+            self.assertEqual((blob.state, blob.upload_id), ("verifying", None))
+        self.assertEqual(self.code(self.client.delete(route, headers=self.auth("alice"))), "upload_already_completed")
+        # A completion whose response was lost is protected from a stale abort until the worker settles it.
+        with self.service.sessions.begin() as session:
+            blob = session.get(Blob, blob_id)
+            blob.state, blob.version, blob.upload_id, blob.updated_at = "completing", None, "stale-upload", 0
+        self.assertEqual(self.code(self.client.delete(route, headers=self.auth("alice"))), "upload_completing")
+        self.assertEqual(tick(self.service)["recovered"], 1)
+        with self.service.sessions.begin() as session:
+            self.assertIsNone(session.get(Blob, blob_id).upload_id)
+        self.assertEqual(tick(self.service)["verified"], 1)
+        self.assertEqual(self.code(self.client.delete(route, headers=self.auth("alice"))), "upload_already_completed")
+        self.assertEqual(self.client.post(self.prefix + f"/records/{record['id']}:publish", headers=self.auth("alice")).status_code, 200)
+        # Unfinished uploads can still be aborted, idempotently; the record then needs a new attempt.
+        other = self.create("bob", data=b"xyz").json()
+        other_route = self.prefix + f"/uploads/{other['attachments'][0]['id']}"
+        self.assertEqual(self.client.delete(other_route, headers=self.auth("bob")).json(), {"state": "aborted"})
+        self.assertEqual(self.client.delete(other_route, headers=self.auth("bob")).json(), {"state": "aborted"})
+        self.assertEqual(self.code(self.client.post(self.prefix + f"/records/{other['id']}:publish", headers=self.auth("bob"))), "blobs_not_verified")
+        # A transfer the worker already failed is terminal: it cannot be turned into an abort either.
+        failed = self.create("bob", data=b"nope").json()
+        with self.service.sessions.begin() as session:
+            session.get(Blob, failed["attachments"][0]["id"]).state = "failed"
+        refused = self.client.delete(self.prefix + f"/uploads/{failed['attachments'][0]['id']}", headers=self.auth("bob"))
+        self.assertEqual((refused.status_code, self.code(refused)), (409, "upload_not_open"))
+
+    def test_bootstrap_admin_break_glass_and_last_admin_guard(self):
+        owner_id, carol_id = (principal_id(self.settings.issuer, s) for s in ("owner", "carol"))
+        self.member("carol", ["admin"])
+        # Another admin can revoke the bootstrap admin; the space then has one admin left.
+        revoked = self.client.put(self.prefix + f"/members/{owner_id}", headers=self.auth("carol"), json={"subject": "owner", "roles": [], "participant": None})
+        self.assertEqual(revoked.status_code, 200, revoked.text)
+        self.assertEqual(self.client.get(self.prefix + "/me", headers=self.headers).status_code, 404)
+        self.assertEqual(self.client.get(self.prefix + "/records", headers=self.headers).status_code, 404)
+        # Nobody can remove or demote the last admin, not even the bootstrap admin from outside the space.
+        demoted = self.client.put(self.prefix + f"/members/{carol_id}", headers=self.headers, json={"subject": "carol", "roles": ["reader"], "participant": None})
+        self.assertEqual((demoted.status_code, self.code(demoted)), (409, "last_admin"))
+        self.assertEqual(self.code(self.client.put(self.prefix + f"/members/{carol_id}", headers=self.auth("carol"),
+                                                   json={"subject": "carol", "roles": [], "participant": None})), "cannot_remove_own_admin_role")
+        # Break-glass: only the configured bootstrap admin can inspect and repair membership without being a member.
+        members = self.client.get(self.prefix + "/members", headers=self.headers)
+        self.assertEqual(members.status_code, 200, members.text)
+        self.assertEqual({m["principal_id"]: m["roles"] for m in members.json()["items"]}[carol_id], ["admin"])
+        self.assertEqual(self.client.get(self.prefix + "/members", headers=self.auth("alice")).status_code, 403)
+        self.assertEqual(self.client.get(self.prefix + "/members", headers=self.auth("stranger")).status_code, 404)
+        # The revoked bootstrap admin holds no admin role, so re-adding itself with lesser roles is no self-demotion,
+        # and break-glass keeps applying while it is a member without the admin role.
+        reader = self.client.put(self.prefix + f"/members/{owner_id}", headers=self.headers,
+                                 json={"subject": "owner", "roles": ["reader"], "participant": None})
+        self.assertEqual(reader.status_code, 200, reader.text)
+        self.assertEqual(self.client.get(self.prefix + "/me", headers=self.headers).json()["roles"], ["reader"])
+        self.assertEqual(self.client.get(self.prefix + "/members", headers=self.headers).status_code, 200)
+        restored = self.client.put(self.prefix + f"/members/{owner_id}", headers=self.headers,
+                                   json={"subject": "owner", "roles": ["admin", "coordinator", "reader"], "participant": None})
+        self.assertEqual(restored.status_code, 200, restored.text)
+        self.assertEqual(self.client.get(self.prefix + "/me", headers=self.headers).json()["roles"], ["admin", "coordinator", "reader"])
+        # Each break-glass use that commits is audited; the refused demotion rolled back with its event.
+        def grants():
+            with self.service.sessions.begin() as session:
+                return session.query(Event).filter_by(space_id=self.space, kind="member.bootstrap_grant").count()
+        self.assertEqual(grants(), 4)
+        # Regular admins (including the restored bootstrap admin) list members without break-glass.
+        self.assertEqual(self.client.get(self.prefix + "/members", headers=self.auth("carol")).status_code, 200)
+        self.assertEqual(self.client.get(self.prefix + "/members", headers=self.headers).status_code, 200)
+        self.assertEqual(self.client.put(self.prefix + f"/members/{carol_id}", headers=self.headers,
+                                         json={"subject": "carol", "roles": ["reader"], "participant": None}).status_code, 200)
+        self.assertEqual(self.code(self.client.put(self.prefix + f"/members/{owner_id}", headers=self.headers,
+                                                   json={"subject": "owner", "roles": ["reader"], "participant": None})), "cannot_remove_own_admin_role")
+        self.assertEqual(grants(), 4)
+
+    def test_concurrent_identical_space_creation_replays_one_result(self):
+        body = {"name": "shared", "tenant": "tenant-3"}
+        headers = {**self.headers, "Idempotency-Key": "shared-key"}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(lambda _: self.client.post("/v1/spaces", headers=headers, json=body), range(2)))
+        self.assertEqual([r.status_code for r in responses], [201, 201])
+        self.assertEqual(len({r.json()["id"] for r in responses}), 1)
+        # Force the race SQLite serializes away: the lookup misses although the key was committed meanwhile.
+        original = self.service.stored_operation
+        misses = {"remaining": 1}
+        def racing_lookup(session, identifier):
+            if misses["remaining"]:
+                misses["remaining"] -= 1
+                return None
+            return original(session, identifier)
+        with patch.object(self.service, "stored_operation", side_effect=racing_lookup):
+            replayed = self.client.post("/v1/spaces", headers=headers, json=body)
+        self.assertEqual((replayed.status_code, replayed.json()["id"]), (201, responses[0].json()["id"]), replayed.text)
+        self.assertEqual(misses["remaining"], 0)
+        with self.service.sessions.begin() as session:
+            self.assertEqual(session.query(Space).count(), 2)
+        self.assertEqual(self.code(self.client.post("/v1/spaces", headers=headers, json={"name": "other", "tenant": "tenant-3"})), "idempotency_key_reused")
 
     def test_pagination_and_event_visibility(self):
         for n in range(3):

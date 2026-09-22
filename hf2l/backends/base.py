@@ -103,9 +103,12 @@ class ModelStore(ABC):
         return None
 
     def claim_submissions(
-        self, repo_id: str, claim_id: str | None = None, lease_seconds: int = 3600
+        self, repo_id: str, claim_id: str | None = None, lease_seconds: int = 3600, state_dir: Path | None = None
     ) -> list[SubmissionCandidate]:
-        """Acquire a fenced claim freezing this round's inputs, when the backend supports one."""
+        """Acquire a fenced claim freezing this round's inputs, when the backend supports one.
+
+        ``state_dir`` names a directory where the backend may persist the held claim for recovery.
+        """
 
         raise ValueError(f"The {self.name} backend does not support claims")
 

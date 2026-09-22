@@ -78,7 +78,8 @@ def commit(service, blob, record_state, new_state, value):
         if new_state == "uploading" and value:
             current.upload_id = value
         elif new_state == "verifying":
-            current.version = value
+            # The multipart upload no longer exists once completed; an abort must not target it.
+            current.version, current.upload_id = value, None
         elif new_state == "verified":
             current.verified_sha256 = value
         if new_state in ("verifying", "verified"):

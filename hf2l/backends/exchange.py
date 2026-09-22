@@ -7,6 +7,11 @@ from hf2l.backends.base import ModelStore, PublishResult, SubmissionCandidate
 from hf2l.exchange.client import ExchangeClient, ExchangeError
 from hf2l.hub_helpers import ROUND_FILE, SUBMISSION_FILE, read_json, write_json
 
+# Held-claim state written into the coordinator's output directory; removed after publish or abandon.
+CLAIM_FILE = "exchange-claim.json"
+# GET /claims/{id} outcomes that mean a persisted claim is no longer ours to resume.
+STALE_CLAIM_CODES = ("claim_not_active", "claim_not_found", "claim_held_by_other")
+
 
 class ExchangeStore(ModelStore):
     name = "exchange"
@@ -16,6 +21,7 @@ class ExchangeStore(ModelStore):
         self.wait_seconds = wait_seconds or int(os.environ.get("EXCHANGE_WAIT_SECONDS", "3600"))
         self.main_refs = {}
         self.claim = None
+        self.claim_state = None
 
     def resolve_revision(self, repo_id, revision):
         if revision.startswith("rec_"):
@@ -104,9 +110,20 @@ class ExchangeStore(ModelStore):
             raise ValueError("Duplicate submission selection")
         return [self._candidate(self.client.get_record(repo_id, value)) for value in values]
 
-    def claim_submissions(self, repo_id, claim_id=None, lease_seconds=3600):
-        self.claim = self.client.request("GET", self.client.path(repo_id, "/claims/" + claim_id)) if claim_id else self.client.request(
-            "POST", self.client.path(repo_id, "/claims"), body={"lease_seconds": lease_seconds})
+    def claim_submissions(self, repo_id, claim_id=None, lease_seconds=3600, state_dir=None):
+        """Acquire or resume the fenced claim for the pinned main and return its frozen inputs.
+
+        An explicit ``claim_id`` must name a live claim held by this identity. Otherwise a claim persisted in
+        ``state_dir`` by an interrupted run that reuses the directory is resumed while it is still active, and a
+        stale file is discarded in favour of a fresh acquisition. ``POST /claims`` returns the holder's own live
+        claim, so the owner CLI (whose output directory is always new) recovers through that path.
+        """
+        self.claim_state = Path(state_dir) / CLAIM_FILE if state_dir else None
+        self.claim = self.client.get_claim(repo_id, claim_id) if claim_id else self._resume_claim(repo_id)
+        if not self.claim:
+            self.claim = self.client.request("POST", self.client.path(repo_id, "/claims"),
+                                             body={"lease_seconds": lease_seconds})
+        self._remember_claim(repo_id)
         pinned = self.main_refs.get(repo_id)
         if not pinned or pinned["record_id"] != self.claim["base_record_id"]:
             self.abandon_claim(repo_id)
@@ -114,7 +131,36 @@ class ExchangeStore(ModelStore):
         print(f"exchange_claim_id={self.claim['id']} fence={self.claim['fence']}")
         for superseded in self.claim.get("superseded", []):
             print(f"skipped_submission={superseded}: superseded by a newer update from the same participant")
+        for skipped in self.claim.get("skipped", []):
+            print(f"skipped_submission={skipped}: creator's participant binding changed or membership revoked")
         return self.explicit_submissions(repo_id, self.claim["inputs"])
+
+    def _resume_claim(self, repo_id):
+        """Return the claim persisted by an interrupted run while it is still held; drop the file otherwise."""
+        if not self.claim_state or not self.claim_state.exists():
+            return None
+        saved = read_json(self.claim_state)
+        if saved.get("space") != repo_id or not saved.get("claim_id"):
+            return None
+        try:
+            return self.client.get_claim(repo_id, saved["claim_id"])
+        except ExchangeError as exc:
+            if exc.code not in STALE_CLAIM_CODES:
+                raise
+            self.claim_state.unlink(missing_ok=True)
+            return None
+
+    def _remember_claim(self, repo_id):
+        """Persist the held claim so a crashed round can be resumed (--claim-id) or abandoned by its ID."""
+        if self.claim_state:
+            saved = {key: self.claim[key] for key in ("fence", "base_record_id", "lease_until")}
+            write_json(self.claim_state, {"space": repo_id, "claim_id": self.claim["id"], **saved})
+
+    def _forget_claim(self):
+        """Drop the held claim and its persisted record once the server has released or completed it."""
+        self.claim = None
+        if self.claim_state:
+            self.claim_state.unlink(missing_ok=True)
 
     def abandon_claim(self, repo_id):
         if not self.claim:
@@ -124,7 +170,9 @@ class ExchangeStore(ModelStore):
             self.client.request("POST", self.client.path(repo_id, "/claims/" + claim["id"] + ":abandon"), body={"fence": claim["fence"]})
         except ExchangeError as exc:
             if exc.code not in ("claim_not_found", "claim_held_by_other", "claim_fence_changed"):
+                # The claim may still be held server-side: keep its persisted ID for a manual abandon.
                 raise
+        self._forget_claim()
 
     def publish_aggregate(self, repo_id, folder, paths, *, expected_base, next_round, tag):
         pinned = self.main_refs.get(repo_id)
@@ -139,7 +187,7 @@ class ExchangeStore(ModelStore):
         if self.claim:
             self.client.request("POST", self.client.path(repo_id, "/claims/" + self.claim["id"] + ":publish"),
                                 body={"record_id": revision, "fence": self.claim["fence"]})
-            self.claim = None
+            self._forget_claim()
         else:
             self.client.set_ref(repo_id, "main", revision, generation=pinned["generation"], idempotency_key="aggregate-" + revision)
         if tag:

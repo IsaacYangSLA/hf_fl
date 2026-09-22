@@ -154,7 +154,7 @@ download URLs.
 | --- | --- |
 | `POST /v1/spaces` | Authorized administrator creates a space |
 | `GET /v1/spaces/{id}`, `PATCH /v1/spaces/{id}` | Space admin reads or changes quota, per-principal quota and kind rules with `If-Match` |
-| `PUT /members/{principal_id}` | Administrator assigns explicit space roles; empty roles revoke and release the member's drafts |
+| `GET /members`, `PUT /members/{principal_id}` | Administrator lists members or assigns explicit space roles and the participant binding; empty roles revoke the member, release every draft it holds and exclude its ready `training.update` records from claims (even if the participant string is kept), while a binding change releases only its participant-bound (`training.update`) drafts. The last admin cannot be removed or demoted; the bootstrap admin may use these two routes without membership as an audited break-glass |
 | `GET /refs/{name}` | Resolve a named reference to an immutable record and generation |
 | `POST /records` | Create a draft with metadata and declared attachment names, sizes, SHA-256 values |
 | `PATCH /records/{id}` | Update own draft metadata using `If-Match`; attachment declarations freeze once transfer begins |
@@ -164,10 +164,10 @@ download URLs.
 | `POST /uploads/{id}/parts:authorize` | Issue or renew a bounded batch of multipart part URLs |
 | `GET /uploads/{id}` | Read transfer state and server-observed uploaded parts for resume |
 | `POST /uploads/{id}:complete` | Ask the service to complete and verify an upload |
-| `DELETE /uploads/{id}` | Abort an owned unfinished upload; cleanup is retryable |
+| `DELETE /uploads/{id}` | Abort an owned upload that is still `reserved`, `initiating` or `uploading`; completing, verifying and verified blobs are protected (`409`); cleanup is retryable |
 | `POST /records/{id}:publish` | Freeze metadata and atomically make a record ready after all blobs verify |
 | `DELETE /records/{id}` | Cancel an own draft (admins: any draft), or withdraw an own unreferenced ready record |
-| `POST /claims`, `GET /claims/{id}`, `POST /claims/{id}:renew`, `POST /claims/{id}:publish`, `POST /claims/{id}:abandon` | Coordinator freezes newest-per-participant (or explicit) inputs under a fenced lease, publishes a subset-provenanced result, or releases the claim |
+| `POST /claims`, `GET /claims`, `GET /claims/{id}`, `POST /claims/{id}:renew`, `POST /claims/{id}:publish`, `POST /claims/{id}:abandon` | Coordinator freezes newest-per-participant (or explicit) inputs under a fenced lease, publishes a subset-provenanced result, or releases the claim. Automatic freezing reports `superseded` and (binding-changed or creator-revoked) `skipped` updates; acquisition is idempotent for the current holder; `claim_busy` names the active claim; coordinators and admins can list claims by base, workflow and activity |
 | `POST /records/{id}/blobs/{blob_id}:download` | Authorize a GET/range transfer of the exact published object version |
 | `PUT /refs/{name}` | Coordinator updates a reference with `If-Match` generation, or creates with `If-None-Match: *` |
 | `GET /events?cursor=...` | Read a resumable, authorized event stream |
@@ -178,12 +178,18 @@ cursor pagination with a snapshot boundary so clients can iterate without
 missing concurrently inserted records. A missing attachment is not represented
 as an empty successful download.
 
-Mutation requests accept `Idempotency-Key`. Store keys scoped to principal,
-space, route and canonical request digest: the same request returns the same
-resource/result; reusing a key with different content returns `409`. Retain
-creation keys at least for the upload lifetime and the documented retry window.
-Replayed responses still require current authorization. URL renewal issues new
-credentials rather than replaying expired URLs.
+Creating mutations (`POST /v1/spaces`, `POST /records`, `PUT /refs/{name}`)
+require `Idempotency-Key`. Store keys scoped to principal, space, route and
+canonical request digest: the same request returns the same resource/result;
+reusing a key with different content returns `409`. The stored operation is
+inserted under a savepoint so that two concurrent requests with one key, which
+can race where no space row lock serializes them (space creation), both return
+the single stored result rather than a conflict. Retain creation keys at least
+for the upload lifetime and the documented retry window. Replayed responses
+still require current authorization. State-machine mutations (claims, uploads,
+publication) are idempotent through their own state instead: a holder's repeated
+claim acquisition returns the held claim, and a completed upload reports its
+state. URL renewal issues new credentials rather than replaying expired URLs.
 
 Return `202` and an observable operation/upload state for asynchronous
 verification, `409` for invalid state or idempotency conflicts, `412` for failed
@@ -326,9 +332,11 @@ Reference updates require the exact generation returned by `GET /refs/main`.
 Inside one transaction, verify coordinator permissions and target visibility,
 lock the reference, check the expected generation, require a ready same-space
 target, update the target/generation, and insert the event. The FL profile also
-requires `target.base_record_id` to equal the current target. Bootstrap uses
-conditional creation. Generations prevent a reference moved away and back from
-passing an outdated update. Only one concurrent publisher can succeed.
+requires `main` to name a `model.global` record whose `base_record_id` equals
+the current target, so no reader ever resolves `main` to a non-model record and
+the lineage check cannot be bypassed through an intermediate kind. Bootstrap
+uses conditional creation. Generations prevent a reference moved away and back
+from passing an outdated update. Only one concurrent publisher can succeed.
 
 Cleanup uses a grace period, live-reference checks and recorded object versions.
 It aborts expired multipart uploads, releases reservations, and removes orphan
@@ -343,7 +351,15 @@ FedAvg uses the generic service through an application profile:
 
 1. The coordinator creates the initial `model.global` record and `main` ref.
 2. Each participant reads `main`, pins its record ID, downloads its checkpoint,
-   trains locally, then publishes a `training.update` with that base ID.
+   trains locally, then publishes a `training.update` with that base ID. The
+   update carries the creator's server-bound participant. A rebinding cancels
+   the creator's open `training.update` drafts, and the binding, together
+   with the creator's continued membership (a member with roles `[]` holds no
+   binding), is re-checked whenever an update is published, frozen into a
+   claim (automatic freezing skips such updates, explicit inputs are
+   refused), retained by an expired claim's re-acquisition, or declared by
+   the aggregate that completes the claim, so an aggregate never attributes
+   an update to a participant its creator no longer holds.
 3. A `record.ready` event causes the coordinator to query ready updates for the
    current base and count distinct server-bound participant identities.
 4. Once the threshold is reached, a coordinator transaction claims work for

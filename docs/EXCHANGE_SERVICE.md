@@ -125,10 +125,44 @@ is unique within a space. Set a member's roles to `[]` to revoke access.
 Each subsequent API/grant request checks current membership. Already issued
 transfer URLs can remain usable until their five-minute expiry.
 
+The participant binding is enforced for the whole life of a training update,
+not only at creation. Setting roles to `[]` cancels every draft the member
+holds and releases their reservations. Changing or clearing a member's
+`participant` cancels only the drafts that carry the previous binding
+(`training.update`); message and `model.global` drafts survive, as does every
+draft when a member is bound for the first time, and a role change that keeps
+the binding leaves drafts alone. Publishing a `training.update` whose recorded
+participant no longer equals the creator's current binding fails with
+`participant_binding_changed`. A ready update whose creator was rebound, or
+whose creator's roles are now `[]` (a revoked member holds no binding, even
+if the `participant` string was kept on its row), is excluded from automatic
+claims (reported in the claim's `skipped` list), refused as an explicit claim
+input with the same code and `record_id`, and blocks the publication of a
+claimed aggregate that declares it. Either form of revocation therefore
+removes the participant's contributions from the next round without any
+further action. Restore the roles or the binding to make the update usable
+again, or withdraw it.
+
 Only the configured bootstrap admin can create spaces. The space creator gets
-admin, coordinator, and reader roles. Space admins can manage memberships;
-admin alone is not a data-reader or publisher role. All spaces require membership,
-including access by the bootstrap admin to spaces whose membership was changed.
+admin, coordinator, and reader roles. Space admins can manage memberships
+(`GET /members` lists them; `PUT /members/{principal_id}` sets roles and the
+binding); admin alone is not a data-reader or publisher role. Every other
+operation requires membership, including for the bootstrap admin once another
+admin has revoked it.
+
+Two safeguards keep a space manageable. An admin cannot remove its own admin
+role (`cannot_remove_own_admin_role`), and nobody can remove or demote the last
+member holding the admin role (`last_admin`). If the remaining admin's identity
+is nevertheless lost (subject rotated or deleted, or `EXCHANGE_ISSUER` changed,
+which renames every principal), the bootstrap admin has a break-glass path: it
+may always call `GET /v1/spaces/{id}/members` and `PUT /v1/spaces/{id}/members/*`
+even while not an admin member of the space. Use it to re-add yourself with
+`['admin', ...]`, after which normal membership rules apply again; re-adding
+yourself with lesser roles is also accepted, because the self-demotion guard
+only applies to a member that actually holds the admin role, and break-glass
+keeps working while the bootstrap admin is a non-admin member. Each such call
+is audited as a `member.bootstrap_grant` event on the space. No direct SQL is
+needed to recover a space.
 
 Admins read space policy with `GET /v1/spaces/{id}` and change `quota_bytes`,
 `principal_quota_bytes` or `rules` with `PATCH /v1/spaces/{id}` and the returned
@@ -199,14 +233,30 @@ file and directory (`a` and `a/b`). Attachment descriptors are returned with
 the record; record listings use bounded pages with a publication time boundary.
 Space byte quotas count both unfinished reservations and retained records.
 Cancel an unpublished record with `DELETE /records/{id}` to release its
-reservation. Failed/aborted uploads need a new record. Ready records are
+reservation. `DELETE /uploads/{id}` aborts one attachment transfer only while
+it is `reserved`, `initiating` or `uploading` (aborting again is a no-op);
+once completion has been requested it fails with `upload_completing`, a
+`verifying` or `verified` blob fails with `upload_already_completed`, and a
+transfer the worker already `failed` is refused with `upload_not_open`, so a
+stale retry cannot destroy a finished transfer. The provider upload ID is
+discarded once completion succeeds. Failed/aborted uploads need a new record.
+Ready records are
 immutable, but their creator (or a space admin) can withdraw one with the same
 `DELETE` call: the record becomes `withdrawn`, disappears from reads and
 discovery, releases its quota and its storage versions are reclaimed by the
 worker. Withdrawal is refused with `record_referenced`, `record_is_base` or
 `record_claimed` while a reference points at the record, another record builds
 on it, or an active claim has frozen it. `POST /records`, `PUT /refs/{name}`
-and `POST /v1/spaces` require an `Idempotency-Key` header (the SDK supplies one).
+and `POST /v1/spaces` require an `Idempotency-Key` header (the SDK supplies one);
+a replay returns the stored result, and concurrent identical requests with the
+same key both receive it, even for `POST /v1/spaces`, which takes no space
+lock. Reusing a key with a different body fails with `idempotency_key_reused`.
+`POST /claims` is idempotent by holder instead (see below).
+
+The `main` reference is reserved for the FedAvg profile: `PUT /refs/main`
+accepts only a ready, shared `model.global` record (`aggregate_kind_mismatch`
+otherwise) whose base is the current `main` (`aggregate_base_mismatch`).
+Other reference names accept any ready shared record.
 
 ## Existing federated-learning commands
 
@@ -247,14 +297,30 @@ automated coordinators, acquire a durable claim and freeze the input set:
   --output-dir work/owner-round-1 --publish
 ```
 
-The claim ID and fence are printed. `POST /claims` freezes the newest ready
-`training.update` per participant for the current `main` base; older updates
-from the same participant are reported as `superseded` (the CLI prints them as
-`skipped_submission`). A coordinator may instead pass an explicit `inputs`
-list of ready update IDs. Another acquisition while the lease is active fails
-with `claim_busy`; fewer than two candidates fails with
-`insufficient_submissions`; a base whose claim already produced a result fails
-with `claim_completed`. These are expected coordinator control conditions.
+The claim ID and fence are printed and also written to
+`<output-dir>/exchange-claim.json` while the claim is held; the file is
+removed once the server has released or completed the claim, and kept when an
+abandon request never reached the server so the ID stays available for a
+manual abandon. `POST /claims` freezes the newest ready `training.update` per
+participant for the current `main` base; older updates from the same
+participant are reported as `superseded`, and updates whose creator was revoked
+or no longer holds the recorded participant are left out and reported as
+`skipped` (the CLI
+prints both as `skipped_submission`). A coordinator may instead pass an
+explicit `inputs` list of ready update IDs. The call is
+idempotent for its holder: while its lease is active, the same coordinator
+receives its existing claim (same ID and fence) again, so a lost response or a
+restarted job simply re-acquires. An acquisition by a different coordinator
+while the lease is active fails with `claim_busy`, and the error body carries
+the active `claim_id` and `lease_until`; fewer than two usable candidates fails
+with `insufficient_submissions` (the body lists the `skipped` updates); a base
+whose claim already produced a result fails with `claim_completed`; an explicit
+input whose creator was rebound or revoked fails with `participant_binding_changed`,
+as does publishing a claimed aggregate that declares such an update. These are
+expected coordinator control conditions. Coordinators and admins can list
+claims with `GET /claims?base_record_id=...&workflow=...&active=true` (the
+SDK's `client.claims(space_id)`); `active=false` includes completed and expired
+ones.
 Domain validation still happens in the owner command: in claim mode an input
 that fails manifest or allowlist checks is skipped, and the published aggregate
 declares exactly the inputs it used, which must be a subset of the frozen set.
@@ -262,11 +328,20 @@ If the round fails after acquisition (for example an incompatible checkpoint),
 the CLI abandons the claim so `main` is not left frozen; the holder can also
 call `POST /claims/{id}:abandon` with its fence, and a space admin can abandon
 any claim without one. Withdraw the offending update, then claim again.
-After lease expiry, a new acquisition retains the frozen inputs (or accepts a
-new explicit `inputs` list) and advances the fence; an expired lease no longer
+After lease expiry, a new acquisition retains the frozen inputs, minus any whose
+creator was rebound or revoked in the meantime (reported as `skipped`), or accepts a
+new explicit `inputs` list, and advances the fence; an expired lease no longer
 blocks a plain generation-fenced `PUT /refs/main`. Stale holders cannot publish
 or bypass an active claim by directly updating `main`. A known active claim can
-be explicitly resumed with `--claim-id ID` in a new output directory. A running
+be explicitly resumed with `--claim-id ID` in a new output directory; after a
+crash, read the ID from the interrupted run's `exchange-claim.json` or from
+`GET /claims`, or simply run `--claim-submissions` again with the same
+coordinator identity, which returns the held claim (`--output-dir` must be a
+new directory, so the CLI always recovers through this holder idempotency).
+Programmatic callers of `ExchangeStore.claim_submissions(state_dir=...)` that
+reuse a directory resume the persisted claim while it is still held; a stale
+file (claim expired, completed or taken over) is discarded and a fresh
+acquisition made instead. A running
 coordinator can renew through `POST /claims/{id}:renew` with its fence and
 `lease_seconds`; the CLI does not automatically renew, so select a sufficient
 lease duration (up to 24 hours).

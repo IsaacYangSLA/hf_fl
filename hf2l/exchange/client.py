@@ -14,8 +14,9 @@ RETRYABLE_STATUS = (429, 502, 503, 504)
 
 
 class ExchangeError(RuntimeError):
-    def __init__(self, status, code):
-        self.status, self.code = status, code
+    def __init__(self, status, code, details=None):
+        # details carries the server's extra error fields, such as the ID of the claim that is busy.
+        self.status, self.code, self.details = status, code, dict(details or {})
         super().__init__(f"Exchange HTTP {status}: {code}")
 
 
@@ -71,10 +72,11 @@ class ExchangeClient:
                 continue
             if response.status_code >= 300:
                 try:
-                    code = response.json().get("code", "request_failed")
+                    details = response.json()
                 except ValueError:
-                    code = "request_failed"
-                raise ExchangeError(response.status_code, code)
+                    details = {}
+                details = details if isinstance(details, dict) else {}
+                raise ExchangeError(response.status_code, details.get("code", "request_failed"), details)
             return response.json()
 
     def path(self, space, suffix=""):
@@ -112,6 +114,18 @@ class ExchangeClient:
 
     def resolve(self, space, name="main"):
         return self.request("GET", self.path(space, "/refs/" + quote(name, safe="")))
+
+    def claims(self, space, *, base_record_id=None, workflow=None, active=True):
+        """Coordinators and admins list claims, by default only those with an unexpired lease and no result."""
+        params = {"active": "true" if active else "false"}
+        if base_record_id:
+            params["base_record_id"] = base_record_id
+        if workflow:
+            params["workflow"] = workflow
+        return self.request("GET", self.path(space, "/claims"), params=params)["items"]
+
+    def get_claim(self, space, claim_id):
+        return self.request("GET", self.path(space, "/claims/" + quote(claim_id, safe="")))
 
     def set_ref(self, space, name, record, *, generation=None, idempotency_key=None):
         headers = {"Idempotency-Key": idempotency_key or uuid.uuid4().hex}

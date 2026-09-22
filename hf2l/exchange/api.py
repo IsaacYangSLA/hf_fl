@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import time
+from types import SimpleNamespace
 import uuid
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -27,14 +28,17 @@ log = logging.getLogger("hf2l.exchange.api")
 
 # Records in these states hold no quota and their blobs are eligible for storage cleanup.
 RELEASED_STATES = ("expired", "cancelled", "withdrawn")
+# Kinds whose records carry the creator's participant binding and require it to stay unchanged.
+PARTICIPANT_KINDS = ("training.update",)
 
 
 def new_id(prefix):
     return prefix + "_" + uuid.uuid4().hex
 
 
-def fail(status, code):
-    raise HTTPException(status, code)
+def fail(status, code, **details):
+    # Extra details travel in the JSON body next to the stable code (for example the busy claim's ID).
+    raise HTTPException(status, {"code": code, **details} if details else code)
 
 
 def check_rules(rules):
@@ -56,11 +60,15 @@ class Service:
         self.auth = Authenticator(settings)
 
     @contextmanager
-    def transaction(self, space_id, who, role=None):
+    def transaction(self, space_id, who, role=None, break_glass=False):
         with self.sessions.begin() as session:
             # All mutations use this ordering. Membership changes serialize with authorization.
             space = session.scalar(select(Space).where(Space.id == space_id).with_for_update())
             member = session.get(Member, (space_id, who.id)) if space else None
+            if break_glass and space and who.bootstrap_admin and not (member and "admin" in member.roles):
+                # Audited recovery path: the bootstrap admin can always repair a space's membership.
+                self.emit(session, space_id, who, "member.bootstrap_grant")
+                member = SimpleNamespace(roles=["admin"], participant=None)
             if not member or not member.roles:
                 fail(404, "space_not_found")
             if role and role not in member.roles:
@@ -108,14 +116,32 @@ class Service:
             fail(400, "idempotency_key_required")
         identifier = hashlib.sha256(json.dumps([who.id, scope, key]).encode()).hexdigest()
         digest = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        previous = session.get(Operation, identifier)
+        previous = self.stored_operation(session, identifier)
         if previous:
-            if previous.digest != digest:
-                fail(409, "idempotency_key_reused")
-            return previous.result
-        result = operation()
-        session.add(Operation(id=identifier, digest=digest, result=result))
+            return self.replay(previous, digest)
+        try:
+            with session.begin_nested():
+                result = operation()
+                session.add(Operation(id=identifier, digest=digest, result=result))
+                session.flush()
+        except IntegrityError:
+            # A concurrent request with the same key committed first (no space lock protects space creation):
+            # the savepoint is rolled back and the stored result is replayed instead of reporting a conflict.
+            previous = self.stored_operation(session, identifier)
+            if not previous:
+                raise
+            return self.replay(previous, digest)
         return result
+
+    @staticmethod
+    def stored_operation(session, identifier):
+        return session.get(Operation, identifier)
+
+    @staticmethod
+    def replay(previous, digest):
+        if previous.digest != digest:
+            fail(409, "idempotency_key_reused")
+        return previous.result
 
     def validate_data(self, rule, data):
         try:
@@ -157,6 +183,9 @@ class Service:
         current = session.get(Ref, (space_id, name))
         if target.state != "ready" or not target.shared:
             fail(409, "reference_target_must_be_shared_and_ready")
+        if name == "main" and target.kind != "model.global":
+            # Every reader of main expects a global model checkpoint.
+            fail(409, "aggregate_kind_mismatch")
         if current:
             if expected != f'"{current.generation}"' or absent:
                 fail(412, "reference_changed")
@@ -173,27 +202,75 @@ class Service:
         return {"record_id": current.record_id, "generation": current.generation}
 
     def frozen_inputs(self, session, space_id, base_id, body):
-        """Freeze the newest ready update per participant, or validate coordinator-chosen inputs."""
+        """Freeze the newest ready update per participant, or validate coordinator-chosen inputs.
+
+        Returns the frozen IDs, the older updates they supersede and the updates skipped because their
+        creator was revoked or no longer holds the recorded participant. Explicitly chosen inputs are never skipped.
+        """
         candidates = list(session.scalars(select(Record).where(
             Record.space_id == space_id, Record.kind == "training.update", Record.state == "ready",
             Record.base_id == base_id).order_by(Record.published_at.desc(), Record.id.desc())))
+        superseded, skipped = [], []
         if body.inputs is not None:
             by_id = {r.id: r for r in candidates}
             chosen = [by_id.get(i) for i in body.inputs]
             if None in chosen or len({r.id for r in chosen}) != len(chosen) or len({r.participant for r in chosen}) != len(chosen):
                 fail(409, "claim_inputs_invalid")
-            superseded = []
+            for record in chosen:
+                self.check_binding(session, record)
         else:
-            chosen, seen, superseded = [], set(), []
+            chosen, seen = [], set()
             for record in candidates:
-                if record.participant in seen:
+                if not self.bound(session, record):
+                    skipped.append(record.id)
+                elif record.participant in seen:
                     superseded.append(record.id)
                 else:
                     seen.add(record.participant)
                     chosen.append(record)
+        self.require_minimum(chosen, body, skipped)
+        return sorted(r.id for r in chosen), superseded, skipped
+
+    def retained_inputs(self, session, inputs, body):
+        """Re-check an expired claim's frozen inputs: updates whose creator was rebound or revoked are dropped."""
+        records = list(session.scalars(select(Record).where(Record.id.in_(inputs))))
+        kept = [r.id for r in records if self.bound(session, r)]
+        skipped = sorted(set(inputs) - set(kept))
+        self.require_minimum(kept, body, skipped)
+        return sorted(kept), skipped
+
+    @staticmethod
+    def require_minimum(chosen, body, skipped):
         if len(chosen) < body.minimum:
-            fail(409, "insufficient_submissions")
-        return sorted(r.id for r in chosen), superseded
+            fail(409, "insufficient_submissions", skipped=skipped)
+
+    @staticmethod
+    def bound(session, record):
+        """Whether a participant-bound record's creator is still a member holding the participant recorded on it.
+
+        A revoked member (roles ``[]``) holds no binding, even if the participant string was kept on its row.
+        """
+        if record.kind not in PARTICIPANT_KINDS:
+            return True
+        member = session.get(Member, (record.space_id, record.creator))
+        return bool(member and member.roles) and member.participant == record.participant
+
+    def check_binding(self, session, record):
+        """A participant-bound record is only usable while its creator still holds that binding."""
+        if not self.bound(session, record):
+            fail(409, "participant_binding_changed", record_id=record.id)
+
+    def check_bindings(self, session, record_ids):
+        for record in session.scalars(select(Record).where(Record.id.in_(record_ids)).order_by(Record.id)):
+            self.check_binding(session, record)
+
+    def cancel_drafts(self, session, space, principal, who, kinds=None):
+        """Release the principal's drafts, optionally only those of the given kinds."""
+        query = select(Record).where(Record.space_id == space.id, Record.creator == principal, Record.state == "draft")
+        if kinds is not None:
+            query = query.where(Record.kind.in_(kinds))
+        for draft in session.scalars(query):
+            self.release(session, space, draft, who, "cancelled", "record.cancelled")
 
 
 def create_app(settings=None, storage=None):
@@ -208,11 +285,12 @@ def create_app(settings=None, storage=None):
     app = FastAPI(title="HF2L Exchange", version="1", lifespan=lifespan)
     app.state.service = service
 
-    def error(request, status, code, level=logging.WARNING, exc=None):
+    def error(request, status, code, level=logging.WARNING, exc=None, **details):
         request_id = getattr(request.state, "request_id", "")
         log.log(level, "%s %s -> %s %s request_id=%s%s", request.method, request.url.path, status, code, request_id,
                 f" error={type(exc).__name__}: {exc}" if exc else "")
-        return JSONResponse({"code": code, "request_id": request_id}, status, headers={"X-Request-ID": request_id})
+        return JSONResponse({"code": code, "request_id": request_id, **details}, status,
+                            headers={"X-Request-ID": request_id})
 
     @app.middleware("http")
     async def bounded_request(request, call_next):
@@ -234,7 +312,8 @@ def create_app(settings=None, storage=None):
 
     @app.exception_handler(HTTPException)
     async def http_error(request, exc):
-        response = error(request, exc.status_code, exc.detail, logging.DEBUG)
+        detail = dict(exc.detail) if isinstance(exc.detail, dict) else {"code": exc.detail}
+        response = error(request, exc.status_code, detail.pop("code"), logging.DEBUG, **detail)
         response.headers.update(exc.headers or {})
         return response
 
@@ -311,25 +390,41 @@ def create_app(settings=None, storage=None):
             service.emit(session, space_id, who, "space.updated", changed=sorted(k for k, v in body.model_dump().items() if v is not None))
             return JSONResponse(space_view(space), headers={"ETag": f'"{space.generation}"'})
 
+    def member_view(row):
+        return {"principal_id": row.principal, "roles": row.roles, "participant": row.participant}
+
+    @app.get(prefix + "/members")
+    def list_members(space_id: str, who=Depends(authenticate)):
+        with service.transaction(space_id, who, "admin", break_glass=True) as (session, _, _):
+            rows = session.scalars(select(Member).where(Member.space_id == space_id).order_by(Member.principal))
+            return {"items": [member_view(row) for row in rows]}
+
     @app.put(prefix + "/members/{member_id}")
     def put_member(space_id: str, member_id: str, body: MemberInput, who=Depends(authenticate)):
         if principal_id(service.settings.issuer, body.subject) != member_id:
             fail(422, "principal_subject_mismatch")
-        with service.transaction(space_id, who, "admin") as (session, space, member):
-            if member_id == who.id and "admin" not in body.roles:
-                fail(409, "cannot_remove_own_admin_role")
+        with service.transaction(space_id, who, "admin", break_glass=True) as (session, space, member):
             row = session.get(Member, (space_id, member_id))
+            # Only a real admin row can be self-demoted; a break-glass caller holds no admin role to remove.
+            if member_id == who.id and row and "admin" in row.roles and "admin" not in body.roles:
+                fail(409, "cannot_remove_own_admin_role")
+            if row and "admin" in row.roles and "admin" not in body.roles and not any(
+                    "admin" in other.roles for other in session.scalars(select(Member).where(
+                        Member.space_id == space_id, Member.principal != member_id))):
+                fail(409, "last_admin")
+            rebound = row is not None and row.participant != body.participant
             if not row:
                 row = Member(space_id=space_id, principal=member_id)
                 session.add(row)
             row.roles, row.participant = body.roles, body.participant
             if not body.roles:
                 # Revocation releases every reservation the principal still holds.
-                for draft in session.scalars(select(Record).where(
-                        Record.space_id == space_id, Record.creator == member_id, Record.state == "draft")):
-                    service.release(session, space, draft, who, "cancelled", "record.cancelled")
+                service.cancel_drafts(session, space, member_id, who)
+            elif rebound:
+                # A changed or cleared binding invalidates only the drafts that carry the previous binding.
+                service.cancel_drafts(session, space, member_id, who, kinds=PARTICIPANT_KINDS)
             service.emit(session, space_id, who, "membership.updated", member_id=member_id)
-            return {"principal_id": member_id, "roles": body.roles, "participant": body.participant}
+            return member_view(row)
 
     @app.get(prefix + "/me")
     def me(space_id: str, who=Depends(authenticate)):
@@ -443,6 +538,7 @@ def create_app(settings=None, storage=None):
                 fail(409, "record_expired")
             if any(blob.state != "verified" for blob in service.blobs(session, record.id)):
                 fail(409, "blobs_not_verified")
+            service.check_binding(session, record)
             service.validate_data(space.rules[record.kind], record.data)
             record.state = "ready"
             record.published_at = time.time()
@@ -535,7 +631,8 @@ def create_app(settings=None, storage=None):
             if current.state not in ("completing", "verifying", "verified"):
                 fail(409, "upload_cancelled")
             if current.state == "completing":
-                current.version = version
+                # The multipart upload no longer exists once completed; an abort must not target it.
+                current.version, current.upload_id = version, None
                 service.transition(current, "verifying")
                 # Verification time must not count against the transfer window.
                 record.expires_at = max(record.expires_at, time.time() + service.settings.upload_seconds)
@@ -545,8 +642,14 @@ def create_app(settings=None, storage=None):
     def abort_upload(space_id: str, blob_id: str, who=Depends(authenticate)):
         with service.transaction(space_id, who) as (session, _, member):
             blob, _ = service.owned_upload(session, space_id, blob_id, member, who)
+            if blob.state == "aborted":
+                return {"state": "aborted"}
+            if blob.state == "completing":
+                fail(409, "upload_completing")
             if blob.state in ("verifying", "verified"):
                 fail(409, "upload_already_completed")
+            if blob.state not in ("reserved", "initiating", "uploading"):
+                fail(409, "upload_not_open")
             service.transition(blob, "aborted")
         service.storage.abort(blob)
         return {"state": "aborted"}
@@ -596,9 +699,10 @@ def create_app(settings=None, storage=None):
                     items.append({"id": event.id, "type": event.kind, "record_id": event.record_id, "data": event.data})
             return {"items": items, "next_cursor": rows[-1].id if rows else cursor}
 
-    def claim_view(row, superseded=()):
-        return {"id": row.id, "base_record_id": row.base_id, "inputs": row.inputs, "superseded": list(superseded),
-                "fence": row.fence, "lease_until": row.lease_until, "holder": row.holder}
+    def claim_view(row, superseded=(), skipped=()):
+        return {"id": row.id, "workflow": row.workflow, "base_record_id": row.base_id, "inputs": row.inputs,
+                "superseded": list(superseded), "skipped": list(skipped), "fence": row.fence,
+                "lease_until": row.lease_until, "holder": row.holder, "result_record_id": row.result_id}
 
     def held_claim(session, space_id, claim_id, who):
         row = session.get(Claim, claim_id)
@@ -615,20 +719,27 @@ def create_app(settings=None, storage=None):
             if not ref:
                 fail(404, "reference_not_found")
             existing = session.scalar(select(Claim).where(Claim.space_id == space_id, Claim.workflow == body.workflow, Claim.base_id == ref.record_id))
-            superseded = []
+            superseded, skipped = [], []
             if existing:
                 if existing.result_id:
                     fail(409, "claim_completed")
                 if existing.lease_until > time.time():
-                    fail(409, "claim_busy")
+                    if existing.holder == who.id:
+                        # A retried or lost acquisition by the holder itself returns the live claim unchanged.
+                        return claim_view(existing)
+                    fail(409, "claim_busy", claim_id=existing.id, lease_until=existing.lease_until)
                 existing.fence += 1
                 existing.holder = who.id
                 existing.lease_until = time.time() + body.lease_seconds
                 if body.inputs is not None:
-                    existing.inputs, superseded = service.frozen_inputs(session, space_id, ref.record_id, body)
-                service.emit(session, space_id, who, "claim.acquired", claim_id=existing.id, fence=existing.fence)
+                    existing.inputs, superseded, skipped = service.frozen_inputs(session, space_id, ref.record_id, body)
+                else:
+                    # Retained inputs must still be attributable to their participants when the claim changes hands.
+                    existing.inputs, skipped = service.retained_inputs(session, existing.inputs, body)
+                service.emit(session, space_id, who, "claim.acquired", claim_id=existing.id, fence=existing.fence,
+                             inputs=existing.inputs)
             else:
-                inputs, superseded = service.frozen_inputs(session, space_id, ref.record_id, body)
+                inputs, superseded, skipped = service.frozen_inputs(session, space_id, ref.record_id, body)
                 existing = Claim(id=new_id("claim"), space_id=space_id, workflow=body.workflow,
                                  base_id=ref.record_id, ref_generation=ref.generation,
                                  inputs=inputs, holder=who.id, fence=1,
@@ -636,7 +747,22 @@ def create_app(settings=None, storage=None):
                 session.add(existing)
                 session.flush()
                 service.emit(session, space_id, who, "claim.acquired", claim_id=existing.id, fence=1, inputs=inputs)
-            return claim_view(existing, superseded)
+            return claim_view(existing, superseded, skipped)
+
+    @app.get(prefix + "/claims")
+    def list_claims(space_id: str, base_record_id: str | None = None, workflow: str | None = None,
+                    active: bool = True, who=Depends(authenticate)):
+        with service.transaction(space_id, who) as (session, _, member):
+            if not set(member.roles) & {"coordinator", "admin"}:
+                fail(403, "permission_denied")
+            query = select(Claim).where(Claim.space_id == space_id)
+            if base_record_id:
+                query = query.where(Claim.base_id == base_record_id)
+            if workflow:
+                query = query.where(Claim.workflow == workflow)
+            if active:
+                query = query.where(Claim.result_id.is_(None), Claim.lease_until > time.time())
+            return {"items": [claim_view(row) for row in session.scalars(query.order_by(Claim.lease_until, Claim.id))]}
 
     @app.get(prefix + "/claims/{claim_id}")
     def get_claim(space_id: str, claim_id: str, who=Depends(authenticate)):
@@ -693,6 +819,8 @@ def create_app(settings=None, storage=None):
             if (target.base_id != claim.base_id or not isinstance(declared, list) or not declared
                     or not set(declared) <= set(claim.inputs)):
                 fail(409, "claim_inputs_mismatch")
+            # A rebinding after freezing must not let the aggregate attribute an update to a stale participant.
+            service.check_bindings(session, declared)
             result = service.move_ref(session, space_id, "main", target, f'"{claim.ref_generation}"', "", who)
             claim.result_id = target.id
             service.emit(session, space_id, who, "claim.completed", target.id, claim_id=claim.id, inputs=declared)

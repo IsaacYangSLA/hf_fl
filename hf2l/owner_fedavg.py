@@ -269,7 +269,9 @@ def main() -> None:
                 )
 
         if claiming:
-            candidates = store.claim_submissions(args.repo_id, args.claim_id, args.claim_lease_seconds)
+            candidates = store.claim_submissions(
+                args.repo_id, args.claim_id, args.claim_lease_seconds, state_dir=output_dir
+            )
         elif automatic:
             candidates, skipped = store.discover_submissions(args.repo_id)
             for reason in skipped:
