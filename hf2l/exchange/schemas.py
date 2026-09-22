@@ -1,11 +1,27 @@
 """Bounded request models; server-controlled properties are never accepted."""
-import json
 from typing import Literal
 from pathlib import PurePosixPath
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .protocol import METADATA_LIMIT_BYTES, metadata_size
+
 ROLES = Literal["reader", "contributor", "coordinator", "admin"]
+
+# The built-in v1 FedAvg profile. The API keys its FL guarantees to these names: participant-bound updates that
+# require a base, a shared global model that main resolves to, and the provenance field a claimed result declares.
+UPDATE_KIND = "training.update"
+GLOBAL_KIND = "model.global"
+MAIN_REF = "main"
+PROVENANCE_FIELD = "input_record_ids"
+# Kinds a space's rules must always contain; custom rule sets may add kinds around them.
+PROFILE_KINDS = (UPDATE_KIND, GLOBAL_KIND)
+
+
+class MetadataTooLarge(ValueError):
+    def __init__(self, size):
+        self.size, self.limit = size, METADATA_LIMIT_BYTES
+        super().__init__(f"Metadata is {size} bytes; the limit is {METADATA_LIMIT_BYTES} bytes")
 
 
 class Input(BaseModel):
@@ -22,8 +38,8 @@ def default_rules():
     return {
         "message": KindRule(creators=["contributor", "coordinator"], shared=True),
         "configuration": KindRule(creators=["coordinator"], shared=True),
-        "training.update": KindRule(creators=["contributor"], shared=False),
-        "model.global": KindRule(creators=["coordinator"], shared=True),
+        UPDATE_KIND: KindRule(creators=["contributor"], shared=False),
+        GLOBAL_KIND: KindRule(creators=["coordinator"], shared=True),
         "evaluation.result": KindRule(creators=["coordinator"], shared=True),
     }
 
@@ -71,8 +87,9 @@ class MetadataInput(Input):
     @field_validator("metadata")
     @classmethod
     def bounded_metadata(cls, value):
-        if len(json.dumps(value, allow_nan=False).encode()) > 65536:
-            raise ValueError("Metadata exceeds 64 KiB")
+        size = metadata_size(value)
+        if size > METADATA_LIMIT_BYTES:
+            raise MetadataTooLarge(size)
         def depth(node, level=0):
             if level > 16:
                 raise ValueError("Metadata nesting exceeds 16 levels")

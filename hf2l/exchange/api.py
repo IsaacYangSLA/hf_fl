@@ -7,6 +7,7 @@ import logging
 import math
 import time
 from types import SimpleNamespace
+from urllib.parse import unquote
 import uuid
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -14,14 +15,18 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from jsonschema import Draft202012Validator, ValidationError, SchemaError
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
+from referencing import Registry
+from referencing.exceptions import Unresolvable as UnresolvableReference
 from sqlalchemy.exc import DBAPIError, IntegrityError, TimeoutError as PoolTimeoutError
 
 from .auth import Authenticator, principal_id
 from .config import Settings
 from .models import Blob, Claim, Event, Member, Operation, Record, Ref, Space, database
-from .schemas import (ClaimAbandon, ClaimInput, ClaimResult, LeaseInput, MemberInput, MetadataInput, PartsInput,
-                      RecordInput, RefInput, SpaceInput, SpacePatch)
+from .protocol import INLINE_FILES_KEY, INLINE_MANIFEST_NAMES, names_collide
+from .schemas import (GLOBAL_KIND, MAIN_REF, PROFILE_KINDS, PROVENANCE_FIELD, UPDATE_KIND, ClaimAbandon, ClaimInput,
+                      ClaimResult, LeaseInput, MemberInput, MetadataInput, MetadataTooLarge, PartsInput, RecordInput,
+                      RefInput, SpaceInput, SpacePatch)
 from .storage import S3BlobStore
 
 log = logging.getLogger("hf2l.exchange.api")
@@ -29,7 +34,23 @@ log = logging.getLogger("hf2l.exchange.api")
 # Records in these states hold no quota and their blobs are eligible for storage cleanup.
 RELEASED_STATES = ("expired", "cancelled", "withdrawn")
 # Kinds whose records carry the creator's participant binding and require it to stay unchanged.
-PARTICIPANT_KINDS = ("training.update",)
+PARTICIPANT_KINDS = (UPDATE_KIND,)
+# Schema keywords whose string value is a reference; only fragment-only (in-document) targets are accepted.
+REFERENCE_KEYWORDS = ("$ref", "$dynamicRef", "$recursiveRef")
+# Keywords whose values are data rather than subschemas: a "$ref" key inside them is ordinary content.
+DATA_KEYWORDS = ("const", "default", "enum", "examples")
+# Keywords whose value maps user-chosen names to subschemas; such a name is never a keyword.
+NAMED_SCHEMA_KEYWORDS = ("$defs", "definitions", "properties", "patternProperties", "dependentSchemas")
+# Keywords whose subschemas apply to the same instance as their parent, so a reference cycle through them never ends.
+SAME_INSTANCE_KEYWORDS = ("allOf", "anyOf", "oneOf", "not", "if", "then", "else")
+# What the FedAvg adapter always sends for each profile kind: field -> JSON type the kind's schema must accept.
+PROFILE_FIELDS = {GLOBAL_KIND: {PROVENANCE_FIELD: "array", INLINE_FILES_KEY: "object"},
+                  UPDATE_KIND: {INLINE_FILES_KEY: "object"}}
+META_SCHEMA_URIS = frozenset((
+    "https://json-schema.org/draft/2020-12/schema", "https://json-schema.org/draft/2019-09/schema",
+    "http://json-schema.org/draft-07/schema", "http://json-schema.org/draft-06/schema",
+    "http://json-schema.org/draft-04/schema",
+))
 
 
 def new_id(prefix):
@@ -41,15 +62,150 @@ def fail(status, code, **details):
     raise HTTPException(status, {"code": code, **details} if details else code)
 
 
+def local_identifier(value):
+    return value.startswith("#") or value.rstrip("#") in META_SCHEMA_URIS
+
+
+def remote_references(node, in_schema=True):
+    """Yield every reference in a schema that would leave the document.
+
+    Those are non-fragment ``$ref``/``$dynamicRef``/``$recursiveRef`` targets and ``$id``/``$schema`` values naming
+    anything but a standard meta-schema. Local ``$ref``/``$defs`` and prose containing the word are fine. The walk
+    tracks whether a dict is a schema or a name -> subschema map, so a property called ``default`` is still checked.
+    """
+    if isinstance(node, list):
+        for item in node:
+            yield from remote_references(item, in_schema)
+    elif isinstance(node, dict):
+        for key, value in node.items():
+            if not in_schema:
+                yield from remote_references(value)
+                continue
+            if key in DATA_KEYWORDS:
+                continue
+            if isinstance(value, str) and (key in REFERENCE_KEYWORDS and not value.startswith("#")
+                                           or key in ("$id", "$schema") and not local_identifier(value)):
+                yield value
+            yield from remote_references(value, key not in NAMED_SCHEMA_KEYWORDS)
+
+
+def resolve_local(root, anchors, reference):
+    """The subschema a fragment-only reference names, or None when this document does not resolve it."""
+    fragment = unquote(reference[1:])
+    if fragment and not fragment.startswith("/"):
+        return anchors.get(fragment)
+    node = root
+    for token in fragment.split("/")[1:]:
+        token = token.replace("~1", "/").replace("~0", "~")
+        if isinstance(node, dict) and token in node:
+            node = node[token]
+        elif isinstance(node, list) and token.isdigit() and int(token) < len(node):
+            node = node[int(token)]
+        else:
+            return None
+    return node if isinstance(node, dict) else None
+
+
+def dicts(node):
+    """Every dict in the document; name maps among them only add probes that no valid schema turns into a cycle."""
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from dicts(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from dicts(item)
+
+
+def same_instance_targets(root, anchors, schema):
+    """Subschemas a validator applies to the very instance it applies ``schema`` to."""
+    for key in REFERENCE_KEYWORDS:
+        if isinstance(schema.get(key), str) and schema[key].startswith("#"):
+            target = resolve_local(root, anchors, schema[key])
+            if target is not None:
+                yield target
+    for key in SAME_INSTANCE_KEYWORDS:
+        value = schema.get(key)
+        yield from (item for item in (value if isinstance(value, list) else [value]) if isinstance(item, dict))
+    dependent = schema.get("dependentSchemas")
+    if isinstance(dependent, dict):
+        yield from (item for item in dependent.values() if isinstance(item, dict))
+
+
+def reference_cycle(root):
+    """Whether validation could return to a schema before consuming any data, which never terminates."""
+    anchors = {node[key]: node for node in dicts(root) for key in ("$anchor", "$dynamicAnchor")
+               if isinstance(node.get(key), str)}
+    state = {}
+    def visit(schema):
+        if state.get(id(schema)) == "active":
+            return True
+        if id(schema) in state:
+            return False
+        state[id(schema)] = "active"
+        if any(visit(target) for target in same_instance_targets(root, anchors, schema)):
+            return True
+        state[id(schema)] = "done"
+        return False
+    return any(visit(schema) for schema in dicts(root))
+
+
+def schema_validator(schema):
+    # An empty registry has no retrieve callback: a reference that escapes the document fails instead of being fetched.
+    return Draft202012Validator(schema, registry=Registry())
+
+
+def check_profile(rules):
+    """Custom rule sets may add kinds but must keep the built-in FedAvg profile usable."""
+    for kind in PROFILE_KINDS:
+        if kind not in rules:
+            fail(422, "profile_kind_required", kind=kind)
+    if not rules[GLOBAL_KIND].shared:
+        # Every member resolves main, and a reference only ever names a shared record.
+        fail(422, "profile_kind_incompatible", kind=GLOBAL_KIND, reason="must_be_shared")
+    for kind, fields in PROFILE_FIELDS.items():
+        schema = rules[kind].metadata_schema
+        properties = schema.get("properties", {})
+        closed = schema.get("additionalProperties") is False or schema.get("unevaluatedProperties") is False
+        for field, expected in fields.items():
+            declared = properties.get(field)
+            if declared is False or (closed and field not in properties):
+                # A claimed result must declare its frozen inputs, and the adapter stores its manifests inline.
+                fail(422, "profile_kind_incompatible", kind=kind, reason="schema_forbids_" + field)
+            types = declared.get("type", expected) if isinstance(declared, dict) else expected
+            if expected not in (types if isinstance(types, list) else [types]):
+                fail(422, "profile_kind_incompatible", kind=kind, reason=f"schema_rejects_{field}_{expected}")
+
+
 def check_rules(rules):
-    for rule in rules.values():
+    for kind, rule in rules.items():
         try:
             Draft202012Validator.check_schema(rule.metadata_schema)
-        except SchemaError:
-            fail(422, "invalid_metadata_schema")
-        if "$ref" in json.dumps(rule.metadata_schema):
-            fail(422, "external_schema_references_not_supported")
+            if next(remote_references(rule.metadata_schema), None) is not None:
+                fail(422, "external_schema_references_not_supported", kind=kind)
+            if reference_cycle(rule.metadata_schema):
+                # Validation would apply the schema to the same instance forever; no record could ever pass.
+                fail(422, "invalid_metadata_schema", kind=kind, reason="cyclic_reference")
+        except (SchemaError, UnresolvableReference):
+            fail(422, "invalid_metadata_schema", kind=kind)
+        except RecursionError:
+            fail(422, "invalid_metadata_schema", kind=kind, reason="nesting_too_deep")
+    check_profile(rules)
     return {k: v.model_dump() for k, v in rules.items()}
+
+
+def check_attachment_names(names, metadata):
+    """Names must stay distinct on any filesystem and must not shadow an inline HF2L manifest of the record."""
+    inline = metadata.get(INLINE_FILES_KEY)
+    reserved = set(INLINE_MANIFEST_NAMES) | (set(inline) if isinstance(inline, dict) else set())
+    for index, name in enumerate(names):
+        if any(names_collide(name, other) for other in reserved):
+            fail(422, "attachment_name_reserved", name=name)
+        for other in names[index + 1:]:
+            if name.casefold() == other.casefold():
+                fail(422, "duplicate_attachment_name", name=name)
+            if names_collide(name, other):
+                fail(422, "attachment_name_collides_with_directory", name=name)
 
 
 class Service:
@@ -145,9 +301,13 @@ class Service:
 
     def validate_data(self, rule, data):
         try:
-            Draft202012Validator(rule.get("metadata_schema", {})).validate(data)
+            schema_validator(rule.get("metadata_schema", {})).validate(data)
         except ValidationError:
             fail(422, "metadata_schema_mismatch")
+        except (UnresolvableReference, RecursionError):
+            # The kind's schema references something outside the document, a missing local target, or itself without
+            # consuming data (a cycle check_rules did not foresee); fix the rule.
+            fail(422, "metadata_schema_unresolvable")
 
     def owned_upload(self, session, space_id, blob_id, member, who):
         blob = session.get(Blob, blob_id)
@@ -183,13 +343,13 @@ class Service:
         current = session.get(Ref, (space_id, name))
         if target.state != "ready" or not target.shared:
             fail(409, "reference_target_must_be_shared_and_ready")
-        if name == "main" and target.kind != "model.global":
+        if name == MAIN_REF and target.kind != GLOBAL_KIND:
             # Every reader of main expects a global model checkpoint.
             fail(409, "aggregate_kind_mismatch")
         if current:
             if expected != f'"{current.generation}"' or absent:
                 fail(412, "reference_changed")
-            if name == "main" and target.base_id != current.record_id:
+            if name == MAIN_REF and target.base_id != current.record_id:
                 fail(409, "aggregate_base_mismatch")
             current.record_id = target.id
             current.generation += 1
@@ -208,7 +368,7 @@ class Service:
         creator was revoked or no longer holds the recorded participant. Explicitly chosen inputs are never skipped.
         """
         candidates = list(session.scalars(select(Record).where(
-            Record.space_id == space_id, Record.kind == "training.update", Record.state == "ready",
+            Record.space_id == space_id, Record.kind == UPDATE_KIND, Record.state == "ready",
             Record.base_id == base_id).order_by(Record.published_at.desc(), Record.id.desc())))
         superseded, skipped = [], []
         if body.inputs is not None:
@@ -319,6 +479,10 @@ def create_app(settings=None, storage=None):
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, exc):
+        for item in exc.errors():
+            cause = (item.get("ctx") or {}).get("error")
+            if isinstance(cause, MetadataTooLarge):
+                return error(request, 422, "metadata_too_large", logging.DEBUG, size=cause.size, limit=cause.limit)
         return error(request, 422, "invalid_request", logging.DEBUG)
 
     @app.exception_handler(IntegrityError)
@@ -385,7 +549,20 @@ def create_app(settings=None, storage=None):
             if body.principal_quota_bytes is not None:
                 space.principal_quota = body.principal_quota_bytes
             if rules is not None:
+                previous = space.rules
+                added = sorted(set(rules) - set(previous))
+                removed = sorted(set(previous) - set(rules))
+                flipped = sorted(k for k in set(rules) & set(previous) if previous[k]["shared"] != rules[k]["shared"])
+                # Visibility follows the current rule: existing records of a kind adopt its (re)stated shared flag and
+                # records of a kind that left the rules become private, so Record.shared stays the single read column.
+                for kind in added + flipped + removed:
+                    shared = rules[kind]["shared"] if kind in rules else False
+                    session.execute(update(Record).where(Record.space_id == space_id, Record.kind == kind)
+                                    .values(shared=shared))
                 space.rules = rules
+                if added or removed or flipped:
+                    service.emit(session, space_id, who, "space.rules_changed", added=added, removed=removed,
+                                 shared_changed=flipped)
             space.generation += 1
             service.emit(session, space_id, who, "space.updated", changed=sorted(k for k, v in body.model_dump().items() if v is not None))
             return JSONResponse(space_view(space), headers={"ETag": f'"{space.generation}"'})
@@ -442,13 +619,9 @@ def create_app(settings=None, storage=None):
                 base = service.record(session, space_id, body.base_record_id, member, who)
                 if base.state != "ready":
                     fail(409, "base_not_ready")
-            if body.kind == "training.update" and (not member.participant or not body.base_record_id):
+            if body.kind == UPDATE_KIND and (not member.participant or not body.base_record_id):
                 fail(422, "participant_and_base_required")
-            names = [x.name for x in body.attachments]
-            if len(set(names)) != len(names):
-                fail(422, "duplicate_attachment_name")
-            if any(other.startswith(name + "/") for name in names for other in names):
-                fail(422, "attachment_name_collides_with_directory")
+            check_attachment_names([x.name for x in body.attachments], body.metadata)
             def operation():
                 size = sum(x.size_bytes for x in body.attachments)
                 if space.allocated + size > space.quota:
@@ -519,9 +692,11 @@ def create_app(settings=None, storage=None):
                 fail(409, "record_immutable")
             if if_match != f'"{record.generation}"':
                 fail(412, "record_changed")
-            if not set(member.roles) & set(space.rules[record.kind]["creators"]):
+            rule = space.rules.get(record.kind)
+            if not rule or not set(member.roles) & set(rule["creators"]):
                 fail(403, "permission_denied")
-            service.validate_data(space.rules[record.kind], body.metadata)
+            service.validate_data(rule, body.metadata)
+            check_attachment_names([blob.name for blob in service.blobs(session, record.id)], body.metadata)
             record.data = body.metadata
             record.generation += 1
             return service.serialize(session, record)
@@ -530,7 +705,8 @@ def create_app(settings=None, storage=None):
     def publish(space_id: str, record_id: str, who=Depends(authenticate)):
         with service.transaction(space_id, who) as (session, space, member):
             record = service.record(session, space_id, record_id, member, who, owner=True)
-            if not set(member.roles) & set(space.rules[record.kind]["creators"]):
+            rule = space.rules.get(record.kind)
+            if not rule or not set(member.roles) & set(rule["creators"]):
                 fail(403, "permission_denied")
             if record.state == "ready":
                 return service.serialize(session, record)
@@ -539,7 +715,7 @@ def create_app(settings=None, storage=None):
             if any(blob.state != "verified" for blob in service.blobs(session, record.id)):
                 fail(409, "blobs_not_verified")
             service.check_binding(session, record)
-            service.validate_data(space.rules[record.kind], record.data)
+            service.validate_data(rule, record.data)
             record.state = "ready"
             record.published_at = time.time()
             record.generation += 1
@@ -681,7 +857,8 @@ def create_app(settings=None, storage=None):
                 idempotency_key: str = Header(default="")):
         with service.transaction(space_id, who, "coordinator") as (session, _, member):
             target = service.record(session, space_id, body.record_id, member, who)
-            if name == "main" and any(claim.base_id == target.base_id for claim in service.active_claims(session, space_id)):
+            if name == MAIN_REF and any(claim.base_id == target.base_id
+                                        for claim in service.active_claims(session, space_id)):
                 fail(409, "active_claim_requires_fenced_publication")
             return service.once(session, who, space_id + "/refs/" + name, idempotency_key,
                                 {**body.model_dump(), "expected": if_match, "absent": if_none_match},
@@ -715,7 +892,7 @@ def create_app(settings=None, storage=None):
     @app.post(prefix + "/claims")
     def claim(space_id: str, body: ClaimInput, who=Depends(authenticate)):
         with service.transaction(space_id, who, "coordinator") as (session, _, member):
-            ref = session.get(Ref, (space_id, "main"))
+            ref = session.get(Ref, (space_id, MAIN_REF))
             if not ref:
                 fail(404, "reference_not_found")
             existing = session.scalar(select(Claim).where(Claim.space_id == space_id, Claim.workflow == body.workflow, Claim.base_id == ref.record_id))
@@ -814,14 +991,14 @@ def create_app(settings=None, storage=None):
             if claim.lease_until <= time.time():
                 fail(412, "claim_lease_expired")
             target = service.record(session, space_id, body.record_id, member, who)
-            declared = target.data.get("input_record_ids")
+            declared = target.data.get(PROVENANCE_FIELD)
             # The result may use a validated subset of the frozen inputs, never anything outside it.
             if (target.base_id != claim.base_id or not isinstance(declared, list) or not declared
                     or not set(declared) <= set(claim.inputs)):
                 fail(409, "claim_inputs_mismatch")
             # A rebinding after freezing must not let the aggregate attribute an update to a stale participant.
             service.check_bindings(session, declared)
-            result = service.move_ref(session, space_id, "main", target, f'"{claim.ref_generation}"', "", who)
+            result = service.move_ref(session, space_id, MAIN_REF, target, f'"{claim.ref_generation}"', "", who)
             claim.result_id = target.id
             service.emit(session, space_id, who, "claim.completed", target.id, claim_id=claim.id, inputs=declared)
             return result

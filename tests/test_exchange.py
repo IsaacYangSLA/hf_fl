@@ -24,14 +24,16 @@ try:
     from sqlalchemy import create_engine, text
     from sqlalchemy.engine import make_url
 
-    from hf2l.backends.exchange import ExchangeStore
+    from hf2l.backends.exchange import INLINE_METADATA_BUDGET, ROUND_FULL_FILE, ExchangeStore
     from hf2l.exchange.api import create_app
     from hf2l.exchange.auth import principal_id
     from hf2l.exchange.client import ExchangeClient, ExchangeError
     from hf2l.exchange.config import Settings
     from hf2l.exchange.models import Base, Blob, Claim, Event, Member, Record, Space
+    from hf2l.exchange.protocol import METADATA_LIMIT_BYTES, metadata_size
     from hf2l.exchange.storage import S3BlobStore
     from hf2l.exchange.worker import tick
+    from hf2l.hub_helpers import ROUND_FILE, SUBMISSION_FILE, write_json
     EXCHANGE_AVAILABLE = True
 except ModuleNotFoundError:
     EXCHANGE_AVAILABLE = False
@@ -686,7 +688,16 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(len(events), 4)
 
     def test_request_limits_safe_paths_and_foreign_keys(self):
-        self.assertEqual(self.create(metadata={"large": "x" * 65536}).status_code, 422)
+        large = self.create(metadata={"large": "x" * METADATA_LIMIT_BYTES})
+        self.assertEqual((large.status_code, self.code(large), large.json()["limit"]), (422, "metadata_too_large", METADATA_LIMIT_BYTES))
+        self.assertGreater(large.json()["size"], METADATA_LIMIT_BYTES)
+        # The SDK refuses oversized metadata before any draft exists, with the same code and a readable message.
+        sdk = self.sdk("alice")
+        with patch.object(sdk, "request", wraps=sdk.request) as spy, self.assertRaises(ExchangeError) as refused:
+            sdk.put_record(self.space, kind="message", metadata={"large": "x" * METADATA_LIMIT_BYTES})
+        spy.assert_not_called()
+        self.assertEqual((refused.exception.code, refused.exception.details["limit"]), ("metadata_too_large", METADATA_LIMIT_BYTES))
+        self.assertIn(f"at most {METADATA_LIMIT_BYTES}", str(refused.exception))
         response = self.client.post(self.prefix + "/records", headers=self.auth("alice"), content=b"x" * (1024 * 1024 + 1))
         self.assertEqual(response.status_code, 413)
         self.assertTrue(response.headers.get("X-Request-ID"))
@@ -696,6 +707,165 @@ class ExchangeTests(unittest.TestCase):
         collision = self.create(attachments=[{"name": "a", "size_bytes": 0, "sha256": empty}, {"name": "a/b", "size_bytes": 0, "sha256": empty}])
         self.assertEqual(self.code(collision), "attachment_name_collides_with_directory")
         self.assertEqual(self.create(base="rec_nonexistent").status_code, 404)
+
+    def set_rules(self, rules, subject="owner"):
+        space = self.client.get(self.prefix, headers=self.headers)
+        return self.client.patch(self.prefix, headers={**self.auth(subject), "If-Match": space.headers["ETag"]}, json={"rules": rules})
+
+    def test_rule_changes_apply_to_existing_records_and_keep_the_profile(self):
+        base = self.ready()
+        update = self.ready("alice", "training.update", base["id"])
+        route = self.prefix + f"/records/{update['id']}"
+        self.assertEqual(self.client.get(route, headers=self.auth("bob")).status_code, 404)
+        rules = self.client.get(self.prefix, headers=self.headers).json()["rules"]
+        rules["training.update"]["shared"] = True
+        self.assertEqual(self.set_rules(rules).status_code, 200)
+        # A changed shared flag applies to the records that already exist, not only to future ones.
+        self.assertEqual(self.client.get(route, headers=self.auth("bob")).status_code, 200)
+        listed = self.client.get(self.prefix + "/records", params={"kind": "training.update"}, headers=self.auth("bob")).json()["items"]
+        self.assertEqual([r["id"] for r in listed], [update["id"]])
+        with self.service.sessions.begin() as session:
+            events = [e.data for e in session.query(Event).filter_by(space_id=self.space, kind="space.rules_changed")]
+        self.assertEqual(events, [{"added": [], "removed": [], "shared_changed": ["training.update"]}])
+        rules["training.update"]["shared"] = False
+        self.assertEqual(self.set_rules(rules).status_code, 200)
+        self.assertEqual(self.client.get(route, headers=self.auth("bob")).status_code, 404)
+        self.assertEqual(self.client.get(self.prefix + "/records", params={"kind": "training.update"}, headers=self.auth("bob")).json()["items"], [])
+        # Custom rules may add kinds but cannot drop the FedAvg profile kinds or make main unresolvable.
+        refused = self.set_rules({k: v for k, v in rules.items() if k != "model.global"})
+        self.assertEqual((refused.status_code, self.code(refused), refused.json()["kind"]), (422, "profile_kind_required", "model.global"))
+        private_global = json.loads(json.dumps(rules))
+        private_global["model.global"]["shared"] = False
+        refused = self.set_rules(private_global)
+        self.assertEqual((self.code(refused), refused.json()["reason"]), ("profile_kind_incompatible", "must_be_shared"))
+        closed = json.loads(json.dumps(rules))
+        closed["model.global"]["metadata_schema"] = {"type": "object", "additionalProperties": False, "properties": {"round": {"type": "integer"}}}
+        self.assertEqual(self.code(self.set_rules(closed)), "profile_kind_incompatible")
+        closed["model.global"]["metadata_schema"]["properties"]["input_record_ids"] = {"type": "array"}
+        closed["model.global"]["metadata_schema"]["properties"]["hf2l_files"] = {"type": "object"}
+        closed["telemetry"] = {"creators": ["contributor"], "shared": True, "metadata_schema": {}}
+        self.assertEqual(self.set_rules(closed).status_code, 200)
+        created = self.client.post("/v1/spaces", headers={**self.headers, "Idempotency-Key": "no-profile"},
+                                   json={"name": "partial", "tenant": "tenant-9", "rules": {"message": rules["message"], "model.global": rules["model.global"]}})
+        self.assertEqual((created.status_code, self.code(created), created.json()["kind"]), (422, "profile_kind_required", "training.update"))
+
+    def test_metadata_schema_references_are_local_only_and_never_fetched(self):
+        rules = self.client.get(self.prefix, headers=self.headers).json()["rules"]
+        def with_schema(schema):
+            return {**rules, "message": {**rules["message"], "metadata_schema": schema}}
+        local = {"$schema": "https://json-schema.org/draft/2020-12/schema", "description": "no remote $ref in here",
+                 "$defs": {"count": {"type": "integer"}}, "type": "object", "properties": {"n": {"$ref": "#/$defs/count"}},
+                 "examples": [{"$ref": "https://example.com/data-not-a-reference"}]}
+        self.assertEqual(self.set_rules(with_schema(local)).status_code, 200)
+        self.assertEqual(self.code(self.create(metadata={"n": "x"})), "metadata_schema_mismatch")
+        self.assertEqual(self.create(metadata={"n": 1}).status_code, 201)
+        remote = ({"$ref": "https://attacker.example/s.json"}, {"$dynamicRef": "https://attacker.example/s.json"},
+                  {"$id": "https://attacker.example/root", "type": "object"}, {"properties": {"x": {"$recursiveRef": "other.json"}}})
+        for schema in remote:
+            refused = self.set_rules(with_schema(schema))
+            self.assertEqual((refused.status_code, self.code(refused), refused.json()["kind"]), (422, "external_schema_references_not_supported", "message"), schema)
+        created = self.client.post("/v1/spaces", headers={**self.headers, "Idempotency-Key": "remote"},
+                                   json={"name": "remote", "tenant": "tenant-9", "rules": with_schema(remote[1])})
+        self.assertEqual(self.code(created), "external_schema_references_not_supported")
+        # A rule that bypassed validation, or names a missing local target, yields 422 for its records: no 500, no fetch.
+        for broken in (remote[1], {"$ref": "#/$defs/missing"}):
+            with self.service.sessions.begin() as session:
+                session.get(Space, self.space).rules = with_schema(broken)
+            with patch("urllib.request.urlopen") as fetch:
+                response = self.create(metadata={"n": 1})
+            fetch.assert_not_called()
+            self.assertEqual((response.status_code, self.code(response)), (422, "metadata_schema_unresolvable"), broken)
+
+    def test_reserved_and_colliding_attachment_names(self):
+        empty = hashlib.sha256(b"").hexdigest()
+        def attempt(names, metadata=None):
+            return self.create(attachments=[{"name": n, "size_bytes": 0, "sha256": empty} for n in names], metadata=metadata)
+        for names, metadata in (([SUBMISSION_FILE], None), (["FedAvg_Round.json/part-1"], None),
+                                (["notes/a"], {"hf2l_files": {"notes": {}}}), (["Notes"], {"hf2l_files": {"notes": {}}})):
+            refused = attempt(names, metadata)
+            self.assertEqual((refused.status_code, self.code(refused), refused.json()["name"]), (422, "attachment_name_reserved", names[0]), names)
+        self.assertEqual(self.code(attempt(["Model.bin", "model.bin"])), "duplicate_attachment_name")
+        self.assertEqual(self.code(attempt(["a", "A/b"])), "attachment_name_collides_with_directory")
+        draft = attempt(["model.bin"])
+        self.assertEqual(draft.status_code, 201, draft.text)
+        shadowing = self.client.patch(self.prefix + f"/records/{draft.json()['id']}", headers={**self.auth("alice"), "If-Match": '"1"'},
+                                      json={"metadata": {"hf2l_files": {"model.bin": {}}}})
+        self.assertEqual(self.code(shadowing), "attachment_name_reserved")
+        # The adapter never produces such names either.
+        folder = Path(self.temp.name) / "upload"
+        folder.mkdir()
+        (folder / "Fedavg_Submission.json").write_bytes(b"{}")
+        with self.assertRaises(ValueError):
+            self.store("alice").publish_submission(self.space, folder, ["Fedavg_Submission.json"], participant="alice",
+                                                   source_round=0, base_revision="rec_x", submission_revision=None)
+        # A record accepted before this validation is refused by the adapter with a ValueError naming the record,
+        # instead of a filesystem error, so the owner's skip logic applies; manifest-only reads touch no attachment.
+        base = self.ready()
+        manifest = {"participant": "alice", "base_revision": base["id"]}
+        record = self.create("alice", "training.update", base["id"], data=b"weights", metadata={"hf2l_files": {SUBMISSION_FILE: manifest}}).json()
+        self.upload(record, b"weights")
+        self.assertEqual(tick(self.service)["verified"], 1)
+        self.assertEqual(self.client.post(self.prefix + f"/records/{record['id']}:publish", headers=self.auth("alice")).status_code, 200)
+        owner = self.store("owner")
+        target = Path(self.temp.name) / "manifest-only"
+        owner.download_snapshot(self.space, record["id"], target, allow_patterns=SUBMISSION_FILE)
+        self.assertEqual(sorted(p.name for p in target.iterdir()), [SUBMISSION_FILE])
+        with patch.object(owner.client, "download_attachment", side_effect=FileExistsError("model.bin")):
+            with self.assertRaises(ValueError) as failed:
+                owner.download_snapshot(self.space, record["id"], Path(self.temp.name) / "full")
+        self.assertIn(record["id"], str(failed.exception))
+        with self.service.sessions.begin() as session:
+            session.get(Blob, record["attachments"][0]["id"]).name = SUBMISSION_FILE
+        with self.assertRaises(ValueError) as shadowed:
+            owner.download_snapshot(self.space, record["id"], Path(self.temp.name) / "shadowed", allow_patterns=SUBMISSION_FILE)
+        self.assertIn(record["id"], str(shadowed.exception))
+        self.assertFalse((Path(self.temp.name) / "shadowed").exists())
+        with self.assertRaises(ValueError):
+            ExchangeStore._check_layout({"id": "rec_old", "attachments": [{"name": "a"}, {"name": "A/b"}]}, {})
+
+    def test_large_round_manifest_is_bounded_inline_with_complete_attachment(self):
+        errors = self.background_worker()
+        root = Path(self.temp.name)
+        owner = self.store("owner")
+        initial = root / "initial"
+        initial.mkdir()
+        write_json(initial / "config.json", {"model_type": "test"})
+        first = {"schema_version": 2, "backend": "exchange", "round": 0}
+        write_json(initial / ROUND_FILE, first)
+        base = owner.initialize_repository(self.space, initial, private=True).revision
+        # A manifest that fits stays inline unchanged and adds no attachment.
+        initial_record = owner.client.get_record(self.space, base)
+        self.assertEqual(([a["name"] for a in initial_record["attachments"]], initial_record["metadata"]["hf2l_files"][ROUND_FILE]), (["config.json"], first))
+        owner.resolve_revision(self.space, "main")
+        aggregate = root / "aggregate"
+        aggregate.mkdir()
+        write_json(aggregate / "config.json", {"model_type": "test"})
+        submissions = [{"participant": f"site-{n}", "author": "a" * 64, "submission_revision": f"rec_{n:032x}", "resolved_revision": f"rec_{n:032x}",
+                        "num_examples": n + 1, "coefficient": 1 / 40, "training": {"loss_curve": list(range(500)), "epochs": 3, "note": "n" * 300}}
+                       for n in range(40)]
+        full = {"schema_version": 2, "backend": "exchange", "round": 1, "base_revision": base, "checkpoint_files": ["config.json"],
+                "evaluation": {"accuracy": 0.9, "confusion": [[1, 2], [3, 4]]}, "submissions": submissions}
+        write_json(aggregate / ROUND_FILE, full)
+        self.assertGreater(metadata_size({"hf2l_files": {ROUND_FILE: full}}), METADATA_LIMIT_BYTES)
+        revision = owner.publish_aggregate(self.space, aggregate, ["config.json", ROUND_FILE], expected_base=base, next_round=1, tag=None).revision
+        record = owner.client.get_record(self.space, revision)
+        self.assertLessEqual(metadata_size(record["metadata"]), INLINE_METADATA_BUDGET)
+        inline = record["metadata"]["hf2l_files"][ROUND_FILE]
+        self.assertEqual((inline["round"], inline["base_revision"], inline["complete_manifest"], inline["evaluation"]), (1, base, ROUND_FULL_FILE, {"accuracy": 0.9}))
+        self.assertEqual([s["participant"] for s in inline["submissions"]], [s["participant"] for s in submissions])
+        self.assertEqual({k: inline["submissions"][3][k] for k in ("resolved_revision", "num_examples", "coefficient")},
+                         {"resolved_revision": submissions[3]["resolved_revision"], "num_examples": 4, "coefficient": 1 / 40})
+        self.assertEqual((inline["submissions"][3]["training"]["epochs"], "loss_curve" in inline["submissions"][3]["training"]), (3, False))
+        self.assertEqual([a["name"] for a in record["attachments"]], ["config.json", ROUND_FULL_FILE])
+        # Readers of the round record keep working: metadata-only reads see the bounded copy, full reads get both.
+        only = root / "manifest-only"
+        owner.download_snapshot(self.space, revision, only, allow_patterns=ROUND_FILE)
+        self.assertEqual((sorted(p.name for p in only.iterdir()), json.loads((only / ROUND_FILE).read_text())["round"]), ([ROUND_FILE], 1))
+        target = root / "download"
+        owner.download_snapshot(self.space, revision, target)
+        self.assertEqual((json.loads((target / ROUND_FULL_FILE).read_text()), json.loads((target / ROUND_FILE).read_text())), (full, inline))
+        self.assertEqual(owner.resolve_revision(self.space, "main"), revision)
+        self.assertEqual(errors, [])
 
     def test_worker_recovers_lost_initiation(self):
         record = self.create(data=b"hello").json()
@@ -820,7 +990,7 @@ class ExchangeTests(unittest.TestCase):
         import torch
         from safetensors.torch import load_file, save_file
         from hf2l.client_steps import download_client_round, upload_client_update
-        from hf2l.hub_helpers import ROUND_FILE, SUBMISSION_FILE, artifact_hashes, write_json
+        from hf2l.hub_helpers import artifact_hashes
         from hf2l.owner_fedavg import main
 
         errors = self.background_worker()
@@ -862,6 +1032,18 @@ class ExchangeTests(unittest.TestCase):
                                            "checkpoint_files_sha256": artifact_hashes(bad, ["config.json", "model.safetensors"])})
         incompatible = carol.publish_submission(self.space, bad, ["config.json", "model.safetensors", SUBMISSION_FILE], participant="carol",
                                                 source_round=0, base_revision=base, submission_revision=None).revision
+        # A record accepted before attachment names were validated carries a complete manifest as an attachment that
+        # shadows its incomplete inline copy. The owner must skip it rather than read the attachment's claims.
+        self.member("dave", ["contributor", "reader"], "dave")
+        dave = self.store("dave")
+        inline_manifest = {"schema_version": 2, "backend": "exchange", "repo_id": self.space, "participant": "dave",
+                           "base_revision": base, "source_round": 0, "training": {}}
+        shadow = root / "dave-shadow.json"
+        write_json(shadow, {**inline_manifest, "num_examples": 999999})
+        shadowing = dave.client.put_record(self.space, kind="training.update", metadata={"hf2l_files": {SUBMISSION_FILE: inline_manifest}},
+                                           files={"weights.bin": shadow}, base_record_id=base, wait_seconds=60)
+        with self.service.sessions.begin() as session:
+            session.get(Blob, shadowing["attachments"][0]["id"]).name = SUBMISSION_FILE
 
         readiness = root / "readiness"
         args = ["owner_fedavg", "--backend", "exchange", "--repo-id", self.space,

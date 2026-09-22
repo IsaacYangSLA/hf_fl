@@ -5,12 +5,68 @@ from pathlib import Path
 
 from hf2l.backends.base import ModelStore, PublishResult, SubmissionCandidate
 from hf2l.exchange.client import ExchangeClient, ExchangeError
+from hf2l.exchange.protocol import (INLINE_FILES_KEY, INLINE_MANIFEST_NAMES, METADATA_LIMIT_BYTES, metadata_size,
+                                    names_collide)
 from hf2l.hub_helpers import ROUND_FILE, SUBMISSION_FILE, read_json, write_json
 
 # Held-claim state written into the coordinator's output directory; removed after publish or abandon.
 CLAIM_FILE = "exchange-claim.json"
 # GET /claims/{id} outcomes that mean a persisted claim is no longer ours to resume.
 STALE_CLAIM_CODES = ("claim_not_active", "claim_not_found", "claim_held_by_other")
+# Record metadata size above which the complete round manifest becomes an attachment; headroom under the limit.
+INLINE_METADATA_BUDGET = METADATA_LIMIT_BYTES * 3 // 4
+# Attachment carrying the complete round manifest whenever the inline copy had to be bounded.
+ROUND_FULL_FILE = "fedavg_round-full.json"
+# Per-submission fields of the bounded inline round manifest, from the fullest summary to the smallest that may fit.
+SUMMARY_LEVELS = (("participant", "resolved_revision", "num_examples", "coefficient"),
+                  ("participant", "num_examples", "coefficient"))
+
+
+def scalars(mapping, limit):
+    """The scalar entries of ``mapping``, taken in key order while their serialized size stays within ``limit``."""
+    kept, used = {}, 2
+    for key in sorted(mapping):
+        value = mapping[key]
+        if isinstance(value, (dict, list)):
+            continue
+        cost = metadata_size({key: value})
+        if used + cost > limit:
+            break
+        kept[key] = value
+        used += cost
+    return kept
+
+
+def bounded_round(full, budget):
+    """Shrink a round manifest to at most ``budget`` serialized bytes for inline storage.
+
+    Every top-level field survives and ``submission_count`` is added. Submissions keep the fullest summary that fits:
+    identity, weight and as many scalar training values as an equal share of the remaining budget allows; then the
+    same without revision and training; then only a ``participants`` name list; past that only the count.
+    Evaluation keeps scalar values only. ``complete_manifest`` names the attachment holding the unabridged manifest.
+    """
+    items = full.get("submissions", [])
+    bounded = {key: value for key, value in full.items() if key != "submissions"}
+    bounded.update(evaluation=None, complete_manifest=ROUND_FULL_FILE, submission_count=len(items))
+    if isinstance(full.get("evaluation"), dict):
+        bounded["evaluation"] = scalars(full["evaluation"], budget // 8)
+    for level, fields in enumerate(SUMMARY_LEVELS):
+        summaries = [{key: item.get(key) for key in fields} for item in items]
+        if level == 0:
+            for entry in summaries:
+                entry["training"] = {}
+        candidate = {**bounded, "submissions": summaries}
+        remaining = budget - metadata_size(candidate)
+        if remaining < 0:
+            continue
+        if level == 0:
+            share = remaining // max(1, len(items))
+            for entry, item in zip(summaries, items):
+                if isinstance(item.get("training"), dict):
+                    entry["training"] = scalars(item["training"], share)
+        return candidate
+    candidate = {**bounded, "participants": [item.get("participant") for item in items]}
+    return candidate if metadata_size(candidate) <= budget else bounded
 
 
 class ExchangeStore(ModelStore):
@@ -35,37 +91,88 @@ class ExchangeStore(ModelStore):
         record = self.client.get_record(repo_id, revision)
         if record["state"] != "ready":
             raise ValueError("Only ready records can be downloaded")
+        inline = self._inline_manifests(record)
+        self._check_layout(record, inline)
         patterns = [allow_patterns] if isinstance(allow_patterns, str) else allow_patterns
         def wanted(name):
             return patterns is None or any(fnmatch.fnmatch(name, pattern) for pattern in patterns)
-        inline = record["metadata"].get("hf2l_files", {})
-        if not isinstance(inline, dict) or not all(isinstance(v, dict) for v in inline.values()):
-            raise ValueError("Malformed inline HF2L manifests")
         for name, content in inline.items():
-            if name not in (ROUND_FILE, SUBMISSION_FILE):
-                raise ValueError("Unknown inline HF2L manifest")
             if wanted(name):
                 if name == SUBMISSION_FILE and (content.get("participant") != record["participant"] or
                                                 content.get("base_revision") != record["base_record_id"]):
                     raise ValueError("Manifest differs from server-bound participant or base")
                 write_json(self.client.safe_destination(local_dir, name), content)
+        if patterns is not None and set(patterns) <= set(INLINE_MANIFEST_NAMES):
+            # A manifest-only read never touches attachments, so none can shadow the checked inline copies.
+            return
         for attachment in record["attachments"]:
             if wanted(attachment["name"]):
-                self.client.download_attachment(repo_id, record["id"], attachment,
-                                                self.client.safe_destination(local_dir, attachment["name"]))
+                destination = self.client.safe_destination(local_dir, attachment["name"])
+                try:
+                    self.client.download_attachment(repo_id, record["id"], attachment, destination)
+                except OSError as exc:
+                    raise ValueError(f"Cannot materialise attachment {attachment['name']!r} of record "
+                                     f"{record['id']}: {exc}") from exc
+
+    @staticmethod
+    def _inline_manifests(record):
+        inline = record["metadata"].get(INLINE_FILES_KEY, {})
+        if not isinstance(inline, dict) or not all(isinstance(v, dict) for v in inline.values()):
+            raise ValueError("Malformed inline HF2L manifests")
+        if any(name not in INLINE_MANIFEST_NAMES for name in inline):
+            raise ValueError("Unknown inline HF2L manifest")
+        return inline
+
+    @staticmethod
+    def _check_layout(record, inline):
+        """Refuse a record whose attachments would shadow a manifest or collide on disk (accepted before validation)."""
+        names = [attachment["name"] for attachment in record["attachments"]]
+        reserved = set(INLINE_MANIFEST_NAMES) | set(inline)
+        for index, name in enumerate(names):
+            if any(names_collide(name, other) for other in reserved):
+                raise ValueError(f"Attachment {name!r} shadows an inline manifest in record {record['id']}")
+            if any(names_collide(name, other) for other in names[index + 1:]):
+                raise ValueError(f"Attachment {name!r} collides with another attachment in record {record['id']}")
 
     def _publish(self, repo_id, folder, paths, kind, base=None, extra=None):
-        files, inline = {}, {}
+        files, inline, extra, complete = {}, {}, extra or {}, None
         for name in paths:
             path = self.client.safe_destination(folder, name)
-            if name in (ROUND_FILE, SUBMISSION_FILE):
+            if name in INLINE_MANIFEST_NAMES:
                 inline[name] = read_json(path)
+            elif name == ROUND_FULL_FILE:
+                complete = read_json(path)
+            elif any(names_collide(name, reserved) for reserved in (*INLINE_MANIFEST_NAMES, ROUND_FULL_FILE)):
+                raise ValueError(f"Attachment name {name!r} is reserved for HF2L manifests")
             else:
                 files[name] = path
-        record = self.client.put_record(repo_id, kind=kind, metadata={"hf2l_files": inline, **(extra or {})}, files=files,
+        if ROUND_FILE in inline and inline[ROUND_FILE].get("complete_manifest") == ROUND_FULL_FILE:
+            # A snapshot of a bounded round record is published from its unabridged manifest, never from the copy.
+            if complete is None:
+                raise ValueError(f"{ROUND_FILE} names {ROUND_FULL_FILE} as its complete manifest, which is not published")
+            inline[ROUND_FILE] = complete
+        if ROUND_FILE in inline:
+            self._bound_round(folder, files, inline, extra)
+        record = self.client.put_record(repo_id, kind=kind, metadata={INLINE_FILES_KEY: inline, **extra}, files=files,
                                         base_record_id=base, wait_seconds=self.wait_seconds,
                                         state_path=Path(folder).parent / (Path(folder).name + ".exchange-upload.json"))
         return record["id"]
+
+    @staticmethod
+    def _bound_round(folder, files, inline, extra):
+        """Keep the record metadata within the inline budget; the complete round manifest becomes an attachment."""
+        if metadata_size({INLINE_FILES_KEY: inline, **extra}) <= INLINE_METADATA_BUDGET:
+            return
+        complete = ExchangeClient.safe_destination(folder, ROUND_FULL_FILE)
+        write_json(complete, inline[ROUND_FILE])
+        files[ROUND_FULL_FILE] = complete
+        budget = INLINE_METADATA_BUDGET - metadata_size({INLINE_FILES_KEY: {**inline, ROUND_FILE: {}}, **extra})
+        inline[ROUND_FILE] = bounded_round(inline[ROUND_FILE], budget)
+        size = metadata_size({INLINE_FILES_KEY: inline, **extra})
+        if size > INLINE_METADATA_BUDGET:
+            # Only top-level fields are left: many checkpoint shards, or a provenance list of over a thousand inputs.
+            raise ValueError(f"Record metadata is {size} bytes with {ROUND_FILE} bounded to its top-level fields; "
+                             f"the inline budget is {INLINE_METADATA_BUDGET} bytes")
 
     def initialize_repository(self, repo_id, folder, *, private):
         # Space creation/membership is an explicit administrative operation.

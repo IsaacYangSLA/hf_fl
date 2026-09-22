@@ -67,8 +67,13 @@ Each record has a server-assigned ID, `kind`, `schema_version`, optional
 `base_record_id`, `metadata`, attachment descriptors, and server-assigned
 creator/time/state. Examples of kinds are `training.update`, `model.global`,
 `evaluation.result`, `configuration`, and `message`. Kind-specific metadata
-schemas and allowed creator roles are configured per space. A client cannot
-gain publishing privileges by choosing `kind=model.global`.
+schemas and allowed creator roles are configured per space and can be changed
+later; a changed visibility flag is applied to the kind's existing records in
+the same transaction, so policy is never frozen into a record. Schemas are
+self-contained: only in-document references are accepted, validation uses a
+registry without a retrieval callback, and an unresolvable rule fails the
+affected records with a client error rather than a server fault. A client
+cannot gain publishing privileges by choosing `kind=model.global`.
 
 A record with no attachments supports small-information exchange alone. A
 record with one attachment supports the requested big-file exchange. Multiple
@@ -86,7 +91,13 @@ be persisted as the identity or storage location of a blob.
 Suggested initial limits: 64 KiB of metadata per record, paginated attachment
 descriptors, bounded JSON depth, and a configurable file/count/byte quota per
 space and principal. These are service policy defaults, not object-store
-limits. Quota reservations are atomic and include pending uploads.
+limits. Quota reservations are atomic and include pending uploads. The
+metadata limit is reported with its size and limit (`metadata_too_large`) and
+pre-checked by the SDK before a draft exists; applications that aggregate
+unbounded metadata (the FedAvg round record) must bound what they store inline
+and attach the rest. Attachment names are unique case-insensitively, never
+nest as file and directory, and never shadow an inline manifest name, so a
+record can always be materialised as a directory.
 
 ## 3. Authentication and authorization
 
@@ -125,7 +136,8 @@ For a fully shared information exchange, configure contributor-created ready
 records to be readable by all space members. For FL, use a policy where client
 updates are visible to their creator and coordinators, while approved global
 models/configuration are readable by all participants. The service chooses the
-effective visibility from policy; contributors cannot widen it themselves.
+effective visibility from policy; contributors cannot widen it themselves, and
+an admin's later policy change applies to existing records as well.
 
 Storage remains private. End clients receive no persistent bucket credentials,
 list permission, delete permission, or arbitrary-key write access. Only service
@@ -347,7 +359,18 @@ database and retain matching blob versions so a restored record remains usable.
 
 ## 7. FedAvg and event-driven jobs
 
-FedAvg uses the generic service through an application profile:
+FedAvg uses the generic service through an application profile. Version 1
+ships exactly one such profile, built in and not configurable: it is keyed to
+the kinds `training.update` (participant-bound, base required, private by
+default) and `model.global` (shared, base-linked), to the `main` reference and
+to the `input_record_ids` provenance field of a claimed result. The FL
+guarantees below (participant and base requirements, the aggregate base check
+on `main`, claim eligibility and result linkage) apply to those names only.
+Custom kind rules may add kinds around them but must keep both profile kinds,
+with `model.global` shared and its schema accepting `input_record_ids`; the
+service rejects rule sets that do not (`profile_kind_required`,
+`profile_kind_incompatible`). A second workflow needs its own profile, not a
+renamed copy of this one.
 
 1. The coordinator creates the initial `model.global` record and `main` ref.
 2. Each participant reads `main`, pins its record ID, downloads its checkpoint,
@@ -425,10 +448,17 @@ relationship. Preserve generic CLI aliases `--submission` and
 `--discover-submissions`; HF-specific `--pr` flags remain HF-only.
 
 Store `fedavg_round.json` and `fedavg_submission.json` content in the record's
-HF2L metadata namespace. The adapter reconstructs those files for existing
-readers; config and checkpoint files retain their normal names and hashes.
-Reject any mismatch between manifest identity/base and server-owned fields.
-Metadata-only readiness checks require no large-file reads.
+HF2L metadata namespace (`hf2l_files`). The adapter reconstructs those files
+for existing readers; config and checkpoint files retain their normal names
+and hashes. Reject any mismatch between manifest identity/base and
+server-owned fields. Those manifest names, and any key of `hf2l_files`, are
+reserved: the service refuses attachments that equal, nest under or enclose
+them, and the adapter refuses to publish or materialise such a record, so an
+attachment can never shadow the checked inline copy. Metadata-only readiness
+checks read inline manifests only and require no large-file reads. Because
+the round record embeds every participant's training metadata, the adapter
+keeps the inline copy within three quarters of the metadata limit and uploads
+the complete manifest as `fedavg_round-full.json` when it would not fit.
 
 Two explicit compatibility changes are needed beyond adding the adapter:
 

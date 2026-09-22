@@ -10,14 +10,16 @@ import uuid
 
 import httpx
 
+from .protocol import METADATA_LIMIT_BYTES, metadata_size
+
 RETRYABLE_STATUS = (429, 502, 503, 504)
 
 
 class ExchangeError(RuntimeError):
-    def __init__(self, status, code, details=None):
+    def __init__(self, status, code, details=None, message=None):
         # details carries the server's extra error fields, such as the ID of the claim that is busy.
         self.status, self.code, self.details = status, code, dict(details or {})
-        super().__init__(f"Exchange HTTP {status}: {code}")
+        super().__init__(message or f"Exchange HTTP {status}: {code}")
 
 
 def sha256(path):
@@ -139,6 +141,11 @@ class ExchangeClient:
         for path in files.values():
             if path.is_symlink() or not path.is_file():
                 raise ValueError("Uploads must be regular files")
+        size = metadata_size(metadata)
+        if size > METADATA_LIMIT_BYTES:
+            # Refused before any draft or transfer exists: the same request would fail server-side after the upload.
+            raise ExchangeError(422, "metadata_too_large", {"size": size, "limit": METADATA_LIMIT_BYTES},
+                                f"Record metadata is {size} bytes; the exchange accepts at most {METADATA_LIMIT_BYTES}")
         body = {"kind": kind, "metadata": metadata, "base_record_id": base_record_id,
                 "attachments": [{"name": name, "size_bytes": path.stat().st_size, "sha256": sha256(path)}
                                 for name, path in files.items()]}

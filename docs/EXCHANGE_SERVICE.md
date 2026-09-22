@@ -76,8 +76,10 @@ run concurrently: each leases the blobs it works on. `worker --once` runs a
 single pass.
 
 Expose the API through an HTTPS reverse proxy. Apply connection/request timeouts
-and rate limits there; the API limits request bodies to 1 MiB and record metadata
-to 64 KiB. Interactive API documentation is at `/docs`, and the machine-readable
+and rate limits there; the API limits request bodies to 1 MiB (`413
+request_too_large`) and record metadata to 64 KiB (`422 metadata_too_large`,
+whose body carries the serialized `size` and the `limit`). Interactive API
+documentation is at `/docs`, and the machine-readable
 contract is `/openapi.json`; block or gate these paths at the proxy if the API
 is reachable from untrusted networks. No file bytes are proxied through the API.
 
@@ -221,15 +223,54 @@ partial files are also resumable and are checked against the full-file digest
 before replacement.
 
 Default kinds are `message`, `configuration`, `training.update`, `model.global`,
-and `evaluation.result`. Space creation can supply custom kind rules with
-allowed creator roles, shared/private visibility, and local JSON Schemas.
-Remote JSON Schema references are rejected. Contributors can publish messages
-and training updates; only coordinators can publish global models/configuration.
-Training updates are private to their creator and coordinators. Shared ready
-records are readable by enrolled readers/contributors. Drafts are creator-only.
+and `evaluation.result`. Space creation and `PATCH /v1/spaces/{id}` can supply
+custom kind rules with allowed creator roles, shared/private visibility, and a
+JSON Schema (draft 2020-12) for the kind's metadata. Schemas are checked and
+applied without any network access. Local references (`"$ref": "#/$defs/..."`)
+and prose containing the word `$ref` are accepted; a `$ref`, `$dynamicRef` or
+`$recursiveRef` whose target is not fragment-only, or an `$id`/`$schema`
+naming anything but a standard JSON Schema meta-schema URI, is rejected with
+`external_schema_references_not_supported` (the body names the `kind`), and a
+schema that fails the meta-schema with `invalid_metadata_schema`. Records are
+validated against a reference registry that has no retrieval callback, so a
+rule that still cannot be resolved (for example a missing local target) makes
+record creation, draft metadata updates and publication for that kind fail
+with `metadata_schema_unresolvable` instead of an internal error; correct the
+rule with `PATCH`.
 
-One record can contain up to 256 named attachments; names must not collide as
-file and directory (`a` and `a/b`). Attachment descriptors are returned with
+The service ships one built-in FedAvg profile and no other workflow. It is
+keyed to the kinds `training.update` (bound to the creator's participant,
+requires a base, private by default) and `model.global` (shared, linked to its
+base), to the `main` reference, which only accepts a shared ready
+`model.global`, and to the `input_record_ids` metadata field a claimed result
+declares. Custom rules may add kinds and change creators, visibility and
+schemas, but must keep both profile kinds: a rule set missing one fails with
+`profile_kind_required` (`kind` in the body), and `model.global` must stay
+shared and its schema must not forbid `input_record_ids`
+(`profile_kind_incompatible`, with `kind` and `reason`). The FedAvg adapter
+additionally stores its inline manifests under the `hf2l_files` metadata key
+of both kinds, so a custom schema for them must accept that property.
+
+Rule changes apply to existing records. Changing a kind's `shared` flag updates
+the visibility of every record of that kind already in the space in the same
+transaction (audited as a `space.rules_changed` event listing the kinds whose
+flag changed), so a project can later make training updates readable by all
+contributors, or private again, without a new space. Contributors can publish
+messages and training updates; only coordinators can publish global
+models/configuration. Training updates are private to their creator and
+coordinators unless the rule says otherwise. Shared ready records are readable
+by enrolled readers/contributors. Drafts are creator-only.
+
+One record can contain up to 256 named attachments. Names are compared
+case-insensitively so a download behaves the same on every filesystem: two
+names differing only by case fail with `duplicate_attachment_name`, names that
+collide as file and directory (`a` and `a/b`) with
+`attachment_name_collides_with_directory`, and a name equal to, nested under
+or enclosing an inline HF2L manifest, that is `fedavg_round.json`,
+`fedavg_submission.json` or any key of the record's `hf2l_files` metadata,
+with `attachment_name_reserved`; the body carries the offending `name`. The
+same check runs when a draft's metadata is changed, so an attachment can never
+shadow an inline manifest. Attachment descriptors are returned with
 the record; record listings use bounded pages with a publication time boundary.
 Space byte quotas count both unfinished reservations and retained records.
 Cancel an unpublished record with `DELETE /records/{id}` to release its
@@ -345,6 +386,32 @@ acquisition made instead. A running
 coordinator can renew through `POST /claims/{id}:renew` with its fence and
 `lease_seconds`; the CLI does not automatically renew, so select a sufficient
 lease duration (up to 24 hours).
+
+Record metadata is limited to 64 KiB. The SDK's `put_record` measures the
+serialized metadata and raises `ExchangeError` with code `metadata_too_large`
+(and `size`/`limit` in `details`) before creating a draft, so a participant
+whose `--metadata-json` training metadata is too large fails at upload time
+with a clear message instead of after the transfer. The owner's round record
+`fedavg_round.json` is stored inline in the aggregate's metadata next to
+`input_record_ids`. When that metadata would exceed 48 KiB (three quarters of
+the limit), the adapter uploads the complete manifest as the attachment
+`fedavg_round-full.json` and stores a bounded copy inline: every top-level
+field is kept, each submission keeps `participant`, `resolved_revision`,
+`num_examples`, `coefficient` and as many scalar `training` values as its share
+of the budget allows (lists and nested objects are dropped), `evaluation`
+keeps scalar values only, and `complete_manifest` names the attachment.
+Readers that need the round number, backend or checkpoint hashes keep using
+the inline copy; `download_snapshot` without a pattern materialises both files.
+
+Before writing anything, the adapter's `download_snapshot` checks the record's
+file layout: an attachment named like an inline manifest (case-insensitively,
+including nested names) or colliding with another attachment, as records
+accepted before these server checks may be, fails with `ValueError` naming the
+record, and a filesystem error while materialising an attachment is reported
+the same way. `owner_fedavg` therefore skips such a record in discovery and
+claim modes (`skipped_submission=...`) instead of aborting the round.
+Manifest-only reads, such as the readiness check, never download attachments,
+and the adapter refuses to upload an attachment named like a manifest.
 
 Each successful publication stores an event transactionally with its state
 change. Poll `GET /events?cursor=...` using the returned `next_cursor`, persist
