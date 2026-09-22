@@ -661,6 +661,7 @@ creates these equivalent console-command aliases:
 - `hf2l-client-upload`
 - `hf2l-create-allowlist`
 - `hf2l-owner-fedavg`
+- `hf2l-exchange-service`
 
 For example, `hf2l-client-download` is equivalent to
 `python -m hf2l.client_download`.

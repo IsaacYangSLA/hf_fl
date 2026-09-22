@@ -36,6 +36,8 @@ try:
     from hf2l.hub_helpers import ROUND_FILE, SUBMISSION_FILE, write_json
     EXCHANGE_AVAILABLE = True
 except ModuleNotFoundError:
+    if os.environ.get("EXCHANGE_REQUIRE_TESTS") == "1":
+        raise
     EXCHANGE_AVAILABLE = False
 
 
@@ -88,7 +90,7 @@ class ExchangeTests(unittest.TestCase):
             database_url = url.update_query_dict({"options": "-csearch_path=" + schema}).render_as_string(hide_password=False)
         self.settings = Settings(database_url=database_url,
                                  issuer="https://issuer.test", audience="exchange", bucket="hf2l-test-" + uuid.uuid4().hex,
-                                 s3_endpoint=self.endpoint, admin_subject="owner", public_key=public,
+                                 s3_endpoint=self.endpoint, allow_local_http=True, admin_subject="owner", public_key=public,
                                  part_bytes=5 * 1024 * 1024, worker_recover_after=0)
         self.s3 = boto3.client("s3", region_name="us-east-1", endpoint_url=self.endpoint)
         self.s3.create_bucket(Bucket=self.settings.bucket)
@@ -165,8 +167,8 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 202, response.text)
         return identifier
 
-    def claim(self, subject="owner", **body):
-        return self.client.post(self.prefix + "/claims", headers=self.auth(subject), json=body)
+    def claim(self, subject="owner", key=None, **body):
+        return self.client.post(self.prefix + "/claims", headers={**self.auth(subject), "Idempotency-Key": key or uuid.uuid4().hex}, json=body)
 
     def sdk(self, subject, transfer=None):
         def check_storage_request(request):
@@ -174,7 +176,7 @@ class ExchangeTests(unittest.TestCase):
         transfer = transfer or httpx.Client(event_hooks={"request": [check_storage_request]}, timeout=30)
         self.addCleanup(transfer.close)
         return ExchangeClient("http://testserver", self.auth(subject)["Authorization"].split(" ", 1)[1],
-                              http=self.client, transfer=transfer)
+                              http=self.client, transfer=transfer, allow_local_http=True)
 
     def store(self, subject, transfer=None):
         return ExchangeStore(None, None, client=self.sdk(subject, transfer), wait_seconds=60)
@@ -225,6 +227,10 @@ class ExchangeTests(unittest.TestCase):
                                            json={"quota_bytes": 5}).status_code, 403)
         self.assertEqual(self.code(self.create(data=b"a")), "space_quota_exceeded")
         self.client.delete(self.prefix + "/records/" + first.json()["id"], headers=self.auth("alice"))
+        self.assertEqual(self.code(self.create(data=b"abc")), "space_quota_exceeded")
+        with self.service.sessions.begin() as session:
+            session.get(Blob, first.json()["attachments"][0]["id"]).expires_at = 1
+        tick(self.service)
         self.assertEqual(self.create(data=b"abc").status_code, 201)
 
     def test_principal_quota_admin_cancel_and_revocation_release(self):
@@ -310,12 +316,12 @@ class ExchangeTests(unittest.TestCase):
         self.assertEqual(self.client.get(self.prefix + "/refs/main", headers=self.headers).json(), {"record_id": first["id"], "generation": 2})
         self.assertEqual(self.ref(second, 2, subject="alice").status_code, 403)
 
-    def test_worker_recovers_lost_completion_and_expired_uploads(self):
+    def test_worker_recovers_completion_and_cleans_expired_object(self):
         record = self.create(data=b"hello").json()
         blob_id = self.upload(record, b"hello")
         with self.service.sessions.begin() as session:
             blob = session.get(Blob, blob_id)
-            blob.state, blob.version, blob.updated_at = "completing", None, 0
+            blob.state, blob.version, blob.updated_at = "completing", None, time.time() - 60
         self.assertEqual(tick(self.service)["recovered"], 1)
         self.assertEqual(tick(self.service)["verified"], 1)
         with self.service.sessions.begin() as session:
@@ -397,9 +403,9 @@ class ExchangeTests(unittest.TestCase):
         # After abandonment main is free again, and a coordinator may choose explicit inputs.
         explicit = self.claim("carol", inputs=[old["id"], bob["id"]])
         self.assertEqual(explicit.status_code, 200, explicit.text)
-        # The holder's repeated acquisition returns the frozen set unchanged; another coordinator is refused.
+        # Another acquisition, even by the same identity, cannot share this run's fence.
         repeated = self.claim("carol", inputs=[old["id"], new["id"]])
-        self.assertEqual((repeated.status_code, set(repeated.json()["inputs"])), (200, {old["id"], bob["id"]}))
+        self.assertEqual((repeated.status_code, self.code(repeated)), (409, "claim_busy"))
         self.assertEqual(self.code(self.claim()), "claim_busy")
         # The admin can abandon another holder's claim without knowing its fence.
         self.assertEqual(self.client.post(self.prefix + f"/claims/{explicit.json()['id']}:abandon", headers=self.headers, json={}).status_code, 200)
@@ -425,15 +431,15 @@ class ExchangeTests(unittest.TestCase):
             self.ready(participant, "training.update", base["id"])
         self.member("carol", ["coordinator", "reader"])
         self.member("dave", ["admin"])
-        claim = self.claim().json()
-        again = self.claim()
+        claim = self.claim(key="same-acquisition").json()
+        again = self.claim(key="same-acquisition")
         self.assertEqual(again.status_code, 200, again.text)
         self.assertEqual((again.json()["id"], again.json()["fence"]), (claim["id"], claim["fence"]))
         busy = self.claim("carol")
         self.assertEqual((busy.status_code, self.code(busy), busy.json()["claim_id"]), (409, "claim_busy", claim["id"]))
         self.assertEqual(busy.json()["lease_until"], claim["lease_until"])
         with self.assertRaises(ExchangeError) as refused:
-            self.sdk("carol").request("POST", f"{self.prefix}/claims", body={"lease_seconds": 60})
+            self.sdk("carol").acquire_claim(self.space, lease_seconds=60)
         self.assertEqual(refused.exception.details["claim_id"], claim["id"])
         listing = self.client.get(self.prefix + "/claims", headers=self.auth("carol"))
         self.assertEqual([(c["id"], c["holder"], c["workflow"]) for c in listing.json()["items"]], [(claim["id"], claim["holder"], "fedavg")])
@@ -586,7 +592,7 @@ class ExchangeTests(unittest.TestCase):
         # A completion whose response was lost is protected from a stale abort until the worker settles it.
         with self.service.sessions.begin() as session:
             blob = session.get(Blob, blob_id)
-            blob.state, blob.version, blob.upload_id, blob.updated_at = "completing", None, "stale-upload", 0
+            blob.state, blob.version, blob.upload_id, blob.updated_at = "completing", None, "stale-upload", time.time() - 60
         self.assertEqual(self.code(self.client.delete(route, headers=self.auth("alice"))), "upload_completing")
         self.assertEqual(tick(self.service)["recovered"], 1)
         with self.service.sessions.begin() as session:
@@ -687,7 +693,7 @@ class ExchangeTests(unittest.TestCase):
         events = self.client.get(self.prefix + "/events", headers=self.auth("bob")).json()["items"]
         self.assertEqual(len(events), 4)
 
-    def test_request_limits_safe_paths_and_foreign_keys(self):
+    def test_request_limits_safe_paths_and_missing_base(self):
         large = self.create(metadata={"large": "x" * METADATA_LIMIT_BYTES})
         self.assertEqual((large.status_code, self.code(large), large.json()["limit"]), (422, "metadata_too_large", METADATA_LIMIT_BYTES))
         self.assertGreater(large.json()["size"], METADATA_LIMIT_BYTES)
@@ -871,11 +877,12 @@ class ExchangeTests(unittest.TestCase):
         record = self.create(data=b"hello").json()
         with self.service.sessions.begin() as session:
             blob = session.get(Blob, record["attachments"][0]["id"])
-            blob.state, blob.updated_at = "initiating", 0
+            blob.state, blob.updated_at = "initiating", time.time() - 60
             provider_id = self.storage.start(blob.key)
         self.assertEqual(tick(self.service)["recovered"], 1)
         with self.service.sessions.begin() as session:
-            self.assertEqual(session.get(Blob, blob.id).upload_id, provider_id)
+            self.assertNotEqual(session.get(Blob, blob.id).upload_id, provider_id)
+        self.assertNotIn(provider_id, list(self.storage.pending_uploads(blob.key)))
 
     def test_storage_and_database_errors_are_logged_json_with_request_id(self):
         from botocore.exceptions import ClientError
@@ -887,7 +894,7 @@ class ExchangeTests(unittest.TestCase):
             response = self.client.post(self.prefix + f"/records/{record['id']}/blobs/{blob_id}/uploads", headers=self.auth("alice"))
         self.assertEqual((response.status_code, self.code(response)), (503, "storage_unavailable"))
         self.assertIn("AccessDenied", logs.output[0])
-        with patch.object(self.service, "sessions") as sessions:
+        with patch.object(self.service, "read_sessions") as sessions:
             sessions.begin.side_effect = OperationalError("select", {}, Exception("db down"))
             with self.assertLogs("hf2l.exchange.api", level="ERROR") as logs:
                 response = self.client.get(self.prefix + "/me", headers=self.auth("alice"))

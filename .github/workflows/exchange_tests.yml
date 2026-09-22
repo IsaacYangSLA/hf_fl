@@ -1,0 +1,91 @@
+name: Exchange service tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sqlite:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.10', '3.12']
+    env:
+      EXCHANGE_REQUIRE_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install project and required exchange tests
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          .venv/bin/python -m pip install -e '.[service,exchange,exchange-test]'
+      - name: Run SQLite and Moto suite
+        run: .venv/bin/python -m unittest discover -s tests -v
+
+  postgres-s3:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: hf2l_test
+          POSTGRES_PASSWORD: local-test-only
+          POSTGRES_DB: hf2l_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd 'pg_isready -U hf2l_test'
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      EXCHANGE_REQUIRE_TESTS: '1'
+      EXCHANGE_TEST_DATABASE_URL: postgresql+psycopg://hf2l_test:local-test-only@127.0.0.1:5432/hf2l_test
+      EXCHANGE_TEST_S3_ENDPOINT: http://127.0.0.1:9000
+      AWS_ACCESS_KEY_ID: hf2l-local-test
+      AWS_SECRET_ACCESS_KEY: local-test-only-password
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project and required exchange tests
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          .venv/bin/python -m pip install -e '.[service,exchange,exchange-test]'
+      - name: Start ephemeral versioned S3 test service
+        run: |
+          docker run -d --rm --name hf2l-ci-minio -p 127.0.0.1:9000:9000 \
+            -e MINIO_ROOT_USER="$AWS_ACCESS_KEY_ID" \
+            -e MINIO_ROOT_PASSWORD="$AWS_SECRET_ACCESS_KEY" \
+            quay.io/minio/minio:latest server /data
+          .venv/bin/python - <<'PY'
+          import time
+          from urllib.request import urlopen
+          for attempt in range(30):
+              try:
+                  with urlopen('http://127.0.0.1:9000/minio/health/ready', timeout=2):
+                      break
+              except OSError:
+                  if attempt == 29:
+                      raise
+                  time.sleep(1)
+          PY
+      - name: Run PostgreSQL concurrency and S3 signature tests
+        run: .venv/bin/python -m unittest discover -s tests -v
+      - name: Remove ephemeral S3 service
+        if: always()
+        run: docker rm -f hf2l-ci-minio || true

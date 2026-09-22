@@ -1,9 +1,10 @@
 """ModelStore bridge to generic Exchange records and versioned blob transfers."""
 import fnmatch
 import os
+import uuid
 from pathlib import Path
 
-from hf2l.backends.base import ModelStore, PublishResult, SubmissionCandidate
+from hf2l.backends.base import ModelStore, PublishResult, ResolvedReference, SubmissionCandidate
 from hf2l.exchange.client import ExchangeClient, ExchangeError
 from hf2l.exchange.protocol import (INLINE_FILES_KEY, INLINE_MANIFEST_NAMES, METADATA_LIMIT_BYTES, metadata_size,
                                     names_collide)
@@ -73,11 +74,21 @@ class ExchangeStore(ModelStore):
     name = "exchange"
 
     def __init__(self, token, endpoint, *, client=None, wait_seconds=None):
-        self.client = client or ExchangeClient(endpoint, token)
+        self.client = client or ExchangeClient(endpoint, token,
+                                              allow_local_http=os.environ.get("EXCHANGE_ALLOW_LOCAL_HTTP", "").lower() in ("true", "1"))
         self.wait_seconds = wait_seconds or int(os.environ.get("EXCHANGE_WAIT_SECONDS", "3600"))
         self.main_refs = {}
         self.claim = None
         self.claim_state = None
+
+    def resolve_reference(self, repo_id, name="main"):
+        value = self.client.resolve(repo_id, name)
+        if name == "main":
+            self.main_refs[repo_id] = value  # Compatibility for discovery; publication takes an explicit reference.
+        return ResolvedReference(value["record_id"], value["generation"])
+
+    def current_claim(self):
+        return dict(self.claim) if self.claim else None
 
     def resolve_revision(self, repo_id, revision):
         if revision.startswith("rec_"):
@@ -222,14 +233,29 @@ class ExchangeStore(ModelStore):
 
         An explicit ``claim_id`` must name a live claim held by this identity. Otherwise a claim persisted in
         ``state_dir`` by an interrupted run that reuses the directory is resumed while it is still active, and a
-        stale file is discarded in favour of a fresh acquisition. ``POST /claims`` returns the holder's own live
-        claim, so the owner CLI (whose output directory is always new) recovers through that path.
+        stale file is discarded in favour of a fresh acquisition. A random acquisition key is persisted before
+        POST, allowing lost-response recovery without granting another job the same claim/fence.
         """
         self.claim_state = Path(state_dir) / CLAIM_FILE if state_dir else None
         self.claim = self.client.get_claim(repo_id, claim_id) if claim_id else self._resume_claim(repo_id)
         if not self.claim:
-            self.claim = self.client.request("POST", self.client.path(repo_id, "/claims"),
-                                             body={"lease_seconds": lease_seconds})
+            saved = read_json(self.claim_state) if self.claim_state and self.claim_state.exists() else {}
+            if saved.get("space") != repo_id or "acquisition_key" not in saved:
+                saved = {"space": repo_id, "acquisition_key": uuid.uuid4().hex, "lease_seconds": lease_seconds}
+                if self.claim_state:
+                    write_json(self.claim_state, saved)
+            try:
+                self.claim = self.client.acquire_claim(repo_id, idempotency_key=saved["acquisition_key"],
+                                                       lease_seconds=saved["lease_seconds"])
+            except ExchangeError as exc:
+                if exc.code != "claim_not_active":
+                    raise
+                # A lost response may remain unknown until its lease expires. Retire that old acquisition key.
+                saved["acquisition_key"] = uuid.uuid4().hex
+                if self.claim_state:
+                    write_json(self.claim_state, saved)
+                self.claim = self.client.acquire_claim(repo_id, idempotency_key=saved["acquisition_key"],
+                                                       lease_seconds=saved["lease_seconds"])
         self._remember_claim(repo_id)
         pinned = self.main_refs.get(repo_id)
         if not pinned or pinned["record_id"] != self.claim["base_record_id"]:
@@ -281,22 +307,38 @@ class ExchangeStore(ModelStore):
                 raise
         self._forget_claim()
 
-    def publish_aggregate(self, repo_id, folder, paths, *, expected_base, next_round, tag):
-        pinned = self.main_refs.get(repo_id)
-        if not pinned or pinned["record_id"] != expected_base:
-            raise ValueError("Resolve main with this store before publishing an aggregate")
+    def publish_aggregate(self, repo_id, folder, paths, *, expected_base, next_round, tag, reference=None, claim=None):
+        if reference is None:
+            # Legacy callers can resolve at publication; explicit callers preserve the originally observed generation.
+            reference = self.resolve_reference(repo_id)
+        if reference.revision != expected_base or reference.generation is None:
+            raise ValueError("Publication reference does not match the expected base")
+        if tag:
+            try:
+                self.client.resolve(repo_id, tag)
+            except ExchangeError as exc:
+                if exc.code != "reference_not_found":
+                    raise
+            else:
+                raise ValueError(f"Tag already exists: {tag}")
         extra = None
-        if self.claim:
-            # Provenance names exactly the inputs that were aggregated; the server checks they were frozen.
-            used = [s["resolved_revision"] for s in read_json(self.client.safe_destination(folder, ROUND_FILE))["submissions"]]
+        if claim:
+            used = [entry["resolved_revision"] for entry in read_json(self.client.safe_destination(folder, ROUND_FILE))["submissions"]]
             extra = {"input_record_ids": used}
         revision = self._publish(repo_id, folder, paths, "model.global", expected_base, extra)
-        if self.claim:
-            self.client.request("POST", self.client.path(repo_id, "/claims/" + self.claim["id"] + ":publish"),
-                                body={"record_id": revision, "fence": self.claim["fence"]})
-            self._forget_claim()
+        if claim:
+            self.client.request("POST", self.client.path(repo_id, "/claims/" + claim["id"] + ":publish"),
+                                body={"record_id": revision, "fence": claim["fence"]})
+            if self.claim and self.claim["id"] == claim["id"]:
+                self._forget_claim()
         else:
-            self.client.set_ref(repo_id, "main", revision, generation=pinned["generation"], idempotency_key="aggregate-" + revision)
+            self.client.set_ref(repo_id, "main", revision, generation=reference.generation, idempotency_key="aggregate-" + revision)
+        warnings, tagged = (), None
         if tag:
-            self.client.set_ref(repo_id, tag, revision, idempotency_key="tag-" + revision)
-        return PublishResult(revision, resolved_revision=revision)
+            try:
+                self.client.set_ref(repo_id, tag, revision, idempotency_key="tag-" + revision)
+                tagged = True
+            except ExchangeError as exc:
+                tagged = False
+                warnings = (f"Published {revision}, but tag {tag!r} failed: {exc.code}",)
+        return PublishResult(revision, resolved_revision=revision, warnings=warnings, tag_created=tagged)

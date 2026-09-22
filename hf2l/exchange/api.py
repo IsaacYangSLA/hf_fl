@@ -11,7 +11,7 @@ from urllib.parse import unquote
 import uuid
 
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from jsonschema import Draft202012Validator, ValidationError, SchemaError
@@ -19,20 +19,22 @@ from sqlalchemy import and_, func, or_, select, update
 from referencing import Registry
 from referencing.exceptions import Unresolvable as UnresolvableReference
 from sqlalchemy.exc import DBAPIError, IntegrityError, TimeoutError as PoolTimeoutError
+from sqlalchemy.orm import sessionmaker
 
 from .auth import Authenticator, principal_id
 from .config import Settings
-from .models import Blob, Claim, Event, Member, Operation, Record, Ref, Space, database
+from .models import Blob, Claim, Event, Member, Operation, Record, Ref, Space, database, database_time
 from .protocol import INLINE_FILES_KEY, INLINE_MANIFEST_NAMES, names_collide
 from .schemas import (GLOBAL_KIND, MAIN_REF, PROFILE_KINDS, PROVENANCE_FIELD, UPDATE_KIND, ClaimAbandon, ClaimInput,
                       ClaimResult, LeaseInput, MemberInput, MetadataInput, MetadataTooLarge, PartsInput, RecordInput,
                       RefInput, SpaceInput, SpacePatch)
-from .storage import S3BlobStore
+from .storage import S3BlobStore, StorageMisconfigured
+from .leases import heartbeat, owns, release as release_lease, take as take_lease
 
 log = logging.getLogger("hf2l.exchange.api")
 
 # Records in these states hold no quota and their blobs are eligible for storage cleanup.
-RELEASED_STATES = ("expired", "cancelled", "withdrawn")
+RELEASED_STATES = ("expired", "cancelled", "withdrawn", "failed")
 # Kinds whose records carry the creator's participant binding and require it to stay unchanged.
 PARTICIPANT_KINDS = (UPDATE_KIND,)
 # Schema keywords whose string value is a reference; only fragment-only (in-document) targets are accepted.
@@ -165,6 +167,15 @@ def check_profile(rules):
         fail(422, "profile_kind_incompatible", kind=GLOBAL_KIND, reason="must_be_shared")
     for kind, fields in PROFILE_FIELDS.items():
         schema = rules[kind].metadata_schema
+        # The fixed profile accepts a deliberately small, inspectable schema subset. Arbitrary allOf/if/not/$ref
+        # compositions can forbid mandatory fields indirectly; those belong on custom kinds instead.
+        allowed = {"type", "properties", "required", "additionalProperties", "title", "description", "$comment", "examples"}
+        if set(schema) - allowed or schema.get("type", "object") != "object":
+            fail(422, "profile_kind_incompatible", kind=kind, reason="unsupported_profile_schema")
+        if set(schema.get("required", [])) - {INLINE_FILES_KEY}:
+            fail(422, "profile_kind_incompatible", kind=kind, reason="unsupported_required_field")
+        if not isinstance(schema.get("additionalProperties", True), bool):
+            fail(422, "profile_kind_incompatible", kind=kind, reason="unsupported_additional_properties")
         properties = schema.get("properties", {})
         closed = schema.get("additionalProperties") is False or schema.get("unevaluatedProperties") is False
         for field, expected in fields.items():
@@ -172,6 +183,8 @@ def check_profile(rules):
             if declared is False or (closed and field not in properties):
                 # A claimed result must declare its frozen inputs, and the adapter stores its manifests inline.
                 fail(422, "profile_kind_incompatible", kind=kind, reason="schema_forbids_" + field)
+            if isinstance(declared, dict) and set(declared) - {"type", "description", "title", "$comment"}:
+                fail(422, "profile_kind_incompatible", kind=kind, reason="constrained_profile_field_" + field)
             types = declared.get("type", expected) if isinstance(declared, dict) else expected
             if expected not in (types if isinstance(types, list) else [types]):
                 fail(422, "profile_kind_incompatible", kind=kind, reason=f"schema_rejects_{field}_{expected}")
@@ -211,15 +224,20 @@ def check_attachment_names(names, metadata):
 class Service:
     def __init__(self, settings, storage=None):
         self.settings = settings
-        self.engine, self.sessions = database(settings.database_url)
+        self.engine, self.sessions = database(settings.database_url, settings)
+        options = {"exchange_write": False}
+        if self.engine.dialect.name == "postgresql":
+            options["isolation_level"] = "REPEATABLE READ"
+        self.read_sessions = sessionmaker(self.engine.execution_options(**options), expire_on_commit=False)
         self.storage = storage or S3BlobStore(settings)
         self.auth = Authenticator(settings)
 
     @contextmanager
-    def transaction(self, space_id, who, role=None, break_glass=False):
-        with self.sessions.begin() as session:
+    def transaction(self, space_id, who, role=None, break_glass=False, write=True):
+        with (self.sessions if write else self.read_sessions).begin() as session:
             # All mutations use this ordering. Membership changes serialize with authorization.
-            space = session.scalar(select(Space).where(Space.id == space_id).with_for_update())
+            query = select(Space).where(Space.id == space_id)
+            space = session.scalar(query.with_for_update() if write else query)
             member = session.get(Member, (space_id, who.id)) if space else None
             if break_glass and space and who.bootstrap_admin and not (member and "admin" in member.roles):
                 # Audited recovery path: the bootstrap admin can always repair a space's membership.
@@ -252,7 +270,7 @@ class Service:
     def blobs(self, session, record_id):
         return list(session.scalars(select(Blob).where(Blob.record_id == record_id).order_by(Blob.name)))
 
-    def serialize(self, session, record):
+    def serialize(self, session, record, blobs=None):
         return {
             "id": record.id, "space_id": record.space_id, "created_by": record.creator,
             "participant": record.participant, "kind": record.kind, "state": record.state,
@@ -260,12 +278,12 @@ class Service:
             "metadata": record.data, "generation": record.generation, "created_at": record.created_at,
             "attachments": [{"id": b.id, "name": b.name, "size_bytes": b.size,
                              "sha256": b.verified_sha256 or b.sha256, "state": b.state}
-                            for b in self.blobs(session, record.id)],
+                            for b in (self.blobs(session, record.id) if blobs is None else blobs)],
         }
 
     def emit(self, session, space_id, who, kind, record_id=None, **data):
         session.add(Event(space_id=space_id, principal=who.id, kind=kind,
-                          record_id=record_id, data=data))
+                          record_id=record_id, data=data, created_at=database_time(session)))
 
     def once(self, session, who, scope, key, body, operation):
         if not key or len(key) > 128:
@@ -278,7 +296,7 @@ class Service:
         try:
             with session.begin_nested():
                 result = operation()
-                session.add(Operation(id=identifier, digest=digest, result=result))
+                session.add(Operation(id=identifier, digest=digest, result=result, created_at=database_time(session)))
                 session.flush()
         except IntegrityError:
             # A concurrent request with the same key committed first (no space lock protects space creation):
@@ -316,7 +334,7 @@ class Service:
         record = self.record(session, space_id, blob.record_id, member, who, owner=True)
         if not set(member.roles) & {"contributor", "coordinator"}:
             fail(403, "permission_denied")
-        if record.state != "draft" or record.expires_at < time.time():
+        if record.state != "draft" or record.expires_at < database_time(session):
             fail(409, "record_not_uploadable")
         return blob, record
 
@@ -325,8 +343,15 @@ class Service:
         blob.state, blob.updated_at = state, time.time()
 
     def release(self, session, space, record, who, state, event):
+        if record.state in RELEASED_STATES:
+            return
         record.state = state
-        space.allocated -= sum(b.size for b in self.blobs(session, record.id))
+        blobs = self.blobs(session, record.id)
+        space.allocated -= sum(b.size for b in blobs)
+        space.reclaiming += sum(b.size for b in blobs if b.state != "cleaned")
+        now = database_time(session)
+        for blob in blobs:
+            blob.expires_at = min(blob.expires_at, now)
         self.emit(session, space.id, who, event, record.id)
 
     def outstanding(self, session, space_id, principal):
@@ -335,7 +360,7 @@ class Service:
 
     def active_claims(self, session, space_id):
         return list(session.scalars(select(Claim).where(
-            Claim.space_id == space_id, Claim.result_id.is_(None), Claim.lease_until > time.time())))
+            Claim.space_id == space_id, Claim.result_id.is_(None), Claim.lease_until > database_time(session))))
 
     def move_ref(self, session, space_id, name, target, expected, absent, who):
         if not name or len(name) > 128:
@@ -438,19 +463,21 @@ def create_app(settings=None, storage=None):
 
     @asynccontextmanager
     async def lifespan(app):
-        service.storage.check()
+        # Dependency availability controls readiness, not the ability to restart the process.
         yield
         service.engine.dispose()
 
-    app = FastAPI(title="HF2L Exchange", version="1", lifespan=lifespan)
+    app = FastAPI(title="HF2L Exchange", version="2", lifespan=lifespan,
+                  docs_url="/docs" if service.settings.docs_enabled else None, redoc_url=None,
+                  openapi_url="/openapi.json" if service.settings.docs_enabled else None)
     app.state.service = service
 
     def error(request, status, code, level=logging.WARNING, exc=None, **details):
         request_id = getattr(request.state, "request_id", "")
         log.log(level, "%s %s -> %s %s request_id=%s%s", request.method, request.url.path, status, code, request_id,
-                f" error={type(exc).__name__}: {exc}" if exc else "")
+                f" error={type(exc).__name__} storage_code={exc.response.get('Error', {}).get('Code', '')}" if isinstance(exc, ClientError) else (f" error={type(exc).__name__}" if exc else ""))
         return JSONResponse({"code": code, "request_id": request_id, **details}, status,
-                            headers={"X-Request-ID": request_id})
+                            headers={"X-Request-ID": request_id, **({"Retry-After": "3"} if status == 503 else {})})
 
     @app.middleware("http")
     async def bounded_request(request, call_next):
@@ -466,14 +493,15 @@ def create_app(settings=None, storage=None):
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
         response.headers["Cache-Control"] = "no-store"
-        log.info("%s %s -> %s request_id=%s duration_ms=%d", request.method, request.url.path, response.status_code,
-                 request.state.request_id, (time.monotonic() - started) * 1000)
+        log.info("%s %s -> %s request_id=%s principal=%s duration_ms=%d", request.method, request.url.path,
+                 response.status_code, request.state.request_id, getattr(request.state, "principal", "anonymous"),
+                 (time.monotonic() - started) * 1000)
         return response
 
     @app.exception_handler(HTTPException)
     async def http_error(request, exc):
         detail = dict(exc.detail) if isinstance(exc.detail, dict) else {"code": exc.detail}
-        response = error(request, exc.status_code, detail.pop("code"), logging.DEBUG, **detail)
+        response = error(request, exc.status_code, detail.pop("code"), logging.INFO, **detail)
         response.headers.update(exc.headers or {})
         return response
 
@@ -499,12 +527,18 @@ def create_app(settings=None, storage=None):
     async def storage_error(request, exc):
         return error(request, 503, "storage_unavailable", logging.ERROR, exc)
 
+    @app.exception_handler(StorageMisconfigured)
+    async def misconfigured_storage(request, exc):
+        return error(request, 503, "storage_misconfigured", logging.ERROR, exc)
+
     @app.exception_handler(Exception)
     async def unhandled_error(request, exc):
         return error(request, 500, "internal_error", logging.ERROR, exc)
 
-    def authenticate(authorization: str = Header(default="")):
-        return service.auth.authenticate(authorization)
+    def authenticate(request: Request, authorization: str = Header(default="")):
+        who = service.auth.authenticate(authorization)
+        request.state.principal = who.id
+        return who
 
     prefix = "/v1/spaces/{space_id}"
 
@@ -512,8 +546,16 @@ def create_app(settings=None, storage=None):
     def health():
         return {"status": "ok"}
 
+    @app.get("/ready")
+    def ready():
+        with service.read_sessions.begin() as session:
+            session.execute(select(Space.reclaiming).limit(1))
+            session.execute(select(Blob.worker_token).limit(1))
+        service.storage.check()
+        return {"status": "ready"}
+
     @app.post("/v1/spaces", status_code=201)
-    def create_space(body: SpaceInput, who=Depends(authenticate), idempotency_key: str = Header(default="")):
+    def create_space(body: SpaceInput, who=Depends(authenticate), idempotency_key: str = Header(min_length=1, max_length=128)):
         if not who.bootstrap_admin:
             fail(403, "bootstrap_admin_required")
         rules = check_rules(body.rules)
@@ -523,19 +565,19 @@ def create_app(settings=None, storage=None):
                               principal_quota=body.principal_quota_bytes or max(1, body.quota_bytes // 4), rules=rules)
                 session.add(space)
                 session.flush()
-                session.add(Member(space_id=space.id, principal=who.id, roles=["admin", "coordinator", "reader"]))
+                session.add(Member(space_id=space.id, principal=who.id, subject=who.subject, roles=["admin", "coordinator", "reader"]))
                 service.emit(session, space.id, who, "space.created")
                 return {"id": space.id, "name": space.name, "tenant": space.tenant}
             return service.once(session, who, "spaces", idempotency_key, body.model_dump(), operation)
 
     def space_view(space):
         return {"id": space.id, "name": space.name, "tenant": space.tenant, "quota_bytes": space.quota,
-                "principal_quota_bytes": space.principal_quota, "allocated_bytes": space.allocated,
+                "principal_quota_bytes": space.principal_quota, "allocated_bytes": space.allocated, "pending_deletion_bytes": space.reclaiming,
                 "rules": space.rules, "generation": space.generation}
 
     @app.get(prefix)
     def get_space(space_id: str, who=Depends(authenticate)):
-        with service.transaction(space_id, who, "admin") as (_, space, _):
+        with service.transaction(space_id, who, "admin", write=False) as (_, space, _):
             return JSONResponse(space_view(space), headers={"ETag": f'"{space.generation}"'})
 
     @app.patch(prefix)
@@ -568,7 +610,7 @@ def create_app(settings=None, storage=None):
             return JSONResponse(space_view(space), headers={"ETag": f'"{space.generation}"'})
 
     def member_view(row):
-        return {"principal_id": row.principal, "roles": row.roles, "participant": row.participant}
+        return {"principal_id": row.principal, "subject": row.subject, "roles": row.roles, "participant": row.participant}
 
     @app.get(prefix + "/members")
     def list_members(space_id: str, who=Depends(authenticate)):
@@ -593,7 +635,7 @@ def create_app(settings=None, storage=None):
             if not row:
                 row = Member(space_id=space_id, principal=member_id)
                 session.add(row)
-            row.roles, row.participant = body.roles, body.participant
+            row.roles, row.participant, row.subject = body.roles, body.participant, body.subject
             if not body.roles:
                 # Revocation releases every reservation the principal still holds.
                 service.cancel_drafts(session, space, member_id, who)
@@ -605,11 +647,11 @@ def create_app(settings=None, storage=None):
 
     @app.get(prefix + "/me")
     def me(space_id: str, who=Depends(authenticate)):
-        with service.transaction(space_id, who) as (_, _, member):
+        with service.transaction(space_id, who, write=False) as (_, _, member):
             return {"principal_id": who.id, "participant": member.participant, "roles": member.roles}
 
     @app.post(prefix + "/records", status_code=201)
-    def create_record(space_id: str, body: RecordInput, who=Depends(authenticate), idempotency_key: str = Header(default="")):
+    def create_record(space_id: str, body: RecordInput, who=Depends(authenticate), idempotency_key: str = Header(min_length=1, max_length=128)):
         with service.transaction(space_id, who) as (session, space, member):
             rule = space.rules.get(body.kind)
             if not rule or not set(member.roles) & set(rule["creators"]):
@@ -624,7 +666,7 @@ def create_app(settings=None, storage=None):
             check_attachment_names([x.name for x in body.attachments], body.metadata)
             def operation():
                 size = sum(x.size_bytes for x in body.attachments)
-                if space.allocated + size > space.quota:
+                if space.allocated + space.reclaiming + size > space.quota:
                     fail(429, "space_quota_exceeded")
                 if size and service.outstanding(session, space_id, who.id) + size > space.principal_quota:
                     fail(429, "principal_quota_exceeded")
@@ -633,7 +675,7 @@ def create_app(settings=None, storage=None):
                                 participant=member.participant, kind=body.kind,
                                 base_id=body.base_record_id, data=body.metadata,
                                 schema_version=body.schema_version, shared=rule["shared"],
-                                expires_at=time.time() + service.settings.upload_seconds)
+                                created_at=database_time(session), expires_at=database_time(session) + service.settings.upload_seconds)
                 session.add(record)
                 session.flush()
                 for attachment in body.attachments:
@@ -651,14 +693,14 @@ def create_app(settings=None, storage=None):
 
     @app.get(prefix + "/records/{record_id}")
     def get_record(space_id: str, record_id: str, who=Depends(authenticate)):
-        with service.transaction(space_id, who) as (session, _, member):
+        with service.transaction(space_id, who, write=False) as (session, _, member):
             return service.serialize(session, service.record(session, space_id, record_id, member, who))
 
     @app.get(prefix + "/records")
     def list_records(space_id: str, kind: str | None = None, base_record_id: str | None = None,
                      state: str = "ready", cursor: str = "", limit: int = Query(default=100, ge=1, le=256),
                      who=Depends(authenticate)):
-        with service.transaction(space_id, who) as (session, _, member):
+        with service.transaction(space_id, who, write=False) as (session, _, member):
             boundary, after_time, after_id = time.time(), 0.0, ""
             if cursor:
                 try:
@@ -682,7 +724,10 @@ def create_app(settings=None, storage=None):
                 rows = rows[:limit]
                 last_time = rows[-1].published_at if state == "ready" else rows[-1].created_at
                 next_cursor = base64.urlsafe_b64encode(json.dumps([boundary, last_time, rows[-1].id]).encode()).decode()
-            return {"items": [service.serialize(session, row) for row in rows], "next_cursor": next_cursor}
+            attachments = {row.id: [] for row in rows}
+            for blob in session.scalars(select(Blob).where(Blob.record_id.in_(attachments)).order_by(Blob.name)):
+                attachments[blob.record_id].append(blob)
+            return {"items": [service.serialize(session, row, attachments[row.id]) for row in rows], "next_cursor": next_cursor}
 
     @app.patch(prefix + "/records/{record_id}")
     def patch_record(space_id: str, record_id: str, body: MetadataInput, if_match: str = Header(default=""), who=Depends(authenticate)):
@@ -710,14 +755,16 @@ def create_app(settings=None, storage=None):
                 fail(403, "permission_denied")
             if record.state == "ready":
                 return service.serialize(session, record)
-            if record.state != "draft" or record.expires_at < time.time():
+            if record.state == "failed":
+                fail(409, "blob_verification_failed")
+            if record.state != "draft" or record.expires_at < database_time(session):
                 fail(409, "record_expired")
             if any(blob.state != "verified" for blob in service.blobs(session, record.id)):
                 fail(409, "blobs_not_verified")
             service.check_binding(session, record)
             service.validate_data(rule, record.data)
             record.state = "ready"
-            record.published_at = time.time()
+            record.published_at = database_time(session)
             record.generation += 1
             service.emit(session, space_id, who, "record.ready", record.id)
             return service.serialize(session, record)
@@ -742,32 +789,32 @@ def create_app(settings=None, storage=None):
 
     @app.post(prefix + "/records/{record_id}/blobs/{blob_id}/uploads")
     def start_upload(space_id: str, record_id: str, blob_id: str, who=Depends(authenticate)):
+        from .worker import commit
         with service.transaction(space_id, who) as (session, _, member):
             blob, record = service.owned_upload(session, space_id, blob_id, member, who)
             if record.id != record_id:
                 fail(404, "blob_not_found")
-            if blob.state == "reserved":
-                service.transition(blob, "initiating")
-            elif blob.state == "initiating":
+            if blob.state == "initiating":
                 fail(409, "upload_initialization_pending")
-            else:
+            if blob.state != "reserved":
                 return {"id": blob.id, "state": blob.state, "part_bytes": blob.part_bytes}
-        provider_id = service.storage.start(blob.key)
-        with service.transaction(space_id, who) as (session, _, member):
-            current = session.get(Blob, blob_id)
-            if current.state == "initiating":
-                current.upload_id = provider_id
-                service.transition(current, "uploading")
-            result = {"id": current.id, "state": current.state, "part_bytes": current.part_bytes}
-            adopted = current.upload_id
-        if adopted != provider_id:
-            blob.upload_id = provider_id
-            service.storage.abort(blob)
-        return result
+            if not take_lease(session, blob, service.settings.worker_lease_seconds):
+                fail(409, "upload_initialization_pending")
+            blob.state, blob.updated_at = "initiating", database_time(session)
+        try:
+            with heartbeat(service, blob):
+                provider_id = service.storage.start(blob.key)
+                if not commit(service, blob, "draft", "uploading", provider_id):
+                    blob.upload_id = provider_id
+                    service.storage.abort(blob)
+                    fail(409, "upload_cancelled")
+            return {"id": blob.id, "state": "uploading", "part_bytes": blob.part_bytes}
+        finally:
+            release_lease(service, blob)
 
     @app.post(prefix + "/uploads/{blob_id}/parts:authorize")
     def authorize_parts(space_id: str, blob_id: str, body: PartsInput, who=Depends(authenticate)):
-        with service.transaction(space_id, who) as (session, _, member):
+        with service.transaction(space_id, who, write=False) as (session, _, member):
             blob, _ = service.owned_upload(session, space_id, blob_id, member, who)
             if blob.state != "uploading":
                 fail(409, "upload_not_open")
@@ -778,7 +825,7 @@ def create_app(settings=None, storage=None):
 
     @app.get(prefix + "/uploads/{blob_id}")
     def upload_status(space_id: str, blob_id: str, who=Depends(authenticate)):
-        with service.transaction(space_id, who) as (session, _, member):
+        with service.transaction(space_id, who, write=False) as (session, _, member):
             blob, _ = service.owned_upload(session, space_id, blob_id, member, who)
         parts = service.storage.parts(blob) if blob.state == "uploading" else []
         return {"id": blob.id, "state": blob.state, "part_bytes": blob.part_bytes,
@@ -786,33 +833,30 @@ def create_app(settings=None, storage=None):
 
     @app.post(prefix + "/uploads/{blob_id}:complete", status_code=202)
     def complete_upload(space_id: str, blob_id: str, who=Depends(authenticate)):
+        from .worker import commit
         with service.transaction(space_id, who) as (session, _, member):
             blob, _ = service.owned_upload(session, space_id, blob_id, member, who)
-            if blob.state in ("verifying", "verified"):
+            if blob.state in ("completing", "verifying", "verified"):
+                # The attempt owner or recovery worker completes it. A retry never starts a competing completion.
                 return {"id": blob.id, "state": blob.state}
-            if blob.state not in ("uploading", "completing"):
+            if blob.state != "uploading":
                 fail(409, "upload_not_open")
-            service.transition(blob, "completing")
+            if not take_lease(session, blob, service.settings.worker_lease_seconds):
+                fail(409, "upload_completion_pending")
+            blob.state, blob.updated_at = "completing", database_time(session)
         try:
-            version = service.storage.complete(blob)
-        except ValueError as exc:
-            with service.transaction(space_id, who) as (session, _, member):
-                current = session.get(Blob, blob_id)
-                if current.state == "completing":
-                    service.transition(current, "uploading")
-            log.warning("upload completion rejected blob=%s record=%s: %s", blob.id, blob.record_id, exc)
-            fail(409, "upload_parts_incomplete_or_invalid")
-        with service.transaction(space_id, who) as (session, _, member):
-            current, record = service.owned_upload(session, space_id, blob_id, member, who)
-            if current.state not in ("completing", "verifying", "verified"):
-                fail(409, "upload_cancelled")
-            if current.state == "completing":
-                # The multipart upload no longer exists once completed; an abort must not target it.
-                current.version, current.upload_id = version, None
-                service.transition(current, "verifying")
-                # Verification time must not count against the transfer window.
-                record.expires_at = max(record.expires_at, time.time() + service.settings.upload_seconds)
-            return {"id": blob.id, "state": current.state}
+            with heartbeat(service, blob):
+                try:
+                    version = service.storage.complete(blob)
+                except ValueError:
+                    # Only this still-owning attempt may reset its state after a genuinely incomplete upload.
+                    commit(service, blob, "draft", "uploading", None)
+                    fail(409, "upload_parts_incomplete_or_invalid")
+                if not commit(service, blob, "draft", "verifying", version):
+                    fail(409, "upload_state_changed")
+            return {"id": blob.id, "state": "verifying"}
+        finally:
+            release_lease(service, blob)
 
     @app.delete(prefix + "/uploads/{blob_id}")
     def abort_upload(space_id: str, blob_id: str, who=Depends(authenticate)):
@@ -832,18 +876,17 @@ def create_app(settings=None, storage=None):
 
     @app.post(prefix + "/records/{record_id}/blobs/{blob_id}:download")
     def download(space_id: str, record_id: str, blob_id: str, who=Depends(authenticate)):
-        with service.transaction(space_id, who) as (session, _, member):
+        with service.transaction(space_id, who, write=False) as (session, _, member):
             record = service.record(session, space_id, record_id, member, who)
             blob = session.get(Blob, blob_id)
             if not blob or blob.record_id != record.id or blob.state != "verified" or record.state != "ready":
                 fail(404, "blob_not_available")
-            service.emit(session, space_id, who, "download.authorized", record.id, blob_id=blob.id)
         return {"url": service.storage.download(blob), "expires_in": service.settings.grant_seconds,
                 "sha256": blob.verified_sha256, "size_bytes": blob.size}
 
     @app.get(prefix + "/refs/{name}")
     def get_ref(space_id: str, name: str, who=Depends(authenticate)):
-        with service.transaction(space_id, who) as (session, _, member):
+        with service.transaction(space_id, who, write=False) as (session, _, member):
             ref = session.get(Ref, (space_id, name))
             if not ref:
                 fail(404, "reference_not_found")
@@ -854,7 +897,7 @@ def create_app(settings=None, storage=None):
     @app.put(prefix + "/refs/{name}")
     def put_ref(space_id: str, name: str, body: RefInput, who=Depends(authenticate),
                 if_match: str = Header(default=""), if_none_match: str = Header(default=""),
-                idempotency_key: str = Header(default="")):
+                idempotency_key: str = Header(min_length=1, max_length=128)):
         with service.transaction(space_id, who, "coordinator") as (session, _, member):
             target = service.record(session, space_id, body.record_id, member, who)
             if name == MAIN_REF and any(claim.base_id == target.base_id
@@ -866,15 +909,15 @@ def create_app(settings=None, storage=None):
 
     @app.get(prefix + "/events")
     def events(space_id: str, cursor: int = Query(default=0, ge=0), limit: int = Query(default=100, ge=1, le=256), who=Depends(authenticate)):
-        with service.transaction(space_id, who) as (session, _, member):
-            rows = list(session.scalars(select(Event).where(Event.space_id == space_id, Event.id > cursor).order_by(Event.id).limit(limit)))
-            items = []
-            for event in rows:
-                if event.kind not in ("record.ready", "reference.updated"):
-                    continue
-                if session.scalar(select(Record.id).where(Record.id == event.record_id, service.visible(member, who))):
-                    items.append({"id": event.id, "type": event.kind, "record_id": event.record_id, "data": event.data})
-            return {"items": items, "next_cursor": rows[-1].id if rows else cursor}
+        with service.transaction(space_id, who, write=False) as (session, space, member):
+            if cursor and cursor < space.event_floor:
+                fail(410, "event_cursor_expired", restart_cursor=space.event_floor)
+            rows = list(session.scalars(select(Event).join(Record, Record.id == Event.record_id).where(
+                Event.space_id == space_id, Event.id > cursor,
+                Event.kind.in_(("record.ready", "reference.updated")), service.visible(member, who)
+            ).order_by(Event.id).limit(limit)))
+            return {"items": [{"id": e.id, "type": e.kind, "record_id": e.record_id, "data": e.data} for e in rows],
+                    "next_cursor": rows[-1].id if rows else max(cursor, space.event_floor)}
 
     def claim_view(row, superseded=(), skipped=()):
         return {"id": row.id, "workflow": row.workflow, "base_record_id": row.base_id, "inputs": row.inputs,
@@ -890,46 +933,52 @@ def create_app(settings=None, storage=None):
         return row
 
     @app.post(prefix + "/claims")
-    def claim(space_id: str, body: ClaimInput, who=Depends(authenticate)):
+    def claim(space_id: str, body: ClaimInput, who=Depends(authenticate),
+              idempotency_key: str = Header(min_length=1, max_length=128)):
         with service.transaction(space_id, who, "coordinator") as (session, _, member):
-            ref = session.get(Ref, (space_id, MAIN_REF))
-            if not ref:
-                fail(404, "reference_not_found")
-            existing = session.scalar(select(Claim).where(Claim.space_id == space_id, Claim.workflow == body.workflow, Claim.base_id == ref.record_id))
-            superseded, skipped = [], []
-            if existing:
-                if existing.result_id:
-                    fail(409, "claim_completed")
-                if existing.lease_until > time.time():
-                    if existing.holder == who.id:
-                        # A retried or lost acquisition by the holder itself returns the live claim unchanged.
-                        return claim_view(existing)
-                    fail(409, "claim_busy", claim_id=existing.id, lease_until=existing.lease_until)
-                existing.fence += 1
-                existing.holder = who.id
-                existing.lease_until = time.time() + body.lease_seconds
-                if body.inputs is not None:
-                    existing.inputs, superseded, skipped = service.frozen_inputs(session, space_id, ref.record_id, body)
+            def acquire_claim():
+                ref = session.get(Ref, (space_id, MAIN_REF))
+                if not ref:
+                    fail(404, "reference_not_found")
+                existing = session.scalar(select(Claim).where(Claim.space_id == space_id, Claim.workflow == body.workflow, Claim.base_id == ref.record_id))
+                superseded, skipped = [], []
+                if existing:
+                    if existing.result_id:
+                        fail(409, "claim_completed")
+                    if existing.lease_until > database_time(session):
+                        fail(409, "claim_busy", claim_id=existing.id, lease_until=existing.lease_until)
+                    existing.fence += 1
+                    existing.holder = who.id
+                    existing.lease_until = database_time(session) + body.lease_seconds
+                    if body.inputs is not None:
+                        existing.inputs, superseded, skipped = service.frozen_inputs(session, space_id, ref.record_id, body)
+                    else:
+                        # Retained inputs must still be attributable to their participants when the claim changes hands.
+                        existing.inputs, skipped = service.retained_inputs(session, existing.inputs, body)
+                    service.emit(session, space_id, who, "claim.acquired", claim_id=existing.id, fence=existing.fence,
+                                 inputs=existing.inputs)
                 else:
-                    # Retained inputs must still be attributable to their participants when the claim changes hands.
-                    existing.inputs, skipped = service.retained_inputs(session, existing.inputs, body)
-                service.emit(session, space_id, who, "claim.acquired", claim_id=existing.id, fence=existing.fence,
-                             inputs=existing.inputs)
-            else:
-                inputs, superseded, skipped = service.frozen_inputs(session, space_id, ref.record_id, body)
-                existing = Claim(id=new_id("claim"), space_id=space_id, workflow=body.workflow,
-                                 base_id=ref.record_id, ref_generation=ref.generation,
-                                 inputs=inputs, holder=who.id, fence=1,
-                                 lease_until=time.time() + body.lease_seconds)
-                session.add(existing)
-                session.flush()
-                service.emit(session, space_id, who, "claim.acquired", claim_id=existing.id, fence=1, inputs=inputs)
-            return claim_view(existing, superseded, skipped)
+                    inputs, superseded, skipped = service.frozen_inputs(session, space_id, ref.record_id, body)
+                    existing = Claim(id=new_id("claim"), space_id=space_id, workflow=body.workflow,
+                                     base_id=ref.record_id, ref_generation=ref.generation,
+                                     inputs=inputs, holder=who.id, fence=1,
+                                     lease_until=database_time(session) + body.lease_seconds)
+                    session.add(existing)
+                    session.flush()
+                    service.emit(session, space_id, who, "claim.acquired", claim_id=existing.id, fence=1, inputs=inputs)
+                return claim_view(existing, superseded, skipped)
+            result = service.once(session, who, space_id + "/claims", idempotency_key,
+                                  body.model_dump(), acquire_claim)
+            current = session.get(Claim, result["id"])
+            if (not current or current.holder != who.id or current.fence != result["fence"]
+                    or current.lease_until <= database_time(session) or current.result_id):
+                fail(409, "claim_not_active")
+            return claim_view(current, result.get("superseded", []), result.get("skipped", []))
 
     @app.get(prefix + "/claims")
     def list_claims(space_id: str, base_record_id: str | None = None, workflow: str | None = None,
                     active: bool = True, who=Depends(authenticate)):
-        with service.transaction(space_id, who) as (session, _, member):
+        with service.transaction(space_id, who, write=False) as (session, _, member):
             if not set(member.roles) & {"coordinator", "admin"}:
                 fail(403, "permission_denied")
             query = select(Claim).where(Claim.space_id == space_id)
@@ -938,14 +987,14 @@ def create_app(settings=None, storage=None):
             if workflow:
                 query = query.where(Claim.workflow == workflow)
             if active:
-                query = query.where(Claim.result_id.is_(None), Claim.lease_until > time.time())
+                query = query.where(Claim.result_id.is_(None), Claim.lease_until > database_time(session))
             return {"items": [claim_view(row) for row in session.scalars(query.order_by(Claim.lease_until, Claim.id))]}
 
     @app.get(prefix + "/claims/{claim_id}")
     def get_claim(space_id: str, claim_id: str, who=Depends(authenticate)):
-        with service.transaction(space_id, who, "coordinator") as (session, _, member):
+        with service.transaction(space_id, who, "coordinator", write=False) as (session, _, member):
             row = held_claim(session, space_id, claim_id, who)
-            if row.lease_until <= time.time() or row.result_id:
+            if row.lease_until <= database_time(session) or row.result_id:
                 fail(409, "claim_not_active")
             return claim_view(row)
 
@@ -953,9 +1002,9 @@ def create_app(settings=None, storage=None):
     def renew_claim(space_id: str, claim_id: str, body: LeaseInput, who=Depends(authenticate)):
         with service.transaction(space_id, who, "coordinator") as (session, _, member):
             row = held_claim(session, space_id, claim_id, who)
-            if row.fence != body.fence or row.lease_until <= time.time() or row.result_id:
+            if row.fence != body.fence or row.lease_until <= database_time(session) or row.result_id:
                 fail(412, "claim_not_active")
-            row.lease_until = time.time() + body.lease_seconds
+            row.lease_until = database_time(session) + body.lease_seconds
             return {"id": row.id, "fence": row.fence, "lease_until": row.lease_until}
 
     @app.post(prefix + "/claims/{claim_id}:abandon")
@@ -988,7 +1037,7 @@ def create_app(settings=None, storage=None):
                 if claim.result_id != body.record_id:
                     fail(409, "claim_completed")
                 return {"record_id": claim.result_id}
-            if claim.lease_until <= time.time():
+            if claim.lease_until <= database_time(session):
                 fail(412, "claim_lease_expired")
             target = service.record(session, space_id, body.record_id, member, who)
             declared = target.data.get(PROVENANCE_FIELD)

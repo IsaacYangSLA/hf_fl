@@ -1,10 +1,15 @@
 """Version-pinned S3 multipart storage. No client chooses storage locators."""
 import hashlib
 import math
+import uuid
 
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
+
+
+class StorageMisconfigured(RuntimeError):
+    """The storage provider cannot supply the required immutable version contract."""
 
 
 class S3BlobStore:
@@ -13,12 +18,19 @@ class S3BlobStore:
         self.bucket = settings.bucket
         self.client = client or boto3.client(
             "s3", endpoint_url=settings.s3_endpoint, region_name=settings.region,
-            config=Config(signature_version="s3v4", retries={"mode": "standard", "max_attempts": 4}),
+            config=Config(signature_version="s3v4", connect_timeout=3, read_timeout=30,
+                          retries={"mode": "standard", "max_attempts": 4}),
         )
+        self.signer = boto3.client(
+            "s3", endpoint_url=settings.s3_public_endpoint, region_name=settings.region,
+            config=Config(signature_version="s3v4"),
+        ) if settings.s3_public_endpoint else self.client
 
     def check(self):
         if self.client.get_bucket_versioning(Bucket=self.bucket).get("Status") != "Enabled":
-            raise ValueError("Exchange bucket versioning must be enabled")
+            raise StorageMisconfigured("Exchange bucket versioning must be enabled")
+        # Read-only permission probe: ListBucket is needed to distinguish missing keys from denied access.
+        self.recover_version("health/missing-" + uuid.uuid4().hex)
 
     def start(self, key):
         return self.client.create_multipart_upload(Bucket=self.bucket, Key=key)["UploadId"]
@@ -30,7 +42,11 @@ class S3BlobStore:
                     yield item["UploadId"]
 
     def recover_start(self, key):
-        return next(self.pending_uploads(key), None) or self.start(key)
+        # No grant is issued before initiation is durably committed. Restart with a fresh attempt-owned MPU;
+        # never adopt a stale attempt's MPU that its delayed owner may still abort.
+        for upload_id in self.pending_uploads(key):
+            self.client.abort_multipart_upload(Bucket=self.bucket, Key=key, UploadId=upload_id)
+        return self.start(key)
 
     def parts(self, blob):
         result = []
@@ -47,7 +63,7 @@ class S3BlobStore:
             if not 1 <= number <= count:
                 raise ValueError("Invalid part number")
             size = min(blob.part_bytes, blob.size - (number - 1) * blob.part_bytes)
-            url = self.client.generate_presigned_url("upload_part", Params={
+            url = self.signer.generate_presigned_url("upload_part", Params={
                 "Bucket": self.bucket, "Key": blob.key, "UploadId": blob.upload_id,
                 "PartNumber": number, "ContentLength": size,
             }, ExpiresIn=self.settings.grant_seconds, HttpMethod="PUT")
@@ -64,7 +80,7 @@ class S3BlobStore:
             raise
         version = result.get("VersionId")
         if not version or version == "null":
-            raise ValueError("Storage did not supply an immutable version ID")
+            raise StorageMisconfigured("Storage did not supply an immutable version ID")
         return version
 
     def complete(self, blob):
@@ -86,7 +102,7 @@ class S3BlobStore:
         )
         version = result.get("VersionId")
         if not version or version == "null":
-            raise ValueError("Storage did not supply an immutable version ID")
+            raise StorageMisconfigured("Storage did not supply an immutable version ID")
         return version
 
     def verify(self, blob):
@@ -101,7 +117,7 @@ class S3BlobStore:
         return digest.hexdigest()
 
     def download(self, blob):
-        return self.client.generate_presigned_url("get_object", Params={
+        return self.signer.generate_presigned_url("get_object", Params={
             "Bucket": self.bucket, "Key": blob.key, "VersionId": blob.version,
         }, ExpiresIn=self.settings.grant_seconds, HttpMethod="GET")
 

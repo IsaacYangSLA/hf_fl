@@ -248,7 +248,8 @@ def main() -> None:
         output_dir = args.output_dir.resolve()
         require_new_directory(output_dir)
         store = make_store(args.backend, args.token, args.endpoint)
-        base_revision = store.resolve_revision(args.repo_id, "main")
+        base_reference = store.resolve_reference(args.repo_id, "main")
+        base_revision = base_reference.revision
         if args.expected_base_revision and base_revision != args.expected_base_revision:
             raise ValueError(
                 f"Main changed since readiness check: expected {args.expected_base_revision}; "
@@ -484,13 +485,17 @@ def main() -> None:
                 expected_base=base_revision,
                 next_round=next_round,
                 tag=args.tag,
+                reference=base_reference,
+                claim=store.current_claim(),
             )
             print(f"published_revision={result.revision}")
             if result.resolved_revision:
                 print(f"resolved_revision={result.resolved_revision}")
             if result.url:
                 print(f"published_url={result.url}")
-            if args.tag:
+            for warning in result.warnings:
+                print(f"warning: {warning}", file=sys.stderr)
+            if args.tag and result.tag_created is not False:
                 print(f"tag={args.tag}")
             if store.name == "huggingface":
                 print("Client PRs were not merged; close them after review.")

@@ -18,12 +18,20 @@ class SubmissionCandidate:
 
 
 @dataclass(frozen=True)
+class ResolvedReference:
+    revision: str
+    generation: int | None = None
+
+
+@dataclass(frozen=True)
 class PublishResult:
     """Backend-neutral result of publishing a model snapshot."""
 
     revision: str
     url: str | None = None
     resolved_revision: str | None = None
+    warnings: tuple[str, ...] = ()
+    tag_created: bool | None = None
 
 
 class ModelStore(ABC):
@@ -31,6 +39,12 @@ class ModelStore(ABC):
 
     name: str
     supports_ancestry: bool = False
+
+    def resolve_reference(self, repo_id: str, name: str = "main") -> ResolvedReference:
+        return ResolvedReference(self.resolve_revision(repo_id, name))
+
+    def current_claim(self):
+        return None
 
     @abstractmethod
     def resolve_revision(self, repo_id: str, revision: str) -> str:
@@ -94,6 +108,8 @@ class ModelStore(ABC):
         expected_base: str,
         next_round: int,
         tag: str | None,
+        reference=None,
+        claim=None,
     ) -> PublishResult:
         """Publish an accepted aggregate to main."""
 

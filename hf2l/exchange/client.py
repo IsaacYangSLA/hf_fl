@@ -5,12 +5,12 @@ import math
 import os
 from pathlib import Path, PurePosixPath
 import time
-from urllib.parse import quote, urlparse
+from urllib.parse import quote
 import uuid
 
 import httpx
 
-from .protocol import METADATA_LIMIT_BYTES, metadata_size
+from .protocol import METADATA_LIMIT_BYTES, metadata_size, require_tls
 
 RETRYABLE_STATUS = (429, 502, 503, 504)
 
@@ -41,11 +41,10 @@ def save_state(path, value):
 
 
 class ExchangeClient:
-    def __init__(self, endpoint, token, *, http=None, transfer=None, retries=3):
+    def __init__(self, endpoint, token, *, http=None, transfer=None, retries=3, allow_local_http=False):
         self.endpoint = endpoint.rstrip("/")
-        address = urlparse(self.endpoint)
-        if address.scheme != "https" and not (address.scheme == "http" and address.hostname in ("127.0.0.1", "localhost", "testserver")):
-            raise ValueError("Exchange endpoint requires HTTPS except on localhost")
+        self.allow_local_http = allow_local_http
+        require_tls(self.endpoint, local=allow_local_http)
         self.token = token
         self.retries = retries
         self.http = http or httpx.Client(timeout=60, follow_redirects=False)
@@ -70,7 +69,13 @@ class ExchangeClient:
                 time.sleep(2 ** attempt)
                 continue
             if response.status_code in RETRYABLE_STATUS and attempt + 1 < self.retries:
-                time.sleep(2 ** attempt)
+                try:
+                    delay = min(60, max(0, float(response.headers.get("Retry-After", 2 ** attempt))))
+                except ValueError:
+                    delay = 2 ** attempt
+                time.sleep(delay)
+                continue
+            if response.status_code == 401 and callable(self.token) and attempt + 1 < self.retries:
                 continue
             if response.status_code >= 300:
                 try:
@@ -129,6 +134,10 @@ class ExchangeClient:
     def get_claim(self, space, claim_id):
         return self.request("GET", self.path(space, "/claims/" + quote(claim_id, safe="")))
 
+    def acquire_claim(self, space, *, idempotency_key=None, **body):
+        return self.request("POST", self.path(space, "/claims"), body=body,
+                            headers={"Idempotency-Key": idempotency_key or uuid.uuid4().hex})
+
     def set_ref(self, space, name, record, *, generation=None, idempotency_key=None):
         headers = {"Idempotency-Key": idempotency_key or uuid.uuid4().hex}
         headers["If-Match" if generation is not None else "If-None-Match"] = f'"{generation}"' if generation is not None else "*"
@@ -136,7 +145,7 @@ class ExchangeClient:
                             body={"record_id": record}, headers=headers)
 
     def put_record(self, space, *, kind, metadata, files=None, base_record_id=None,
-                   state_path=None, wait_seconds=3600):
+                   state_path=None, wait_seconds=3600, upload_seconds=86400):
         files = {name: Path(path) for name, path in (files or {}).items()}
         for path in files.values():
             if path.is_symlink() or not path.is_file():
@@ -169,21 +178,30 @@ class ExchangeClient:
         record = self.get_record(space, state["record_id"])
         if record["state"] == "ready":
             return self._finish(record, state_path)
+        if record["state"] == "failed" or any(b["state"] in ("failed", "aborted") for b in record["attachments"]):
+            self._discard(space, record["id"])
+            self._forget(state_path)
+            raise ExchangeError(409, "blob_verification_failed")
         if record["state"] != "draft":
             self._forget(state_path)
             raise ExchangeError(409, "record_not_uploadable")
         if record["metadata"] != metadata:
             record = self.request("PATCH", self.path(space, f"/records/{record['id']}"), body={"metadata": metadata},
                                   headers={"If-Match": f'"{record["generation"]}"'})
-        deadline = time.monotonic() + wait_seconds
+        deadline = time.monotonic() + upload_seconds
         for attachment in record["attachments"]:
             if attachment["state"] == "verified":
                 continue
             self._upload(space, record["id"], attachment, files[attachment["name"]], deadline)
+        deadline = time.monotonic() + wait_seconds
         while True:
             try:
                 return self._finish(self.request("POST", self.path(space, f"/records/{record['id']}:publish")), state_path)
             except ExchangeError as exc:
+                if exc.code == "blob_verification_failed":
+                    self._discard(space, record["id"])
+                    self._forget(state_path)
+                    raise
                 if exc.code != "blobs_not_verified" or time.monotonic() >= deadline:
                     raise
                 status = self.get_record(space, record["id"])
@@ -206,8 +224,9 @@ class ExchangeClient:
     def _discard(self, space, record):
         try:
             self.cancel_record(space, record)
-        except ExchangeError:
-            pass
+        except ExchangeError as exc:
+            if exc.status != 404:
+                raise
 
     def _upload(self, space, record, attachment, file, deadline):
         identifier = attachment["id"]
@@ -238,9 +257,12 @@ class ExchangeClient:
                 source.seek((number - 1) * chunk_size)
                 data = source.read(chunk_size)
                 for attempt in range(3):
+                    if time.monotonic() >= deadline:
+                        raise ExchangeError(408, "upload_deadline_exceeded")
                     grant = self.request("POST", self.path(space, f"/uploads/{identifier}/parts:authorize"),
                                          body={"part_numbers": [number]})["parts"][0]
                     try:
+                        require_tls(grant["url"], local=self.allow_local_http)
                         response = self.transfer.put(grant["url"], content=data, headers=grant["headers"])
                         if response.is_success:
                             break
@@ -265,6 +287,7 @@ class ExchangeClient:
             if offset >= attachment["size_bytes"] and partial.exists():
                 break
             grant = self.request("POST", self.path(space, f"/records/{record}/blobs/{attachment['id']}:download"))
+            require_tls(grant["url"], local=self.allow_local_http)
             headers = {"Range": f"bytes={offset}-"} if offset else {}
             try:
                 with self.transfer.stream("GET", grant["url"], headers=headers) as response:

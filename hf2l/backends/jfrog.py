@@ -287,6 +287,8 @@ class JFrogStore(ModelStore):
         expected_base: str,
         next_round: int,
         tag: str | None,
+        reference=None,
+        claim=None,
     ) -> PublishResult:
         del next_round
         if tag:

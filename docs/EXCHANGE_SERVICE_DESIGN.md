@@ -36,7 +36,7 @@ flowchart LR
 | --- | --- |
 | Identity provider | Human/workload identities, login, access-token issuance and signing keys |
 | Exchange API | Permission decisions, small-information CRUD/query operations, upload reservations, download grants, reference updates |
-| PostgreSQL | Authoritative metadata, memberships, ownership, record states, exact blob versions, audit and event delivery state |
+| PostgreSQL | Authoritative metadata, memberships, ownership, record states, exact blob versions, event feed state (audit decisions are retained in deployment logs) |
 | Blob storage | Large immutable object versions, multipart transfer, storage-side request signature and integrity checks |
 | Worker | Upload verification/recovery, expiry cleanup, durable event delivery |
 | Application coordinator | Domain validation, participant selection, aggregation or another computation, result publication |
@@ -56,7 +56,7 @@ This adds a storage read, not a client upload through the API.
 | Resource | Meaning | Mutability |
 | --- | --- | --- |
 | Tenant | Administrative and data isolation boundary | Administrative changes only |
-| Space | Shared project namespace within a tenant; replaces a model repository | Policy and memberships can change |
+| Space | Authorized project namespace with an optional tenant label; replaces a model repository | Policy and memberships can change |
 | Record | A small JSON document, optional base record, and zero or more named blob attachments | Draft is editable; ready content is immutable |
 | Blob | One uploaded file owned by a record | Exact verified version is fixed at publication |
 | Reference | Named pointer such as `main`, `latest-config`, or `approved-report` | Compare-and-swap update only |
@@ -113,7 +113,7 @@ are not authorization keys. Use access tokens intended for this API, not OIDC
 ID tokens. This follows the resource-server validation model in
 [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html).
 
-The API resolves tenant and space membership from its database on every
+The API resolves space membership from its database on every
 authorized operation, including URL renewal. Token scopes set an upper bound;
 they do not replace resource-level checks. Request JSON cannot set creator,
 tenant ownership, verified checksums, trusted roles, or approval state.
@@ -179,7 +179,7 @@ download URLs.
 | `DELETE /uploads/{id}` | Abort an owned upload that is still `reserved`, `initiating` or `uploading`; completing, verifying and verified blobs are protected (`409`); cleanup is retryable |
 | `POST /records/{id}:publish` | Freeze metadata and atomically make a record ready after all blobs verify |
 | `DELETE /records/{id}` | Cancel an own draft (admins: any draft), or withdraw an own unreferenced ready record |
-| `POST /claims`, `GET /claims`, `GET /claims/{id}`, `POST /claims/{id}:renew`, `POST /claims/{id}:publish`, `POST /claims/{id}:abandon` | Coordinator freezes newest-per-participant (or explicit) inputs under a fenced lease, publishes a subset-provenanced result, or releases the claim. Automatic freezing reports `superseded` and (binding-changed or creator-revoked) `skipped` updates; acquisition is idempotent for the current holder; `claim_busy` names the active claim; coordinators and admins can list claims by base, workflow and activity |
+| `POST /claims`, `GET /claims`, `GET /claims/{id}`, `POST /claims/{id}:renew`, `POST /claims/{id}:publish`, `POST /claims/{id}:abandon` | Coordinator freezes newest-per-participant (or explicit) inputs under a fenced lease, publishes a subset-provenanced result, or releases the claim. Automatic freezing reports `superseded` and (binding-changed or creator-revoked) `skipped` updates; acquisition is idempotent for the current acquisition key, with separate keys treated as separate jobs; `claim_busy` names the active claim; coordinators and admins can list claims by base, workflow and activity |
 | `POST /records/{id}/blobs/{blob_id}:download` | Authorize a GET/range transfer of the exact published object version |
 | `PUT /refs/{name}` | Coordinator updates a reference with `If-Match` generation, or creates with `If-None-Match: *` |
 | `GET /events?cursor=...` | Read a resumable, authorized event stream |
@@ -190,18 +190,18 @@ cursor pagination with a snapshot boundary so clients can iterate without
 missing concurrently inserted records. A missing attachment is not represented
 as an empty successful download.
 
-Creating mutations (`POST /v1/spaces`, `POST /records`, `PUT /refs/{name}`)
-require `Idempotency-Key`. Store keys scoped to principal, space, route and
+Creating mutations (`POST /v1/spaces`, `POST /records`, `PUT /refs/{name}`, `POST /claims`)
+require a 1–128-character `Idempotency-Key`. Store keys scoped to principal, space, route and
 canonical request digest: the same request returns the same resource/result;
 reusing a key with different content returns `409`. The stored operation is
 inserted under a savepoint so that two concurrent requests with one key, which
 can race where no space row lock serializes them (space creation), both return
 the single stored result rather than a conflict. Retain creation keys at least
 for the upload lifetime and the documented retry window. Replayed responses
-still require current authorization. State-machine mutations (claims, uploads,
-publication) are idempotent through their own state instead: a holder's repeated
-claim acquisition returns the held claim, and a completed upload reports its
-state. URL renewal issues new credentials rather than replaying expired URLs.
+still require current authorization. A repeated claim acquisition key returns
+the same still-active attempt. Other state-machine mutations use their own
+state for retries: a completed upload reports its state. URL renewal issues new
+credentials rather than replaying expired URLs.
 
 Return `202` and an observable operation/upload state for asynchronous
 verification, `409` for invalid state or idempotency conflicts, `412` for failed
@@ -224,8 +224,7 @@ An illustrative create-record request:
     {
       "name": "model.safetensors",
       "size_bytes": 8589934592,
-      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-      "media_type": "application/octet-stream"
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     }
   ]
 }
@@ -308,16 +307,16 @@ result or move `main`.
 
 | Table | Essential fields/constraints |
 | --- | --- |
-| `principals` | ID; unique issuer/subject; active state |
-| `spaces` | ID, tenant ID, policy, byte limits and reserved/used counters |
-| `memberships` | Unique space/principal; roles; optional coordinator-managed participant ID, unique within the space |
+| Identity provider | Issuer/subject identity and issuance lifecycle; immediate revocation also requires removing space memberships |
+| `spaces` | ID, tenant label, policy, byte limits, allocated and pending-deletion counters |
+| `memberships` | Unique space/principal; known subject; roles; optional coordinator-managed participant ID, unique within the space |
 | `records` | ID, space, creator, kind, schema version, optional base, JSONB metadata, state, visibility policy, row generation |
 | `blobs` | ID, space, record, attachment name, size, declared/verified digest, storage backend/bucket/key/version, state |
-| `uploads` | ID, blob, principal, provider upload ID, reservation, expiry, completion/reconciliation state |
+| Upload fields on `blobs` | Provider upload ID, expiry, completion/reconciliation state, renewable attempt token and lease |
 | `refs` | Unique space/name, record ID, monotonic generation |
 | `idempotency` | Scoped key, request digest, operation/result ID, retention deadline |
-| `outbox` | Event ID, space, type, resource ID, delivery attempts/status |
-| `audit` | Principal, action, resource, decision, timestamp, request ID |
+| `events` | Event ID, space, type, resource ID, timestamp; retained pull feed with a per-space expiry floor |
+| Deployment audit logs | Principal, route/resource, status/code, timestamp, request ID; retained by the log collector |
 
 Use same-space foreign-key constraints for base records, references and blob
 associations. Index record discovery by `(space_id, kind, base_record_id,
@@ -335,7 +334,7 @@ lost can be found/aborted by reserved key or expired by multipart lifecycle.
 
 In one database transaction, publication locks the record and its blob rows,
 rechecks authorization and states, changes the record to ready, settles quota,
-and inserts an outbox event. No storage read or lengthy computation runs while
+and inserts a resource event. No storage read or lengthy computation runs while
 these database locks are held. PostgreSQL provides the required
 [row-lock semantics](https://www.postgresql.org/docs/current/explicit-locking.html).
 Unfinished records remain invisible to normal discovery after crashes.
@@ -412,13 +411,11 @@ training provenance. Existing tensor/schema validation and owner-controlled
 evaluation remain in the FedAvg application. The service supplies authenticated
 identity, immutable inputs, controlled visibility, and safe reference updates.
 
-Events are delivered from the transactional outbox at least once. Consumers
-deduplicate by event ID and re-read current authorized state. Support a cursor
-feed first; add signed webhook subscriptions with retry/backoff and a dead-letter
-queue. A slow periodic reconciliation query recovers missed triggers. Webhook
-messages carry resource IDs and minimal routing fields, never transfer URLs.
-Admin-approved HTTPS destinations and outbound network restrictions protect
-webhook delivery from arbitrary internal-address requests.
+Events are read from a retained transactional cursor feed. Consumers persist
+their cursor, deduplicate event IDs, and re-read current authorized state. An
+expired cursor requires reconciliation with current records and references.
+Outbound webhook subscriptions, delivery retries, acknowledgements and a
+dead-letter queue are future extensions; they are not part of this API.
 
 The existing GitHub workflow can consume a service event via a dispatch relay
 or poll the service. Replace HF PR counting with ready-record discovery;
@@ -481,7 +478,7 @@ an application above the exchange SDK.
 First build authenticated spaces/memberships, metadata-only records, ready
 record queries, and conditional references. Next add one versioned object-store
 adapter, multipart upload/resume, checksum verification, quota accounting and
-direct downloads. Then add the HF2L adapter and outbox/coordinator integration.
+direct downloads. Then add the HF2L adapter and cursor-feed/coordinator integration.
 
 Before declaring a storage implementation supported, verify its actual
 versioning, signing, checksum, multipart, conditional operation and range-read
@@ -492,7 +489,7 @@ implementation against the target deployment's capacity and operational needs.
 Required acceptance cases:
 
 - A contributor can exchange metadata and files under the configured sharing
-  policy, but cannot access another tenant or move an owner reference.
+  policy, but cannot access an unenrolled space or move an owner reference.
 - Body-supplied author/participant/visibility values cannot bypass policy.
 - Expired or wrong-method/object/part grants fail; renewed grants require
   current membership; logs contain no bearer tokens or signed query strings.
@@ -511,3 +508,25 @@ This design delivers authenticated small-information exchange and authorized
 large-file transfer independently of the federated-learning algorithm. It does
 not require general Git hosting, an artifact-registry UI, or executing uploaded
 client code within the service.
+
+## Implemented v2 contract clarifications
+
+The deployment/API contract is detailed in [EXCHANGE_SERVICE.md](EXCHANGE_SERVICE.md).
+The implemented choices include:
+
+- Space, not the free-text tenant label, is the authorization boundary. Tenant
+  membership/delegation is not an implemented feature.
+- Membership rows retain known subjects; legacy hashes require an external roster.
+  Global identity disable is an IdP operation plus per-space membership revocation.
+- The durable feed is pulled with a retained cursor. It has no outbound delivery
+  state. Per-request audit decisions live in centrally collected application logs;
+  database events are retained transactional resource events.
+- Blob attempts have renewable owner tokens; lease decisions use the database
+  clock. Physical pending-deletion bytes remain quota-accounted until cleanup.
+- Acquisition keys identify claim runs, independently of the OAuth principal.
+  All four keyed routes require a 1–128-character `Idempotency-Key` header.
+- PostgreSQL uses JSONB, read snapshots and configurable pools. A repeatable
+  `migrate-db` command upgrades the persisted v1 schema before v2 processes start.
+- Fixed-profile schemas are restricted at configuration time so composed rules
+  cannot silently forbid the required FedAvg fields. General schemas belong to
+  custom record kinds.

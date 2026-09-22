@@ -1,5 +1,6 @@
 """Wire-level constants shared by the service, the SDK and the FedAvg adapter; standard library only."""
 import json
+from urllib.parse import urlsplit
 
 from hf2l.hub_helpers import ROUND_FILE, SUBMISSION_FILE
 
@@ -9,6 +10,16 @@ METADATA_LIMIT_BYTES = 65536
 INLINE_FILES_KEY = "hf2l_files"
 # Manifest names that are always materialised from metadata; no attachment may take or shadow them.
 INLINE_MANIFEST_NAMES = (ROUND_FILE, SUBMISSION_FILE)
+
+
+def require_tls(url, *, local=False):
+    """Reject plaintext grants/endpoints except explicitly permitted local development hosts."""
+    address = urlsplit(url)
+    if address.scheme == "https" and address.hostname and not address.username and not address.password:
+        return
+    if local and address.scheme == "http" and address.hostname in ("localhost", "127.0.0.1", "::1", "testserver"):
+        return
+    raise ValueError("Endpoint requires HTTPS; plaintext is allowed only for explicitly enabled local development")
 
 
 def metadata_size(value):

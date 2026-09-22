@@ -24,7 +24,9 @@ class ReadinessTests(unittest.TestCase):
         self.allowlist = self.root / "allowlist.json"
         write_json(self.allowlist, {"alice-hf": "alice", "bob-hf": "bob", "carol-hf": "carol"})
         self.manifests = {}
+        from hf2l.backends.base import ResolvedReference
         self.store = Mock(name="store")
+        self.store.resolve_reference.side_effect = lambda repo, name="main": ResolvedReference(self.store.resolve_revision(repo, name))
         self.store.name = "huggingface"
         self.store.supports_ancestry = True
         self.store.resolve_revision.side_effect = lambda repo, revision: (

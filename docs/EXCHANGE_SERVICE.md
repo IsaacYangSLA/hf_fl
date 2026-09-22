@@ -10,7 +10,7 @@ describes the resource model and trust boundaries.
 ## Install and configure
 
 Use PostgreSQL for deployment. SQLite is supported for local development and
-serializes its transactions; it is not the scale-out database configuration.
+serializes writes; it is not the scale-out database configuration. PostgreSQL reads use an MVCC snapshot without taking the space mutation lock.
 Provide a private S3 bucket with versioning enabled and an identity provider
 issuing RS256 OAuth access tokens. Tokens must have `typ=at+jwt`, the configured
 issuer/audience, `sub`, `iat`, `exp`, and the `exchange` scope. The API does not
@@ -66,7 +66,7 @@ Run these as separate supervised processes with the same configuration:
 .venv/bin/python -m hf2l.exchange.cli worker
 ```
 
-Both emit structured logs (`--log-level`, default `INFO`). Every API response
+Both emit logs with named correlation fields (`--log-level`, default `INFO`). Every API response
 carries `X-Request-ID`; error bodies repeat it as `request_id`, and the same
 value appears in the server log line for that request, including storage and
 database failures (`storage_unavailable`, `database_unavailable`). The worker
@@ -79,19 +79,24 @@ Expose the API through an HTTPS reverse proxy. Apply connection/request timeouts
 and rate limits there; the API limits request bodies to 1 MiB (`413
 request_too_large`) and record metadata to 64 KiB (`422 metadata_too_large`,
 whose body carries the serialized `size` and the `limit`). Interactive API
-documentation is at `/docs`, and the machine-readable
-contract is `/openapi.json`; block or gate these paths at the proxy if the API
-is reachable from untrusted networks. No file bytes are proxied through the API.
+documentation (`/docs`) and OpenAPI (`/openapi.json`) are disabled by default.
+Set `EXCHANGE_DOCS_ENABLED=true` to enable them on a trusted deployment; `/redoc`
+is disabled. Gate enabled documentation at the proxy when appropriate. No file bytes are proxied through the API.
 
 The bucket must deny public access and untrusted deletion. Service permissions
-cover `s3:GetBucketVersioning` (startup check), initiating/listing/completing/
+cover `s3:GetBucketVersioning` (readiness/storage check), initiating/listing/completing/
 aborting multipart uploads, reading object versions, `s3:ListBucket` (needed so a
 missing key reports 404 rather than 403 during completion recovery), listing
 versions for recovery, and generating PUT/GET grants. The cleanup worker
 additionally needs deletion of object versions. Grant cleanup rights only to
 the worker identity where your deployment separates credentials. The configured
-S3 endpoint is also the host embedded in the transfer URLs handed to
-participants, so it must be reachable by them over HTTPS.
+S3 endpoint is used for service-side operations. Set `EXCHANGE_S3_PUBLIC_ENDPOINT`
+to a participant-reachable HTTPS endpoint for presigning when the internal
+endpoint differs. Both must address the same bucket and use the same credentials.
+Without the public setting, the internal endpoint is also embedded in transfer URLs.
+HTTPS is enforced for configured endpoints and for grants consumed by the SDK.
+For local tests only, `EXCHANGE_ALLOW_LOCAL_HTTP=true` permits loopback HTTP;
+the Python SDK uses `allow_local_http=True` for the same explicit exception.
 Configure encryption at rest. Do not expire noncurrent versions indiscriminately:
 a live record can deliberately point to a noncurrent version.
 
@@ -283,8 +288,8 @@ stale retry cannot destroy a finished transfer. The provider upload ID is
 discarded once completion succeeds. Failed/aborted uploads need a new record.
 Ready records are
 immutable, but their creator (or a space admin) can withdraw one with the same
-`DELETE` call: the record becomes `withdrawn`, disappears from reads and
-discovery, releases its quota and its storage versions are reclaimed by the
+`DELETE` call: the record becomes `withdrawn`, disappears from other members' reads and ready
+discovery (its creator may still inspect metadata), releases its logical quota and its storage versions are reclaimed by the
 worker. Withdrawal is refused with `record_referenced`, `record_is_base` or
 `record_claimed` while a reference points at the record, another record builds
 on it, or an active claim has frozen it. `POST /records`, `PUT /refs/{name}`
@@ -292,7 +297,7 @@ and `POST /v1/spaces` require an `Idempotency-Key` header (the SDK supplies one)
 a replay returns the stored result, and concurrent identical requests with the
 same key both receive it, even for `POST /v1/spaces`, which takes no space
 lock. Reusing a key with a different body fails with `idempotency_key_reused`.
-`POST /claims` is idempotent by holder instead (see below).
+`POST /claims` also requires an acquisition key (see below). All four keyed routes require 1–128 characters, and OpenAPI marks the header required.
 
 The `main` reference is reserved for the FedAvg profile: `PUT /refs/main`
 accepts only a ready, shared `model.global` record (`aggregate_kind_mismatch`
@@ -349,10 +354,14 @@ or no longer holds the recorded participant are left out and reported as
 `skipped` (the CLI
 prints both as `skipped_submission`). A coordinator may instead pass an
 explicit `inputs` list of ready update IDs. The call is
-idempotent for its holder: while its lease is active, the same coordinator
-receives its existing claim (same ID and fence) again, so a lost response or a
-restarted job simply re-acquires. An acquisition by a different coordinator
-while the lease is active fails with `claim_busy`, and the error body carries
+idempotent by acquisition key: `POST /claims` requires `Idempotency-Key`, scoped
+to that principal and request body. The adapter persists a random key before the
+first POST and reuses it after a lost response. A different job, even under the
+same principal, gets `claim_busy` instead of sharing the fence. Reusing a key
+with a different body fails with `idempotency_key_reused`; replaying an expired,
+released, or completed acquisition fails with `claim_not_active`. To explicitly
+resume a known active run, use `--claim-id` or the persisted state directory.
+An acquisition while another run's lease is active fails with `claim_busy`, and the error body carries
 the active `claim_id` and `lease_until`; fewer than two usable candidates fails
 with `insufficient_submissions` (the body lists the `skipped` updates); a base
 whose claim already produced a result fails with `claim_completed`; an explicit
@@ -428,13 +437,26 @@ one additional storage read and bounded memory. It reconciles interrupted
 initialization/completion and expires unfinished drafts after the transfer
 window (24 hours by default). The window is renewed when a blob reaches
 verification, and a draft is never expired while one of its blobs is being
-completed or verified. Cleanup of expired, cancelled and withdrawn records waits
-for upload expiry plus the transfer-grant interval, then removes versions and
-multipart uploads at that record's server-generated keys. Each work class
+completed or verified. Each transfer attempt has an owner token and renewable
+lease. Commit and release compare that token and the database clock; a stale
+attempt cannot overwrite a successor. A second HTTP completion reports the
+in-progress state and never starts another storage completion.
+
+On cancellation, expiry, withdrawal, or terminal failure, logical allocation is
+released but bytes move to `pending_deletion_bytes`. The quota check uses both
+counters, so repeated cancellation cannot create unbounded unaccounted storage.
+Cleanup becomes eligible after cancellation/expiry plus the grant lifetime,
+and removes all versions, delete markers, and multipart uploads at that record's
+keys. Successful cleanup releases the pending-deletion charge. Each work class
 (recovery/verification and cleanup) is selected in its own bounded, ordered
 batch so a cleanup backlog cannot starve verification. It never sweeps live
-records by prefix. Worker storage failures remain retryable states and are
-logged with identifiers.
+records by prefix. Missing versions/uploads and digest failures become terminal
+`failed` records, release logical reservations, and schedule physical cleanup.
+Transient errors remain retryable; `EXCHANGE_WORKER_FAILURE_SECONDS` (86400)
+bounds repeated unresolved work. Missing/null VersionId is an infrastructure
+failure (`503 storage_misconfigured`), preserving `completing` for recovery;
+it is not reported as invalid client parts. Recovery of lost initiation aborts
+uncommitted multipart uploads and creates a fresh attempt-owned upload.
 
 An S3 operation and a database transaction cannot commit atomically. Ready
 records are exposed only after successful verification; lost responses are
@@ -444,9 +466,15 @@ withdraw it. Retention of referenced or lineage-bearing ready records remains
 an administrative decision: the API refuses to withdraw them, so automatic
 cleanup cannot remove a live result.
 
-Schema v1 initialization uses SQLAlchemy `create_all` for a new database; it
-does not migrate older deployments. Production schema changes need a reviewed
-migration and matching object-version retention/backup policy. Per-principal
+Schema v2 includes worker tokens, pending-deletion accounting, identity subjects,
+retention timestamps/floors, PostgreSQL JSONB columns, and cleanup indexes.
+`init-db` creates a new database and refuses an unupgraded v1 database.
+For an existing deployment, stop all API/worker processes, back up the database,
+and run `.venv/bin/python -m hf2l.exchange.cli migrate-db` before restarting.
+The transactional, repeatable migration preserves rows and reconstructs the
+pending-deletion budget from existing terminal records. Legacy membership subjects
+remain unknown until the admin re-applies their issuer/subject binding; hashes
+cannot be reversed. Keep a matching object-version backup/retention policy. Per-principal
 rate limiting, identity-provider provisioning, TLS termination and bucket
 policy are deployment responsibilities. Space quotas and authorization are
 enforced in the API. No production infrastructure is provisioned by these
@@ -469,7 +497,7 @@ test real PostgreSQL and an S3-compatible server, set
 test-only S3 credentials through the normal AWS environment variables. Then run:
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -p test_exchange.py -v
+EXCHANGE_REQUIRE_TESTS=1 .venv/bin/python -m unittest discover -s tests -p 'test_exchange*.py' -v
 ```
 
 Tests create and remove uniquely named PostgreSQL schemas and S3 buckets.
@@ -478,3 +506,90 @@ Live coverage adds the provider's signature enforcement on tampered and expired
 grants. Moto is useful for application behavior; it is not proof of a storage
 provider's signature enforcement. Run the live tests for each chosen
 provider/version before deployment.
+
+## Read paths, retention, and deployment limits
+
+Pure record, reference, event, upload-status and identity reads use a database
+snapshot without an exclusive space lock. Writers still serialize per space to
+protect authorization/quota/CAS and event commit order. Membership recovery is
+an audited mutation even when reached through the bootstrap membership-list
+route. Record pages batch their attachment query; event pages join visibility
+and filter feed kinds before LIMIT.
+
+`GET /health` is process liveness. `GET /ready` checks the schema/database and
+versioned storage, including the missing-object permission probe. Dependency
+outages do not prevent startup. Put readiness on the load balancer; database,
+storage and IdP unavailability return JSON 503 errors with `Retry-After`.
+JWKS fetches have a bounded wait/timeout, cached keys and a short outage cooldown.
+
+Additional settings:
+
+| Environment variable | Default | Purpose |
+|---|---:|---|
+| `EXCHANGE_POOL_SIZE` | 10 | PostgreSQL connections per process |
+| `EXCHANGE_POOL_OVERFLOW` | 10 | Additional pooled connections |
+| `EXCHANGE_POOL_TIMEOUT` | 5 | Seconds waiting for a connection |
+| `EXCHANGE_POOL_RECYCLE` | 1800 | Connection recycling age, seconds |
+| `EXCHANGE_JWKS_TIMEOUT` | 3 | Key fetch and lock wait, seconds |
+| `EXCHANGE_JWKS_CACHE_SECONDS` | 300 | Key-set cache lifetime |
+| `EXCHANGE_WORKER_FAILURE_SECONDS` | 86400 | Maximum age for unresolved recovery/verification attempts |
+| `EXCHANGE_OPERATION_RETENTION_SECONDS` | 864000 | Idempotency history lifetime |
+| `EXCHANGE_EVENT_RETENTION_SECONDS` | 2592000 | Event history lifetime |
+
+Run multiple API processes with `hf2l-exchange-service serve --workers 4`, or
+`uvicorn hf2l.exchange.api:create_app --factory --workers 4`. Size the pool for
+the total API and worker process count. Database clock values govern leases,
+expiry and runtime event/operation timestamps; Unix seconds remain the wire
+format. PostgreSQL metadata uses JSONB; SQLite uses JSON.
+
+The worker prunes history in bounded batches. Operation retention must exceed
+the upload window plus grant lifetime plus one day for retries. An idempotency
+key replay outside that retention window may create a new resource. Event
+consumers must persist their cursor and deduplicate IDs. A cursor below the
+retention floor returns `410 event_cursor_expired` with `restart_cursor`;
+reconcile current records/references before starting from that floor. The feed
+is pull-based and has no outbound-delivery acknowledgement/outbox contract.
+
+The Event table records transactional resource events. Successful grants and
+denied requests are logged with route/resource, principal when authenticated,
+status/code and request ID, rather than creating database audit rows for each
+request. Collect the INFO-level application logs centrally and define audit
+retention in that collector; deleting event history does not replace audit-log
+retention. Neither signed URLs nor bearer tokens are intentionally logged.
+
+`tenant` is an administrative label. **Space is the authorization boundary**;
+there is no tenant membership, delegated tenant administrator or tenant-wide
+storage partition in this version. Membership listing now includes the original
+subject for newly granted identities. Keep the IdP/space roster for legacy rows
+and centralized administration. Global identity lifecycle remains at the IdP:
+disable issuance there and revoke the identity's memberships in each space when
+immediate invalidation of already-issued JWTs is required. The service has no
+separate global principal-disable API.
+
+The fixed FedAvg kinds accept an intentionally restricted schema subset:
+object `type`, `properties`, `required`, boolean `additionalProperties`, and
+annotations. Only `hf2l_files` may be required at the top level. Its schema and
+`input_record_ids` may specify their expected type and annotations, but not
+nested constraints that could reject the adapter's mandatory fields. Use custom
+kinds for arbitrary composed JSON Schemas. Unsupported profile compositions
+fail during rule configuration with `profile_kind_incompatible`.
+
+SDK `put_record` has separate `upload_seconds` (86400) and verification
+`wait_seconds` (3600) budgets. The verification budget starts after transfers.
+Resuming a failed/aborted blob discards its unusable draft and resume file.
+Incomplete downloads retain partial files; completed files with bad size/hash
+are rejected and discarded. Grant URLs must satisfy the same explicit HTTPS or
+local-development policy as configured endpoints.
+
+Advanced publishers can carry `ResolvedReference(revision, generation)` and a
+claim handle explicitly into `publish_aggregate(reference=..., claim=...)`,
+including across adapter instances. The owner CLI does this automatically.
+Existing tag names fail before uploading; if a tag races after main publication,
+`PublishResult` still returns the published revision, `tag_created=False`, and a
+warning. The CLI prints that revision and warning rather than hiding a successful
+publication.
+
+The `Exchange service tests` GitHub workflow runs required dependency checks,
+SQLite/Moto on Python 3.10/3.12, and PostgreSQL/MinIO for real concurrency,
+schema migration and signed-URL checks. `EXCHANGE_REQUIRE_TESTS=1` turns missing
+exchange dependencies into a failure instead of an all-skipped success.

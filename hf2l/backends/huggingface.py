@@ -161,6 +161,8 @@ class HuggingFaceStore(ModelStore):
         expected_base: str,
         next_round: int,
         tag: str | None,
+        reference=None,
+        claim=None,
     ) -> PublishResult:
         operations = [
             CommitOperationAdd(path_in_repo=path, path_or_fileobj=folder / path)

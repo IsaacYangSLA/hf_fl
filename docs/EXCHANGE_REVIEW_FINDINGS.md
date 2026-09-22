@@ -1,5 +1,18 @@
 # Exchange service review: verified findings
 
+## Current remediation
+
+The remaining findings from the `8f7fee7` assessment are addressed in the current
+working tree. [EXCHANGE_REMEDIATION.md](EXCHANGE_REMEDIATION.md) maps every remaining
+finding to its implemented remedy, records the explicit scope choices, and gives
+validation and schema-upgrade instructions. Local validation: SQLite/Moto 92 tests
+with one expected skip; PostgreSQL/MinIO 93 tests with no skips.
+
+The commit-specific review and status lines below are preserved as historical
+evidence and must not be read as current status.
+
+## Original review
+
 Commit 48b2c34. Method: 8 independent review lenses + orchestrator seed hypotheses -> merged -> adversarial verification per finding against the running app (SQLite + Moto) -> completeness critic -> verification of its additions. Offline suite: 12 passed, 2 skipped. Live-only tests against a local Moto server: end-to-end SDK/FedAvg round passed; signature-enforcement test fails on Moto as documented (Moto does not check signatures).
 
 Severity: critical = stuck state/data loss/security bypass with no API recovery; high = correctness or major operational gap in normal use; medium = real defect with workaround or lower likelihood; low = small, worth fixing.
