@@ -38,7 +38,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          .venv/bin/python -m pip install .
+          .venv/bin/python -m pip install '.[hf]'
       - name: Check current-round PRs
         id: check
         env:
@@ -100,7 +100,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          .venv/bin/python -m pip install .
+          .venv/bin/python -m pip install '.[hf]'
       - name: Validate, average, and publish
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}

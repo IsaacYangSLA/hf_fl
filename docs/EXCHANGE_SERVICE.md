@@ -1,10 +1,17 @@
-# Run the exchange service
+# Legacy Exchange v1 service
+
+This guide describes the retained `hf2l.exchange` service and its `/v1` API.
+For new deployments and the current `--backend exchange` adapter, use the
+[independent Exchange service runbook](EXCHANGE_V3.md) and
+[v3 architecture](ARCHITECTURE_V3.md). The new adapter does not speak this legacy
+API. The old service remains for explicit legacy use and regression coverage;
+its database is not an input to the new service.
 
 The exchange backend implements authenticated JSON records, private/shared
 visibility, immutable published attachments, resumable direct S3 transfers,
 conditional references, a durable event feed, and fenced coordinator claims.
-It works with the existing HF2L client and owner commands through
-`--backend exchange`. The [design document](history/EXCHANGE_SERVICE_DESIGN.md)
+It historically served the HF2L `--backend exchange` adapter; the current adapter
+now targets the independent `/v2` service. The [historical design document](history/EXCHANGE_SERVICE_DESIGN.md)
 describes the resource model and trust boundaries.
 
 ## Install and configure

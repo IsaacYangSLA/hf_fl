@@ -1,0 +1,524 @@
+{
+  "$defs": {
+    "AlgorithmSpec": {
+      "additionalProperties": true,
+      "properties": {
+        "name": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
+        "params": {
+          "type": "object"
+        },
+        "version": {
+          "maximum": 9223372036854775807,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "ClientContext": {
+      "additionalProperties": true,
+      "anyOf": [
+        {
+          "required": [
+            "base_revision"
+          ]
+        },
+        {
+          "required": [
+            "base_commit"
+          ]
+        }
+      ],
+      "properties": {
+        "algorithm": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/AlgorithmSpec"
+            }
+          ]
+        },
+        "algorithm_spec": {
+          "$ref": "#/$defs/AlgorithmSpec"
+        },
+        "backend": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
+        "base_commit": {
+          "allOf": [
+            {
+              "not": {
+                "enum": [
+                  "main",
+                  "master",
+                  "latest",
+                  "HEAD"
+                ]
+              }
+            },
+            {
+              "not": {
+                "pattern": "^refs/(heads|tags)/"
+              }
+            }
+          ],
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
+        "base_model_dir": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[/]$)(?![^/]*:)[^\\\\\\x00-\\x1f\\x7f]+$",
+          "type": "string"
+        },
+        "base_revision": {
+          "allOf": [
+            {
+              "not": {
+                "enum": [
+                  "main",
+                  "master",
+                  "latest",
+                  "HEAD"
+                ]
+              }
+            },
+            {
+              "not": {
+                "pattern": "^refs/(heads|tags)/"
+              }
+            }
+          ],
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
+        "checkpoint_files": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[/]$)(?![^/]*:)[^\\\\\\x00-\\x1f\\x7f]+$",
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "checkpoint_files_sha256": {
+          "additionalProperties": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "maxProperties": 10000,
+          "minProperties": 1,
+          "propertyNames": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[/]$)(?![^/]*:)[^\\\\\\x00-\\x1f\\x7f]+$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "repo_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
+        "requested_revision": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
+        "schema_version": {
+          "enum": [
+            1,
+            2
+          ],
+          "type": "integer"
+        },
+        "source_round": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "repo_id",
+        "source_round"
+      ],
+      "type": "object"
+    },
+    "RoundRecord": {
+      "additionalProperties": true,
+      "properties": {
+        "algorithm": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/AlgorithmSpec"
+            }
+          ]
+        },
+        "algorithm_spec": {
+          "$ref": "#/$defs/AlgorithmSpec"
+        },
+        "backend": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
+        "base_commit": {
+          "allOf": [
+            {
+              "not": {
+                "enum": [
+                  "main",
+                  "master",
+                  "latest",
+                  "HEAD"
+                ]
+              }
+            },
+            {
+              "not": {
+                "pattern": "^refs/(heads|tags)/"
+              }
+            }
+          ],
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
+        "base_revision": {
+          "allOf": [
+            {
+              "not": {
+                "enum": [
+                  "main",
+                  "master",
+                  "latest",
+                  "HEAD"
+                ]
+              }
+            },
+            {
+              "not": {
+                "pattern": "^refs/(heads|tags)/"
+              }
+            }
+          ],
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
+        "checkpoint_files": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[/]$)(?![^/]*:)[^\\\\\\x00-\\x1f\\x7f]+$",
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "checkpoint_files_sha256": {
+          "additionalProperties": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "maxProperties": 10000,
+          "minProperties": 1,
+          "propertyNames": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[/]$)(?![^/]*:)[^\\\\\\x00-\\x1f\\x7f]+$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "evaluation": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "round": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema_version": {
+          "enum": [
+            1,
+            2
+          ],
+          "type": "integer"
+        },
+        "submissions": {
+          "items": {
+            "properties": {
+              "author": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+                "type": "string"
+              },
+              "coefficient": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              "num_examples": {
+                "maximum": 9223372036854775807,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "participant": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+                "type": "string"
+              },
+              "resolved_revision": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+                "type": "string"
+              },
+              "submission_revision": {
+                "maxLength": 4096,
+                "minLength": 1,
+                "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "maxItems": 10000,
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "round"
+      ],
+      "type": "object"
+    },
+    "SubmissionManifest": {
+      "additionalProperties": true,
+      "anyOf": [
+        {
+          "required": [
+            "base_revision"
+          ]
+        },
+        {
+          "required": [
+            "base_commit"
+          ]
+        }
+      ],
+      "properties": {
+        "algorithm": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/AlgorithmSpec"
+            }
+          ]
+        },
+        "algorithm_spec": {
+          "$ref": "#/$defs/AlgorithmSpec"
+        },
+        "backend": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
+        "base_commit": {
+          "allOf": [
+            {
+              "not": {
+                "enum": [
+                  "main",
+                  "master",
+                  "latest",
+                  "HEAD"
+                ]
+              }
+            },
+            {
+              "not": {
+                "pattern": "^refs/(heads|tags)/"
+              }
+            }
+          ],
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
+        "base_revision": {
+          "allOf": [
+            {
+              "not": {
+                "enum": [
+                  "main",
+                  "master",
+                  "latest",
+                  "HEAD"
+                ]
+              }
+            },
+            {
+              "not": {
+                "pattern": "^refs/(heads|tags)/"
+              }
+            }
+          ],
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
+        "checkpoint_files": {
+          "items": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[/]$)(?![^/]*:)[^\\\\\\x00-\\x1f\\x7f]+$",
+            "type": "string"
+          },
+          "maxItems": 10000,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "checkpoint_files_sha256": {
+          "additionalProperties": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "maxProperties": 10000,
+          "minProperties": 1,
+          "propertyNames": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[/]$)(?![^/]*:)[^\\\\\\x00-\\x1f\\x7f]+$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "num_examples": {
+          "maximum": 9223372036854775807,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "participant": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
+        "repo_id": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
+        "schema_version": {
+          "enum": [
+            1,
+            2
+          ],
+          "type": "integer"
+        },
+        "source_round": {
+          "maximum": 9223372036854775807,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "submission_revision": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+              "type": "string"
+            }
+          ]
+        },
+        "training": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "schema_version",
+        "repo_id",
+        "source_round",
+        "participant",
+        "num_examples"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Architecture v3; existing wire schemas and document names are retained.",
+  "title": "HF2L FL documents (wire schemas 1 and 2)",
+  "x-document-files": {
+    "ClientContext": "fedavg_client_context.json",
+    "RoundRecord": "fedavg_round.json",
+    "SubmissionManifest": "fedavg_submission.json"
+  },
+  "x-runtime-limits": {
+    "base_aliases": "must be equal when both present",
+    "collection_items": 10000,
+    "document_bytes": 1048576,
+    "integers": "signed 64-bit; integer fields reject boolean and floating-point values",
+    "json_depth": 16,
+    "metadata_bytes": 65536,
+    "numbers": "finite",
+    "strings": "valid UTF-8"
+  }
+}

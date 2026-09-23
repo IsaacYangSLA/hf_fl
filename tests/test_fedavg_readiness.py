@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 import torch
 from safetensors.torch import load_file, save_file
 
-from hf2l.backends.base import PublishResult, SubmissionCandidate
+from hf2l.backends.base import BackendCapabilities, PublicationConsistency, PublishResult, SubmissionCandidate
 from hf2l.hub_helpers import ROUND_FILE, SUBMISSION_FILE, artifact_hashes, write_json
 from hf2l.owner_fedavg import main
 
@@ -28,6 +28,7 @@ class ReadinessTests(unittest.TestCase):
         self.store = Mock(name="store")
         self.store.resolve_reference.side_effect = lambda repo, name="main": ResolvedReference(self.store.resolve_revision(repo, name))
         self.store.name = "huggingface"
+        self.store.capabilities = BackendCapabilities(PublicationConsistency.ATOMIC, ancestry=True, pull_requests=True)
         self.store.supports_ancestry = True
         self.store.resolve_revision.side_effect = lambda repo, revision: (
             "base-sha" if revision == "main" else revision + "-sha"
@@ -81,7 +82,7 @@ class ReadinessTests(unittest.TestCase):
         self.logs = io.StringIO()
         with patch("sys.argv", argv), patch("hf2l.owner_fedavg.make_store", return_value=self.store):
             with contextlib.redirect_stdout(self.logs), contextlib.redirect_stderr(self.logs):
-                main()
+                return main()
 
     def test_threshold_and_metadata_only_downloads(self):
         for count in (0, 1, 2, 3):
@@ -123,26 +124,22 @@ class ReadinessTests(unittest.TestCase):
     def test_duplicate_participant_fails(self):
         self.add_submission("alice")
         self.add_submission("alice")
-        with self.assertRaises(SystemExit):
-            self.run_owner("--check-only")
+        self.assertEqual(1, self.run_owner("--check-only"))
         self.assertIn("Duplicate participant", self.logs.getvalue())
 
     def test_changed_main_fails_before_download_or_publish(self):
-        with self.assertRaises(SystemExit):
-            self.run_owner("--expected-base-revision", "old-sha", "--publish")
+        self.assertEqual(1, self.run_owner("--expected-base-revision", "old-sha", "--publish"))
         self.assertIn("Main changed since readiness check", self.logs.getvalue())
         self.store.download_snapshot.assert_not_called()
         self.store.publish_aggregate.assert_not_called()
 
     def test_check_only_cannot_publish(self):
-        with self.assertRaises(SystemExit):
-            self.run_owner("--check-only", "--publish")
+        self.assertEqual(1, self.run_owner("--check-only", "--publish"))
         self.store.publish_aggregate.assert_not_called()
 
     def test_normal_aggregation_still_requires_two_submissions(self):
         self.add_submission("alice")
-        with self.assertRaises(SystemExit):
-            self.run_owner()
+        self.assertEqual(1, self.run_owner())
         self.assertIn("requires at least two", self.logs.getvalue())
 
     def test_aggregate_and_publish_uses_checked_base(self):

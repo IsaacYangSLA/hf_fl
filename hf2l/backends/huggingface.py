@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
 from huggingface_hub import CommitOperationAdd, HfApi
 
-from hf2l.backends.base import ModelStore, PublishResult, SubmissionCandidate
+from hf2l.common.fs import checked_file_paths
+from hf2l.core.ports import (BackendCapabilities, ModelStore, PublicationConsistency,
+                                  PublicationUncertain, PublishResult, RevisionNotFound, SubmissionCandidate)
 
 
 def normalize_pr(value: str) -> str:
@@ -19,8 +22,23 @@ def normalize_pr(value: str) -> str:
     raise ValueError(f"PR must be a number or refs/pr/N, received {value!r}")
 
 
+def _revision_read(method):
+    """Normalize an absent object without hiding permission failures or outages."""
+    @wraps(method)
+    def call(*args, **kwargs):
+        try:
+            return method(*args, **kwargs)
+        except Exception as exc:
+            status = getattr(exc, "status", None) or getattr(getattr(exc, "response", None), "status_code", None)
+            if status == 404:
+                raise RevisionNotFound("The selected revision or snapshot is unavailable") from exc
+            raise
+    return call
+
+
 class HuggingFaceStore(ModelStore):
     name = "huggingface"
+    capabilities = BackendCapabilities(PublicationConsistency.ATOMIC, ancestry=True, pull_requests=True)
     supports_ancestry = True
 
     def __init__(self, token: str | None, endpoint: str | None = None):
@@ -29,12 +47,14 @@ class HuggingFaceStore(ModelStore):
             kwargs["endpoint"] = endpoint
         self.api = HfApi(**kwargs)
 
+    @_revision_read
     def resolve_revision(self, repo_id: str, revision: str) -> str:
         resolved = self.api.model_info(repo_id, revision=revision).sha
         if not resolved:
             raise RuntimeError(f"Hugging Face did not resolve revision {revision!r}")
         return resolved
 
+    @_revision_read
     def download_snapshot(
         self,
         repo_id: str,
@@ -54,6 +74,7 @@ class HuggingFaceStore(ModelStore):
     def initialize_repository(
         self, repo_id: str, folder: Path, *, private: bool
     ) -> PublishResult:
+        checked_file_paths(folder)
         repo_url = self.api.create_repo(
             repo_id=repo_id,
             repo_type="model",
@@ -82,7 +103,7 @@ class HuggingFaceStore(ModelStore):
         del submission_revision
         operations = [
             CommitOperationAdd(path_in_repo=path, path_or_fileobj=folder / path)
-            for path in paths
+            for path in checked_file_paths(folder, paths)
         ]
         result = self.api.create_commit(
             repo_id=repo_id,
@@ -101,7 +122,7 @@ class HuggingFaceStore(ModelStore):
         )
 
     def discover_submissions(
-        self, repo_id: str
+        self, repo_id: str, *, context=None
     ) -> tuple[list[SubmissionCandidate], list[str]]:
         candidates: list[SubmissionCandidate] = []
         skipped: list[str] = []
@@ -148,6 +169,7 @@ class HuggingFaceStore(ModelStore):
             candidates.append(SubmissionCandidate(revision, revision, author))
         return candidates
 
+    @_revision_read
     def is_descendant(self, repo_id: str, revision: str, base_revision: str) -> bool:
         history = self.api.list_repo_commits(repo_id, revision=revision)
         return any(commit.commit_id == base_revision for commit in history)
@@ -164,34 +186,45 @@ class HuggingFaceStore(ModelStore):
         reference=None,
         claim=None,
     ) -> PublishResult:
+        if claim is not None:
+            raise ValueError(f"{self.name} does not support fenced coordination")
+        if reference is not None and reference.revision != expected_base:
+            raise ValueError("Publication reference differs from the expected base")
         operations = [
             CommitOperationAdd(path_in_repo=path, path_or_fileobj=folder / path)
-            for path in paths
+            for path in checked_file_paths(folder, paths)
         ]
-        result = self.api.create_commit(
-            repo_id=repo_id,
-            repo_type="model",
-            revision="main",
-            parent_commit=expected_base,
-            operations=operations,
-            commit_message=f"Publish FedAvg round {next_round}",
-        )
-        published = self.resolve_revision(repo_id, "main")
-        if published != result.oid:
-            raise RuntimeError(
-                f"Post-publish verification failed: main={published}, commit={result.oid}"
-            )
-        if tag:
-            self.api.create_tag(
-                repo_id,
+        try:
+            result = self.api.create_commit(
+                repo_id=repo_id,
                 repo_type="model",
-                tag=tag,
-                revision=result.oid,
-                tag_message=f"FedAvg round {next_round}",
-                exist_ok=False,
+                revision="main",
+                parent_commit=expected_base,
+                operations=operations,
+                commit_message=f"Publish FedAvg round {next_round}",
             )
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status is not None and 400 <= status < 500 and status != 408:
+                raise
+            raise PublicationUncertain(
+                "Hugging Face publication outcome is unknown; reconcile main before retrying"
+            ) from exc
+        # The accepted conditional commit proves publication, even if another writer
+        # subsequently moves main or an optional tag operation fails.
+        warnings, tagged = (), None
+        if tag:
+            try:
+                self.api.create_tag(
+                    repo_id, repo_type="model", tag=tag, revision=result.oid,
+                    tag_message=f"FedAvg round {next_round}", exist_ok=False,
+                )
+                tagged = True
+            except Exception as exc:
+                tagged = False
+                warnings = (f"Published {result.oid}, but tag {tag!r} failed: {exc}",)
+        warnings += ("Close accepted pull requests without merging after publication.",)
         return PublishResult(
-            str(result.oid),
-            str(result.commit_url) if result.commit_url else None,
-            str(result.oid),
+            str(result.oid), str(result.commit_url) if result.commit_url else None,
+            str(result.oid), warnings=warnings, tag_created=tagged,
         )

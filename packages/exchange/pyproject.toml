@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=80", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hf2l-exchange"
+version = "0.1.0.dev0"
+description = "Authenticated metadata exchange and direct immutable blob transfer"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["httpx>=0.27,<1"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+]
+
+[project.optional-dependencies]
+server = [
+  "fastapi>=0.115,<1", "uvicorn>=0.30,<1", "sqlalchemy>=2,<3",
+  "psycopg[binary]>=3,<4", "boto3>=1.35,<2", "PyJWT[crypto]>=2.9,<3",
+  "jsonschema>=4.18,<5",
+]
+test = ["moto[s3,server]>=5,<6", "httpx>=0.27,<1"]
+build = ["build>=1.2.2"]
+
+[project.scripts]
+hf2l-exchange = "hf2l_exchange.cli:main"
+
+[project.urls]
+Repository = "https://github.com/IsaacYangSLA/hf_fl"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["hf2l_exchange*"]

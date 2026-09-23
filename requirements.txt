@@ -1,4 +1,3 @@
-huggingface_hub>=0.32.0
+# Minimal HF2L runtime. Optional adapters: pip install '.[hf,torch,examples]'.
 numpy>=1.26.0
 safetensors>=0.4.0
-torch>=2.2.0

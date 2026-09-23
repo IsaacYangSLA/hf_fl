@@ -1,4 +1,4 @@
-name: Exchange service tests
+name: HF2L architecture and exchange tests
 
 on:
   push:
@@ -9,7 +9,75 @@ permissions:
   contents: read
 
 jobs:
-  sqlite:
+  core-numpy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install only the framework-independent application core
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e .
+          .venv/bin/python -m pip check
+      - name: Verify clean core installation and actual NumPy aggregation
+        run: .venv/bin/python scripts/check_hf2l_dependencies.py --mode core
+      - name: Enforce both distribution boundaries, frozen oracles and core contracts
+        run: >-
+          .venv/bin/python -m unittest
+          tests.test_layering tests.test_architecture_v3
+          tests.test_protocol_v3 tests.test_checkpoint_v3 -v
+
+  dependency-boundaries:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.10', '3.12']
+        installation: [sdk, server]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install standalone SDK or server without HF2L
+        env:
+          INSTALLATION: ${{ matrix.installation }}
+        run: |
+          python -m venv .venv
+          if [ "$INSTALLATION" = server ]; then
+            .venv/bin/python -m pip install -e './packages/exchange[server]'
+          else
+            .venv/bin/python -m pip install -e ./packages/exchange
+          fi
+          .venv/bin/python scripts/check_exchange_dependencies.py --mode "$INSTALLATION"
+          .venv/bin/python -m pip check
+
+  generic-sqlite:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.10', '3.12']
+    env:
+      EXCHANGE_REQUIRE_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install generic service and tests without ML dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e './packages/exchange[server,test]'
+      - name: Run generic SQLite and Moto suite
+        run: .venv/bin/python -m unittest discover -s packages/exchange/tests -v
+
+  hf2l-regression:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -23,19 +91,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Install project and required exchange tests
+      - name: Install local distributions and legacy regression dependencies
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          .venv/bin/python -m pip install -e '.[service,exchange,exchange-test]'
-      - name: Run SQLite and Moto suite
+          .venv/bin/python -m pip install -e './packages/exchange[server,test]' -e '.[torch,hf,examples,exchange,service,exchange-test]'
+      - name: Run all application, numeric golden, architecture and legacy regressions
         run: .venv/bin/python -m unittest discover -s tests -v
+      - name: Check distribution metadata consistency
+        run: .venv/bin/python -m pip check
 
   postgres-s3:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:18
+        # Locally inspected PostgreSQL 18 image; deliberately immutable.
+        image: postgres@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
         env:
           POSTGRES_USER: hf2l_test
           POSTGRES_PASSWORD: local-test-only
@@ -61,18 +132,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install project and required exchange tests
+      - name: Install both distributions and test dependencies
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          .venv/bin/python -m pip install -e '.[service,exchange,exchange-test]'
-      - name: Start ephemeral versioned S3 test service
+          .venv/bin/python -m pip install -e './packages/exchange[server,test]' -e '.[torch,hf,examples,exchange,service,exchange-test]'
+      - name: Start pinned ephemeral S3 test service
         run: |
           docker run -d --rm --name hf2l-ci-minio -p 127.0.0.1:9000:9000 \
             -e MINIO_ROOT_USER="$AWS_ACCESS_KEY_ID" \
             -e MINIO_ROOT_PASSWORD="$AWS_SECRET_ACCESS_KEY" \
-            quay.io/minio/minio:latest server /data
-          .venv/bin/python - <<'PY'
+            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e server /data
+          .venv/bin/python - <<'PYTHON'
           import time
           from urllib.request import urlopen
           for attempt in range(30):
@@ -83,8 +154,10 @@ jobs:
                   if attempt == 29:
                       raise
                   time.sleep(1)
-          PY
-      - name: Run PostgreSQL concurrency and S3 signature tests
+          PYTHON
+      - name: Run generic PostgreSQL and S3 conformance tests
+        run: .venv/bin/python -m unittest discover -s packages/exchange/tests -v
+      - name: Run legacy PostgreSQL concurrency and S3 signature regressions
         run: .venv/bin/python -m unittest discover -s tests -v
       - name: Remove ephemeral S3 service
         if: always()

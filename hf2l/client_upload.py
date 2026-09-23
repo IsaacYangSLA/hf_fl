@@ -12,7 +12,7 @@ from hf2l.client_steps import upload_client_update
 from hf2l.hub_helpers import read_json
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument(
@@ -28,17 +28,20 @@ def parse_args() -> argparse.Namespace:
         help="Optional non-secret JSON object describing local training and metrics",
     )
     add_store_arguments(parser)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    store = None
     try:
         work_dir = args.work_dir.resolve()
         trained_dir = (args.trained_dir or work_dir / "trained_model").resolve()
         metadata = read_json(args.metadata_json) if args.metadata_json else {}
+        options = {"principal": args.local_principal} if getattr(args, "local_principal", None) else {}
+        store = make_store(args.backend, args.token, args.endpoint, **options)
         result, submission = upload_client_update(
-            make_store(args.backend, args.token, args.endpoint),
+            store,
             work_dir,
             trained_dir,
             args.participant,
@@ -54,10 +57,14 @@ def main() -> None:
         if result.url:
             print(f"submission_url={result.url}")
         print("Send submission_revision to the repository owner.")
+        return 0
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
+        return 1
+    finally:
+        if store is not None:
+            store.close()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -11,7 +11,7 @@ import textwrap
 from pathlib import Path
 
 from hf2l.backends import add_store_arguments, make_store
-from hf2l.checkpoint_utils import copy_model_directory, discover_checkpoint
+from hf2l.core.protocol import AlgorithmSpec, RoundRecord
 from hf2l.hub_helpers import (
     ROUND_FILE,
     SCHEMA_VERSION,
@@ -57,7 +57,7 @@ def generic_model_card(repo_id: str) -> str:
     )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-id", required=True, help="OWNER_OR_ORG/model-name")
     source = parser.add_mutually_exclusive_group(required=True)
@@ -86,12 +86,15 @@ def parse_args() -> argparse.Namespace:
         help="Create a private repo; participants then need organization access",
     )
     add_store_arguments(parser)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    store = None
     try:
+        from hf2l.checkpoint_utils import copy_model_directory, discover_checkpoint
+
         with tempfile.TemporaryDirectory(prefix="hf-fedavg-init-") as temporary:
             staging = Path(temporary) / "model"
             initialization: dict[str, object]
@@ -111,7 +114,7 @@ def main() -> None:
                     raise ValueError(
                         "initialize_model(...) must return a metadata dictionary or None"
                     )
-                json.dumps(result_metadata)
+                json.dumps(result_metadata, allow_nan=False)
                 initialization = {
                     "source": "trusted_local_plugin",
                     "plugin": plugin_reference_name(args.plugin),
@@ -127,11 +130,12 @@ def main() -> None:
                 )
             write_json(
                 staging / ROUND_FILE,
-                {
+                RoundRecord.from_dict({
                     "schema_version": SCHEMA_VERSION,
                     "backend": args.backend,
                     "round": 0,
                     "algorithm": "initial model",
+                    "algorithm_spec": AlgorithmSpec("fedavg").to_dict(),
                     "created_at": utc_now(),
                     "checkpoint_files": list(checkpoint.artifact_paths),
                     "checkpoint_files_sha256": artifact_hashes(
@@ -139,10 +143,11 @@ def main() -> None:
                     ),
                     "initialization": initialization,
                     "submissions": [],
-                },
+                }).to_dict(),
             )
 
-            store = make_store(args.backend, args.token, args.endpoint)
+            options_store = {"principal": args.local_principal} if getattr(args, "local_principal", None) else {}
+            store = make_store(args.backend, args.token, args.endpoint, **options_store)
             result = store.initialize_repository(
                 args.repo_id, staging, private=args.private
             )
@@ -152,10 +157,14 @@ def main() -> None:
             print(f"repository={result.url}")
         print(f"initial_main_revision={result.revision}")
         print("Give this repository ID and immutable revision to all participants.")
+        return 0
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
+        return 1
+    finally:
+        if store is not None:
+            store.close()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

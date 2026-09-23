@@ -13,7 +13,7 @@ from hf2l.client_steps import download_client_round, upload_client_update
 from hf2l.plugin_loader import load_plugin, parse_plugin_args, require_callable
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-id", required=True)
     parser.add_argument("--participant", required=True)
@@ -39,18 +39,20 @@ def parse_args() -> argparse.Namespace:
         help="Plugin option; JSON values are decoded, and this option may be repeated",
     )
     add_store_arguments(parser)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    store = None
     try:
         plugin = load_plugin(args.plugin)
         train_model = require_callable(plugin, "train_model")
         options = parse_plugin_args(args.plugin_arg)
         options["participant"] = args.participant
 
-        store = make_store(args.backend, args.token, args.endpoint)
+        options_store = {"principal": args.local_principal} if getattr(args, "local_principal", None) else {}
+        store = make_store(args.backend, args.token, args.endpoint, **options_store)
         context = download_client_round(
             store, args.repo_id, args.base_revision, args.work_dir
         )
@@ -68,7 +70,7 @@ def main() -> None:
         if isinstance(num_examples, bool) or not isinstance(num_examples, int):
             raise ValueError("train_model(...) num_examples must be an integer")
         # Fail before contacting the Hub if the plugin returned non-JSON metadata.
-        json.dumps(result_metadata)
+        json.dumps(result_metadata, allow_nan=False)
 
         result, submission = upload_client_update(
             store,
@@ -87,10 +89,14 @@ def main() -> None:
         if result.url:
             print(f"submission_url={result.url}")
         print("Send submission_revision to the repository owner.")
+        return 0
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
+        return 1
+    finally:
+        if store is not None:
+            store.close()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -3,8 +3,16 @@
 **HF²L** stands for **Hugging Face Federated Learning**. It can also be written
 as **HFFL**; the project name stylizes the two consecutive `F` characters as
 `F²`. This repository is a proof of concept (POC) for coordinating federated
-model training through either Hugging Face Hub or a JFrog Artifactory
-`huggingfaceml` repository.
+model training through Hugging Face Hub, JFrog Artifactory, the authenticated
+Exchange service, or a local artifact store. Generic applications can use the
+independent Exchange SDK to exchange metadata and large files without installing
+the ML application.
+
+The [v3 architecture](docs/ARCHITECTURE_V3.md) consolidates the prior reviews and
+the implemented sibling v2 service. The [current Exchange runbook](docs/EXCHANGE_V3.md)
+documents installation, authorization, transfers, coordination and recovery.
+Architecture v3 preserves the `/v2` Exchange API and the existing HF²L document
+formats; it does not rename them to version 3.
 
 ## Three design pillars
 
@@ -19,6 +27,7 @@ model training through either Hugging Face Hub or a JFrog Artifactory
 - [Three design pillars](#three-design-pillars)
 - [Design overview](#design-overview)
 - [Install and authenticate](#install-and-authenticate)
+  - [Local store](#local-store)
   - [Hugging Face Hub](#hugging-face-hub)
   - [JFrog Artifactory](#jfrog-artifactory)
 - [Owner: initialize a repository](#owner-initialize-a-repository)
@@ -53,30 +62,75 @@ uploaded. Client datasets and training code remain local.
 
 ## Design overview
 
-[`docs/history/DESIGN_SLIDES.md`](docs/history/DESIGN_SLIDES.md) is a concise
-four-slide overview of the system architecture, client and owner operation
-sequence, credential boundaries, and large-model transfer and aggregation
-strategy.
+The [v3 architecture](docs/ARCHITECTURE_V3.md) describes the current component
+boundaries, accepted review concepts and invariants. The independent
+[Exchange service](docs/EXCHANGE_V3.md) provides authenticated metadata exchange,
+PostgreSQL persistence and authorized private S3 transfers. Its optional FedAvg
+profile supplies the FL rules; generic spaces need no model vocabulary.
 
-The [exchange service](docs/EXCHANGE_SERVICE.md) adds a third backend with
-authenticated metadata exchange, PostgreSQL, and authorized S3 blob transfers.
-See its [design](docs/history/EXCHANGE_SERVICE_DESIGN.md) for the resource model.
+The [historical slides](docs/history/DESIGN_SLIDES.md) and
+[legacy v1 service guide](docs/EXCHANGE_SERVICE.md) describe earlier interfaces.
+New `--backend exchange` usage targets the independent service's `/v2` API.
 
 ## Install and authenticate
 
-Create a local environment:
+Create a local environment in this source checkout. Base installation supports
+NumPy/SafeTensors processing and the local backend; install the extras used by
+your application:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install \
-  'git+https://github.com/IsaacYangSLA/hf_fl.git@main'
+.venv/bin/python -m pip install -e .
+# Hugging Face and the training examples used below:
+.venv/bin/python -m pip install -e '.[hf,examples]'
 ```
 
-Release 0.1.1 or newer can instead be installed with
-`.venv/bin/python -m pip install 'hf2l>=0.1.1'`. For JFrog's currently documented
-client version range, use `.venv/bin/python -m pip install 'hf2l[jfrog]>=0.1.1'`.
-A source checkout may use `.venv/bin/python -m pip install -e .` for editable
-Hub development or `.venv/bin/python -m pip install -e '.[jfrog]'` for JFrog.
+For JFrog, use `.venv/bin/python -m pip install -e '.[jfrog,examples]'`.
+Torch alone is available through `.[torch]`; it is required for BF16 checkpoints
+and Torch training. These integration changes are unreleased; earlier published
+packages do not necessarily expose the interfaces described here.
+
+The independent Exchange SDK and server are separate installations:
+
+```bash
+# Generic SDK, without HF²L or ML dependencies:
+.venv/bin/python -m pip install -e './packages/exchange'
+# Or install the server and HF²L adapter together:
+.venv/bin/python -m pip install -e './packages/exchange[server]' -e '.[exchange]'
+```
+
+The unified `.venv/bin/hf2l --help` lists the application commands. Existing
+`python -m hf2l.client_download`, owner commands and console aliases remain
+supported. `.venv/bin/hf2l-exchange --help` lists the independent service commands.
+
+### Local store
+
+Use `--backend local --endpoint work/local-store --local-principal ACTOR` with
+the initialization, download, upload, training and owner commands below. The
+environment equivalents are `HF2L_LOCAL_ROOT` and `HF2L_LOCAL_PRINCIPAL`.
+For example, seed a local repository from an existing checkpoint:
+
+```bash
+.venv/bin/hf2l init --backend local --endpoint work/local-store \
+  --local-principal owner --repo-id local/demo --model-dir path/to/checkpoint
+```
+
+Alice uses `--local-principal alice --participant alice` when uploading, and Bob
+uses his own matching values. Both must train from the same immutable base
+revision. The owner discovers their detached submissions and publishes with:
+
+```bash
+.venv/bin/hf2l round --backend local --endpoint work/local-store \
+  --local-principal owner --repo-id local/demo --discover-submissions \
+  --output-dir work/local-round-1 --array-backend numpy --publish --json
+```
+
+The store uses a trusted local POSIX filesystem, immutable snapshots and an
+advisory lock around atomic reference updates. Principal names provide local
+attribution; filesystem access controls protect the store. They are not remote
+authentication, and network filesystems are not supported. A local round needs
+no HF account or Exchange deployment. Training through the example plugins still
+requires the `examples` extra.
 
 ### Hugging Face Hub
 
@@ -499,17 +553,20 @@ For each run, automatic discovery:
    SHA-256 checksums, tensors, and shard layouts before aggregation.
 
 In discovery mode, unauthorized, stale, or invalid records are reported as
-`skipped_submission=...` and do not stop the round. At least two eligible submissions are
-required. A checkpoint-layout mismatch still stops aggregation because the
-models cannot be averaged safely. If multiple eligible submissions claim the same
-participant ID, aggregation also stops so the owner can close the superseded
-record or explicitly choose one with `--submission`.
+`skipped_submission=...`. Automatic discovery and claimed rounds also skip
+malformed, deleted or incompatible checkpoints, and publish only when at least
+the required number of fully validated participants remain (two by default).
+Explicitly selected invalid submissions fail the run. A transport outage remains
+a failure. Duplicate eligible participant IDs fail unless the backend's selection
+policy already chose one submission per participant, as the Exchange profile
+does; otherwise withdraw a superseded submission or select revisions explicitly.
 
-Running `--discover-submissions` without `--allowlist` is supported but prints a
-warning and considers every compatible discovered submission. Do not use that mode for an
-untrusted repository: participant names and example counts are
-self-reported, and compatibility checks do not protect against poisoned model
-updates.
+On backends without participant bindings, such as HF and JFrog,
+`--discover-submissions` without `--allowlist` reports a warning and considers
+every compatible discovered submission. Local and Exchange use their explicit
+participant bindings. An allowlist remains appropriate for an untrusted HF/JFrog
+repository; compatibility checks and example counts do not establish honest
+training or protect against poisoned model updates.
 
 `--discover-prs` remains an alias for Hub-only scripts written against HF²L
 0.1.0.
@@ -618,6 +675,14 @@ tensors remain float64. Use `--accumulator-dtype float64` when the added
 precision justifies roughly doubling accumulator memory. Disk must still hold
 the base, every selected submission snapshot, and the aggregate.
 
+Checkpoint discovery reads SafeTensors headers without Torch. Use
+`--array-backend numpy` for supported non-BF16 checkpoints or
+`--array-backend torch` with the Torch extra. Both execute the same averaging
+policy through their array operations. `--weighting examples` is the default;
+`--weighting uniform` gives each accepted participant equal weight. Algorithm
+strategy injection is a library interface; FedProx is not implemented by merely
+selecting a different label.
+
 ## Build and install the wheel
 
 The ASCII Python distribution name for HF²L is `hf2l`. `setuptools-scm`
@@ -652,7 +717,7 @@ the computed version with `.venv/bin/python -m setuptools_scm` before
 publishing.
 
 The examples above use Python module execution. Installing the package also
-creates these equivalent console-command aliases:
+creates the unified `hf2l` command and these retained console-command aliases:
 
 - `hf2l-init-repo`
 - `hf2l-client-download`
@@ -663,12 +728,21 @@ creates these equivalent console-command aliases:
 - `hf2l-exchange-service`
 
 For example, `hf2l-client-download` is equivalent to
-`python -m hf2l.client_download`.
+`python -m hf2l.client_download`. `hf2l-exchange-service` is the legacy v1
+service command; the independent package installs `hf2l-exchange` for `/v2`.
 
 ## Local validation
 
-No HF access is needed for the unit tests:
+No live HF account is needed for the local suites. Install both editable
+distributions and their testing/training extras first:
 
 ```bash
+.venv/bin/python -m pip install -e './packages/exchange[server,test]' \
+  -e '.[torch,hf,examples,exchange,service,exchange-test]'
 .venv/bin/python -m unittest discover -s tests -v
+EXCHANGE_REQUIRE_TESTS=1 .venv/bin/python -m unittest discover -s packages/exchange/tests -v
 ```
+
+Provider and process-recovery checks also run against PostgreSQL/MinIO when
+configured. See the [current validation record](docs/EXCHANGE_V3.md#validation-status-and-deployment-limits)
+for completed checks and limits; historical counts are not combined-tree evidence.

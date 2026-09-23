@@ -24,7 +24,7 @@ try:
     from sqlalchemy import create_engine, text
     from sqlalchemy.engine import make_url
 
-    from hf2l.backends.exchange import INLINE_METADATA_BUDGET, ROUND_FULL_FILE, ExchangeStore
+    from tests.legacy_exchange_adapter import INLINE_METADATA_BUDGET, ROUND_FULL_FILE, ExchangeStore
     from hf2l.exchange.api import create_app
     from hf2l.exchange.auth import principal_id
     from hf2l.exchange.client import ExchangeClient, ExchangeError
@@ -998,7 +998,7 @@ class ExchangeTests(unittest.TestCase):
         from safetensors.torch import load_file, save_file
         from hf2l.client_steps import download_client_round, upload_client_update
         from hf2l.hub_helpers import artifact_hashes
-        from hf2l.owner_fedavg import main
+        from tests.legacy_owner_fedavg import main
 
         errors = self.background_worker()
         owner = self.store("owner")
@@ -1055,14 +1055,14 @@ class ExchangeTests(unittest.TestCase):
         readiness = root / "readiness"
         args = ["owner_fedavg", "--backend", "exchange", "--repo-id", self.space,
                 "--discover-submissions", "--check-only", "--output-dir", str(readiness)]
-        with patch("sys.argv", args), patch("hf2l.owner_fedavg.make_store", return_value=owner):
+        with patch("sys.argv", args), patch("tests.legacy_owner_fedavg.make_store", return_value=owner):
             main()
         self.assertEqual(json.loads((readiness / "readiness.json").read_text())["eligible_count"], 3)
 
         # The frozen claim includes carol's incompatible checkpoint; the failed round must release its claim.
         args = ["owner_fedavg", "--backend", "exchange", "--repo-id", self.space,
                 "--claim-submissions", "--output-dir", str(root / "failed"), "--publish"]
-        with patch("sys.argv", args), patch("hf2l.owner_fedavg.make_store", return_value=owner):
+        with patch("sys.argv", args), patch("tests.legacy_owner_fedavg.make_store", return_value=owner):
             with self.assertRaises(SystemExit):
                 main()
         with self.service.sessions.begin() as session:
@@ -1073,7 +1073,7 @@ class ExchangeTests(unittest.TestCase):
         owner = self.store("owner")
         args = ["owner_fedavg", "--backend", "exchange", "--repo-id", self.space, "--claim-submissions",
                 "--output-dir", str(root / "average"), "--publish", "--tag", "round-1"]
-        with patch("sys.argv", args), patch("hf2l.owner_fedavg.make_store", return_value=owner):
+        with patch("sys.argv", args), patch("tests.legacy_owner_fedavg.make_store", return_value=owner):
             main()
         result = load_file(root / "average/aggregated_model/model.safetensors")["weight"]
         torch.testing.assert_close(result, torch.tensor([2.5]))

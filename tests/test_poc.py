@@ -37,9 +37,9 @@ from hf2l.hub_helpers import (  # noqa: E402
 )
 from hf2l.owner_fedavg import (  # noqa: E402
     fedavg_states,
-    load_allowlist,
     validate_submission_manifest,
 )
+from hf2l.allowlist import load_allowlist  # noqa: E402
 from hf2l.plugin_loader import load_plugin, parse_plugin_args  # noqa: E402
 
 

@@ -1,9 +1,13 @@
 include README.md
 include requirements.txt
-recursive-include docs *.md
-prune docs/history
+recursive-include docs *.md *.json
 recursive-include examples *.py *.json
 recursive-include hf2l *.py
-recursive-include tests *.py
+recursive-include tests *.py *.json *.safetensors *.md
+recursive-include scripts *.py
+include packages/exchange/pyproject.toml
+include packages/exchange/README.md
+recursive-include packages/exchange/src *.py
+recursive-include packages/exchange/tests *.py
 global-exclude *.py[cod]
 global-exclude __pycache__

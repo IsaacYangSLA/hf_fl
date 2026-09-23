@@ -11,6 +11,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
 from threading import RLock
 from typing import Any, Iterator
@@ -18,12 +19,22 @@ from typing import Any, Iterator
 from huggingface_hub import HfApi
 from huggingface_hub import hf_api as huggingface_hf_api
 
-from hf2l.backends.base import ModelStore, PublishResult, SubmissionCandidate
+from hf2l.common.fs import checked_file_paths
+from hf2l.core.ports import (BackendCapabilities, ModelStore, PublicationConsistency,
+                                  PublicationUncertain, PublishResult, RevisionNotFound, SubmissionCandidate)
 
 
 _ENDPOINT_MARKER = "/api/huggingfaceml/"
 _PLACEHOLDER_COMMIT_URLS = {"commitUrl", "hf://commitUrl"}
 _COMMIT_INFO_LOCK = RLock()
+
+
+class JFrogRequestError(RuntimeError):
+    """An HTTP failure whose status remains available to discovery policy."""
+
+    def __init__(self, status: int, detail: str):
+        self.status = status
+        super().__init__(f"JFrog request failed with HTTP {status}: {detail}")
 
 
 def _safe_revision_component(value: str) -> str:
@@ -69,7 +80,7 @@ def _selected_folder(folder: Path, paths: list[str]) -> Iterator[Path]:
 
     with tempfile.TemporaryDirectory(prefix="hf2l-jfrog-upload-") as temporary:
         staging = Path(temporary)
-        for relative in paths:
+        for relative in checked_file_paths(folder, paths):
             source = folder / relative
             target = staging / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -77,8 +88,23 @@ def _selected_folder(folder: Path, paths: list[str]) -> Iterator[Path]:
         yield staging
 
 
+def _revision_read(method):
+    """Normalize an absent object without hiding permission failures or outages."""
+    @wraps(method)
+    def call(*args, **kwargs):
+        try:
+            return method(*args, **kwargs)
+        except Exception as exc:
+            status = getattr(exc, "status", None) or getattr(getattr(exc, "response", None), "status_code", None)
+            if status == 404:
+                raise RevisionNotFound("The selected revision or snapshot is unavailable") from exc
+            raise
+    return call
+
+
 class JFrogStore(ModelStore):
     name = "jfrog"
+    capabilities = BackendCapabilities(PublicationConsistency.PREFLIGHT, named_submission_revisions=True)
 
     def __init__(self, token: str | None, endpoint: str):
         endpoint = endpoint.rstrip("/")
@@ -126,9 +152,13 @@ class JFrogStore(ModelStore):
             with urllib.request.urlopen(request, timeout=60) as response:
                 return response.read()
         except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:500]
-            raise RuntimeError(f"JFrog request failed with HTTP {exc.code}: {detail}") from exc
+            try:
+                detail = exc.read(500).decode("utf-8", errors="replace")
+            finally:
+                exc.close()
+            raise JFrogRequestError(exc.code, detail) from exc
 
+    @_revision_read
     def resolve_revision(self, repo_id: str, revision: str) -> str:
         revision = _validate_revision(revision)
         resolved = self.api.model_info(repo_id, revision=revision).sha
@@ -136,6 +166,7 @@ class JFrogStore(ModelStore):
             raise RuntimeError(f"JFrog did not resolve revision {revision!r}")
         return resolved
 
+    @_revision_read
     def download_snapshot(
         self,
         repo_id: str,
@@ -161,6 +192,7 @@ class JFrogStore(ModelStore):
                 "--private is a Hugging Face Hub option; configure JFrog "
                 "repository permissions instead"
             )
+        checked_file_paths(folder)
         self._upload_folder(repo_id, folder, "main")
         resolved = self.resolve_revision(repo_id, "main")
         return PublishResult(resolved, self.endpoint, resolved)
@@ -224,7 +256,12 @@ class JFrogStore(ModelStore):
             )
             try:
                 manifest = json.loads(self._request(artifact_url))
-            except (RuntimeError, json.JSONDecodeError) as exc:
+            except JFrogRequestError as exc:
+                if exc.status != 404:
+                    raise
+                skipped.append(f"{path}/{name}: manifest no longer exists")
+                continue
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                 skipped.append(f"{path}/{name}: unreadable manifest ({exc})")
                 continue
             if not isinstance(manifest, dict) or manifest.get("repo_id") != repo_id:
@@ -233,7 +270,7 @@ class JFrogStore(ModelStore):
         return manifests, skipped
 
     def discover_submissions(
-        self, repo_id: str
+        self, repo_id: str, *, context=None
     ) -> tuple[list[SubmissionCandidate], list[str]]:
         records, skipped = self._manifest_items(repo_id)
         candidates: list[SubmissionCandidate] = []
@@ -290,6 +327,10 @@ class JFrogStore(ModelStore):
         reference=None,
         claim=None,
     ) -> PublishResult:
+        if claim is not None:
+            raise ValueError(f"{self.name} does not support fenced coordination")
+        if reference is not None and reference.revision != expected_base:
+            raise ValueError("Publication reference differs from the expected base")
         del next_round
         if tag:
             tag = _validate_revision(tag)
@@ -298,11 +339,24 @@ class JFrogStore(ModelStore):
             raise RuntimeError(
                 f"JFrog main changed before publication: expected {expected_base}, found {current}"
         )
+        warnings, tagged = (), None
         with _selected_folder(folder, paths) as staging:
-            self._upload_folder(repo_id, staging, "main")
-            published = self.resolve_revision(repo_id, "main")
+            try:
+                self._upload_folder(repo_id, staging, "main")
+                published = self.resolve_revision(repo_id, "main")
+            except Exception as exc:
+                raise PublicationUncertain(
+                    "JFrog publication outcome is unknown; inspect main before retrying"
+                ) from exc
             if published == expected_base:
-                raise RuntimeError("JFrog main did not advance after aggregate upload")
+                raise PublicationUncertain(
+                    "JFrog upload returned but main has not advanced; reconcile before retrying"
+                )
             if tag:
-                self._upload_folder(repo_id, staging, tag)
-        return PublishResult(published, resolved_revision=published)
+                try:
+                    self._upload_folder(repo_id, staging, tag)
+                    tagged = True
+                except Exception as exc:
+                    tagged = False
+                    warnings = (f"Published {published}, but tag {tag!r} failed: {exc}",)
+        return PublishResult(published, resolved_revision=published, warnings=warnings, tag_created=tagged)

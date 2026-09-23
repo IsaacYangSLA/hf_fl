@@ -1,5 +1,11 @@
 # Trigger FedAvg from a Hugging Face webhook
 
+This HF-specific integration remains supported by [architecture v3](ARCHITECTURE_V3.md).
+The unified owner command and the existing `hf2l.owner_fedavg` entry point use the
+same runner. `readiness.json` remains the workflow handoff contract; a design
+revision does not rename it. For the independent Exchange service and fenced
+coordination, see [its runbook](EXCHANGE_V3.md).
+
 The [GitHub workflow](../.github/workflows/fed_avg.yml) starts its `fed_avg`
 job when at least two open HF PRs from distinct approved participants declare
 the latest HF `main` commit as their training base.
@@ -114,6 +120,9 @@ check so the owner can close superseded PRs.
 full checkpoint checksums and tensor compatibility. If more than two qualify,
 all are included with example-count weighting. PRs changed or closed between
 jobs can change eligibility; the owner command still requires at least two.
+Malformed, deleted or incompatible automatically discovered candidates are
+reported and skipped; publication requires at least two fully validated
+participants after those checks. Transport outages fail the run.
 
 The workflow serializes its runs without cancelling an active aggregation.
 It passes the checked base SHA via `--expected-base-revision`, and publication

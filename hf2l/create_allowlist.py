@@ -32,7 +32,7 @@ def create_allowlist(values: list[str], output: Path) -> dict[str, str]:
     return allowlist
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--participant",
@@ -42,19 +42,20 @@ def parse_args() -> argparse.Namespace:
         help="Approved repository identity and required participant ID; repeat as needed",
     )
     parser.add_argument("--output", type=Path, required=True)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     try:
         allowlist = create_allowlist(args.participant, args.output)
         print(f"allowlist={args.output.resolve()}")
         print(f"participants={len(allowlist)}")
+        return 0
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

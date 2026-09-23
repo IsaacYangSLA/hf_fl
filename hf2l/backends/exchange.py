@@ -1,26 +1,37 @@
-"""ModelStore bridge to generic Exchange records and versioned blob transfers."""
+"""FedAvg application adapter for the optional fedavg.v1 Exchange profile."""
+from __future__ import annotations
+
 import fnmatch
+import json
 import os
-import uuid
+import re
+import tempfile
+from functools import wraps
 from pathlib import Path
 
-from hf2l.backends.base import ModelStore, PublishResult, ResolvedReference, SubmissionCandidate
-from hf2l.exchange.client import ExchangeClient, ExchangeError
-from hf2l.exchange.protocol import (INLINE_FILES_KEY, INLINE_MANIFEST_NAMES, METADATA_LIMIT_BYTES, metadata_size,
-                                    names_collide)
-from hf2l.hub_helpers import ROUND_FILE, SUBMISSION_FILE, read_json, write_json
+from hf2l.core.ports import (BackendCapabilities, ClaimHandle, ModelStore, PublicationConsistency,
+                                  PublicationUncertain, PublishResult, RevisionNotFound, ResolvedReference, RoundContext,
+                                  SubmissionCandidate)
+from hf2l_exchange.client import ExchangeClient, ExchangeError
+from hf2l_exchange.client_types import ReferenceSnapshot
+from hf2l.common.fs import checked_file_paths, read_json, write_json
+from hf2l.core.protocol import ROUND_FILE, SUBMISSION_FILE
 
-# Held-claim state written into the coordinator's output directory; removed after publish or abandon.
-CLAIM_FILE = "exchange-claim.json"
-# GET /claims/{id} outcomes that mean a persisted claim is no longer ours to resume.
-STALE_CLAIM_CODES = ("claim_not_active", "claim_not_found", "claim_held_by_other")
-# Record metadata size above which the complete round manifest becomes an attachment; headroom under the limit.
-INLINE_METADATA_BUDGET = METADATA_LIMIT_BYTES * 3 // 4
-# Attachment carrying the complete round manifest whenever the inline copy had to be bounded.
+INLINE_FILES_KEY = "hf2l_files"
+INLINE_MANIFEST_NAMES = (ROUND_FILE, SUBMISSION_FILE)
+INLINE_METADATA_BUDGET = 65536 * 3 // 4
 ROUND_FULL_FILE = "fedavg_round-full.json"
-# Per-submission fields of the bounded inline round manifest, from the fullest summary to the smallest that may fit.
 SUMMARY_LEVELS = (("participant", "resolved_revision", "num_examples", "coefficient"),
                   ("participant", "num_examples", "coefficient"))
+
+
+def metadata_size(value):
+    return len(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode())
+
+
+def names_collide(left, right):
+    left, right = left.casefold(), right.casefold()
+    return left == right or left.startswith(right + "/") or right.startswith(left + "/")
 
 
 def scalars(mapping, limit):
@@ -70,60 +81,85 @@ def bounded_round(full, budget):
     return candidate if metadata_size(candidate) <= budget else bounded
 
 
+def _revision_read(method):
+    """Normalize an absent object without hiding permission failures or outages."""
+    @wraps(method)
+    def call(*args, **kwargs):
+        try:
+            return method(*args, **kwargs)
+        except Exception as exc:
+            status = getattr(exc, "status", None) or getattr(getattr(exc, "response", None), "status_code", None)
+            if status == 404:
+                raise RevisionNotFound("The selected revision or snapshot is unavailable") from exc
+            raise
+    return call
+
+
 class ExchangeStore(ModelStore):
     name = "exchange"
+    capabilities = BackendCapabilities(PublicationConsistency.ATOMIC, fenced_coordination=True,
+        requires_coordination_for_publication=True, binds_participants=True)
 
     def __init__(self, token, endpoint, *, client=None, wait_seconds=None):
-        self.client = client or ExchangeClient(endpoint, token,
-                                              allow_local_http=os.environ.get("EXCHANGE_ALLOW_LOCAL_HTTP", "").lower() in ("true", "1"))
+        self._owns_client = client is None
+        self._closed = False
+        self.client = client or ExchangeClient(
+            endpoint, token,
+            allow_local_http=os.environ.get("EXCHANGE_ALLOW_LOCAL_HTTP", "").lower() in ("true", "1"),
+        )
         self.wait_seconds = wait_seconds or int(os.environ.get("EXCHANGE_WAIT_SECONDS", "3600"))
-        self.main_refs = {}
-        self.claim = None
-        self.claim_state = None
+
+    def close(self):
+        if not self._closed:
+            self._closed = True
+            if self._owns_client:
+                self.client.close()
+
+    @staticmethod
+    def _snapshot(reference, name="main"):
+        if reference.token is None:
+            raise ValueError("Exchange publication requires the observed reference token")
+        return ReferenceSnapshot(name, reference.revision, reference.token)
+
+    def _require_profile(self, repo_id):
+        if self.client.get_space(repo_id).profile != "fedavg.v1":
+            raise ValueError("The Exchange model adapter requires a space with profile fedavg.v1")
 
     def resolve_reference(self, repo_id, name="main"):
         value = self.client.resolve(repo_id, name)
-        if name == "main":
-            self.main_refs[repo_id] = value  # Compatibility for discovery; publication takes an explicit reference.
-        return ResolvedReference(value["record_id"], value["generation"])
+        return ResolvedReference(value.record_id, token=value.token)
 
-    def current_claim(self):
-        return dict(self.claim) if self.claim else None
-
+    @_revision_read
     def resolve_revision(self, repo_id, revision):
-        if revision.startswith("rec_"):
-            return self.client.get_record(repo_id, revision)["id"]
-        resolved = self.client.resolve(repo_id, revision)
-        if revision == "main":
-            self.main_refs[repo_id] = resolved
-        return resolved["record_id"]
+        if re.fullmatch(r"[a-f0-9]{32}", revision):
+            return self.client.get_record(repo_id, revision).id
+        return self.client.resolve(repo_id, revision).record_id
 
+    @_revision_read
     def download_snapshot(self, repo_id, revision, local_dir, *, allow_patterns=None):
         record = self.client.get_record(repo_id, revision)
-        if record["state"] != "ready":
-            raise ValueError("Only ready records can be downloaded")
-        inline = self._inline_manifests(record)
-        self._check_layout(record, inline)
+        if record.state != "published":
+            raise ValueError("Only published records can be downloaded")
+        inline = self._inline_manifests(record.to_dict())
+        self._check_layout(record.to_dict(), inline)
         patterns = [allow_patterns] if isinstance(allow_patterns, str) else allow_patterns
         def wanted(name):
             return patterns is None or any(fnmatch.fnmatch(name, pattern) for pattern in patterns)
         for name, content in inline.items():
             if wanted(name):
-                if name == SUBMISSION_FILE and (content.get("participant") != record["participant"] or
-                                                content.get("base_revision") != record["base_record_id"]):
-                    raise ValueError("Manifest differs from server-bound participant or base")
+                if name == SUBMISSION_FILE and (
+                    content.get("participant") != record.creator_bindings.get("participant") or
+                    content.get("base_revision") != record.metadata.get("base_record_id") or
+                    content.get("num_examples") != record.metadata.get("sample_count")
+                ):
+                    raise ValueError("Manifest differs from server-bound participant, base, or sample count")
                 write_json(self.client.safe_destination(local_dir, name), content)
         if patterns is not None and set(patterns) <= set(INLINE_MANIFEST_NAMES):
-            # A manifest-only read never touches attachments, so none can shadow the checked inline copies.
             return
-        for attachment in record["attachments"]:
-            if wanted(attachment["name"]):
-                destination = self.client.safe_destination(local_dir, attachment["name"])
-                try:
-                    self.client.download_attachment(repo_id, record["id"], attachment, destination)
-                except OSError as exc:
-                    raise ValueError(f"Cannot materialise attachment {attachment['name']!r} of record "
-                                     f"{record['id']}: {exc}") from exc
+        for attachment in record.attachments:
+            if wanted(attachment.path):
+                destination = self.client.safe_destination(local_dir, attachment.path)
+                self.client.download_attachment(repo_id, record.id, attachment, destination)
 
     @staticmethod
     def _inline_manifests(record):
@@ -136,8 +172,7 @@ class ExchangeStore(ModelStore):
 
     @staticmethod
     def _check_layout(record, inline):
-        """Refuse a record whose attachments would shadow a manifest or collide on disk (accepted before validation)."""
-        names = [attachment["name"] for attachment in record["attachments"]]
+        names = [attachment.get("path", attachment.get("name")) for attachment in record["attachments"]]
         reserved = set(INLINE_MANIFEST_NAMES) | set(inline)
         for index, name in enumerate(names):
             if any(names_collide(name, other) for other in reserved):
@@ -146,8 +181,9 @@ class ExchangeStore(ModelStore):
                 raise ValueError(f"Attachment {name!r} collides with another attachment in record {record['id']}")
 
     def _publish(self, repo_id, folder, paths, kind, base=None, extra=None):
-        files, inline, extra, complete = {}, {}, extra or {}, None
-        for name in paths:
+        self._require_profile(repo_id)
+        files, inline, extra, complete = {}, {}, dict(extra or {}), None
+        for name in checked_file_paths(folder, paths):
             path = self.client.safe_destination(folder, name)
             if name in INLINE_MANIFEST_NAMES:
                 inline[name] = read_json(path)
@@ -158,20 +194,33 @@ class ExchangeStore(ModelStore):
             else:
                 files[name] = path
         if ROUND_FILE in inline and inline[ROUND_FILE].get("complete_manifest") == ROUND_FULL_FILE:
-            # A snapshot of a bounded round record is published from its unabridged manifest, never from the copy.
             if complete is None:
-                raise ValueError(f"{ROUND_FILE} names {ROUND_FULL_FILE} as its complete manifest, which is not published")
+                raise ValueError("The complete round manifest attachment is missing")
             inline[ROUND_FILE] = complete
-        if ROUND_FILE in inline:
-            self._bound_round(folder, files, inline, extra)
-        record = self.client.put_record(repo_id, kind=kind, metadata={INLINE_FILES_KEY: inline, **extra}, files=files,
-                                        base_record_id=base, wait_seconds=self.wait_seconds,
-                                        state_path=Path(folder).parent / (Path(folder).name + ".exchange-upload.json"))
-        return record["id"]
+        if base is not None:
+            extra["base_record_id"] = base
+        if kind == "training.update":
+            extra["sample_count"] = inline[SUBMISSION_FILE]["num_examples"]
+        else:
+            extra.setdefault("inputs", [])
+        # Overflow manifests are generated in adapter-owned staging, never in the input snapshot.
+        with tempfile.TemporaryDirectory(prefix="hf2l-exchange-manifest-") as temporary:
+            if ROUND_FILE in inline:
+                self._bound_round(Path(temporary), files, inline, extra)
+            revisions = [value for value in self.client.types(repo_id) if value.kind == kind]
+            if not revisions:
+                raise ValueError(f"The profile has no registered type for {kind}")
+            schema = max(revisions, key=lambda value: value.revision)
+            record = self.client.put_record(
+                repo_id, kind=kind, schema_revision_id=schema.id,
+                metadata={INLINE_FILES_KEY: inline, **extra}, files=files,
+                verification_seconds=self.wait_seconds,
+                state_path=Path(folder).parent / (Path(folder).name + ".exchange-upload.json"),
+            )
+            return record.id
 
     @staticmethod
     def _bound_round(folder, files, inline, extra):
-        """Keep the record metadata within the inline budget; the complete round manifest becomes an attachment."""
         if metadata_size({INLINE_FILES_KEY: inline, **extra}) <= INLINE_METADATA_BUDGET:
             return
         complete = ExchangeClient.safe_destination(folder, ROUND_FULL_FILE)
@@ -179,48 +228,45 @@ class ExchangeStore(ModelStore):
         files[ROUND_FULL_FILE] = complete
         budget = INLINE_METADATA_BUDGET - metadata_size({INLINE_FILES_KEY: {**inline, ROUND_FILE: {}}, **extra})
         inline[ROUND_FILE] = bounded_round(inline[ROUND_FILE], budget)
-        size = metadata_size({INLINE_FILES_KEY: inline, **extra})
-        if size > INLINE_METADATA_BUDGET:
-            # Only top-level fields are left: many checkpoint shards, or a provenance list of over a thousand inputs.
-            raise ValueError(f"Record metadata is {size} bytes with {ROUND_FILE} bounded to its top-level fields; "
-                             f"the inline budget is {INLINE_METADATA_BUDGET} bytes")
+        if metadata_size({INLINE_FILES_KEY: inline, **extra}) > INLINE_METADATA_BUDGET:
+            raise ValueError("Round metadata exceeds the inline budget after bounding its manifest")
 
     def initialize_repository(self, repo_id, folder, *, private):
-        # Space creation/membership is an explicit administrative operation.
-        paths = [p.relative_to(folder).as_posix() for p in Path(folder).rglob("*") if p.is_file()]
+        paths = checked_file_paths(folder)
         revision = self._publish(repo_id, folder, paths, "model.global")
         self.client.set_ref(repo_id, "main", revision, idempotency_key="initialize-" + revision)
         return PublishResult(revision, resolved_revision=revision)
 
     def publish_submission(self, repo_id, folder, paths, *, participant, source_round, base_revision, submission_revision):
-        me = self.client.request("GET", self.client.path(repo_id, "/me"))
-        if me["participant"] != participant:
+        if self.client.get_membership(repo_id).bindings.get("participant") != participant:
             raise ValueError("Participant must match the authenticated membership")
         revision = self._publish(repo_id, folder, paths, "training.update", base_revision)
         return PublishResult(revision, resolved_revision=revision)
 
-    def _candidate(self, record):
-        if record["state"] != "ready" or record["kind"] != "training.update" or not record["participant"]:
-            raise ValueError("Record is not a ready participant submission")
-        return SubmissionCandidate(record["id"], record["id"], record["created_by"], record["participant"])
+    @staticmethod
+    def _candidate(record):
+        participant = record.creator_bindings.get("participant")
+        if record.state != "published" or record.kind != "training.update" or not participant:
+            raise ValueError("Record is not a published participant submission")
+        return SubmissionCandidate(record.id, record.id, record.creator, participant)
 
-    def discover_submissions(self, repo_id):
-        """Newest ready update per participant for the pinned base; superseded records are reported, not fatal."""
-        pinned = self.main_refs.get(repo_id)
-        if not pinned:
-            raise ValueError("Resolve main with this store before discovering submissions")
-        newest, skipped = {}, []
-        records = self.client.records(repo_id, kind="training.update", state="ready", base_record_id=pinned["record_id"])
-        for record in records:
-            try:
-                candidate = self._candidate(record)
-            except ValueError as exc:
-                skipped.append(f"{record['id']}: {exc}")
+    def discover_submissions(self, repo_id, *, context: RoundContext | None = None):
+        if context is None or context.repo_id != repo_id:
+            raise ValueError("Exchange discovery requires the explicit round context")
+        newest, skipped, order = {}, [], {}
+        for record in self.client.records(repo_id, kind="training.update", state="published"):
+            if record.metadata.get("base_record_id") != context.reference.revision:
                 continue
+            candidate = self._candidate(record)
+            rank = (record.published_at or 0, record.id)
             previous = newest.get(candidate.participant)
+            if previous and rank <= order[candidate.participant]:
+                skipped.append(f"{candidate.identifier}: superseded by {previous.identifier}")
+                continue
             if previous:
-                skipped.append(f"{previous.identifier}: superseded by {candidate.identifier} for participant {candidate.participant!r}")
+                skipped.append(f"{previous.identifier}: superseded by {candidate.identifier}")
             newest[candidate.participant] = candidate
+            order[candidate.participant] = rank
         return sorted(newest.values(), key=lambda c: c.identifier), skipped
 
     def explicit_submissions(self, repo_id, values):
@@ -228,117 +274,72 @@ class ExchangeStore(ModelStore):
             raise ValueError("Duplicate submission selection")
         return [self._candidate(self.client.get_record(repo_id, value)) for value in values]
 
-    def claim_submissions(self, repo_id, claim_id=None, lease_seconds=3600, state_dir=None):
-        """Acquire or resume the fenced claim for the pinned main and return its frozen inputs.
+    @staticmethod
+    def _claim(value, reference, reference_name="main"):
+        if value.state != "active":
+            raise ValueError("The coordination attempt is no longer active")
+        if value.reference != reference_name:
+            raise ValueError("Claim belongs to a different reference")
+        if value.expected_token != reference.token:
+            raise ValueError("Claim base no longer matches the explicit reference")
+        return ClaimHandle(value.id, value.fence, reference, value.input_ids, value.lease_until, value)
 
-        An explicit ``claim_id`` must name a live claim held by this identity. Otherwise a claim persisted in
-        ``state_dir`` by an interrupted run that reuses the directory is resumed while it is still active, and a
-        stale file is discarded in favour of a fresh acquisition. A random acquisition key is persisted before
-        POST, allowing lost-response recovery without granting another job the same claim/fence.
-        """
-        self.claim_state = Path(state_dir) / CLAIM_FILE if state_dir else None
-        self.claim = self.client.get_claim(repo_id, claim_id) if claim_id else self._resume_claim(repo_id)
-        if not self.claim:
-            saved = read_json(self.claim_state) if self.claim_state and self.claim_state.exists() else {}
-            if saved.get("space") != repo_id or "acquisition_key" not in saved:
-                saved = {"space": repo_id, "acquisition_key": uuid.uuid4().hex, "lease_seconds": lease_seconds}
-                if self.claim_state:
-                    write_json(self.claim_state, saved)
+    def claim_submissions(self, repo_id, *, context, acquisition_key, claim_id=None, lease_seconds=3600):
+        self._require_profile(repo_id)
+        if context.repo_id != repo_id:
+            raise ValueError("Round context belongs to a different space")
+        value = (self.client.get_acquisition(repo_id, claim_id) if claim_id else
+                 self.client.acquire(repo_id, reference=self._snapshot(context.reference, context.reference_name),
+                                     input_ids=(), idempotency_key=acquisition_key, lease_seconds=lease_seconds))
+        self._claim(value, context.reference, context.reference_name)
+        if claim_id:
+            # Reading an attempt is not proof of its ownership; renewal verifies it.
+            value = self.client.renew(repo_id, value)
+        claim = self._claim(value, context.reference, context.reference_name)
+        try:
+            return claim, self.explicit_submissions(repo_id, claim.input_ids)
+        except Exception:
             try:
-                self.claim = self.client.acquire_claim(repo_id, idempotency_key=saved["acquisition_key"],
-                                                       lease_seconds=saved["lease_seconds"])
-            except ExchangeError as exc:
-                if exc.code != "claim_not_active":
-                    raise
-                # A lost response may remain unknown until its lease expires. Retire that old acquisition key.
-                saved["acquisition_key"] = uuid.uuid4().hex
-                if self.claim_state:
-                    write_json(self.claim_state, saved)
-                self.claim = self.client.acquire_claim(repo_id, idempotency_key=saved["acquisition_key"],
-                                                       lease_seconds=saved["lease_seconds"])
-        self._remember_claim(repo_id)
-        pinned = self.main_refs.get(repo_id)
-        if not pinned or pinned["record_id"] != self.claim["base_record_id"]:
-            self.abandon_claim(repo_id)
-            raise ValueError("Claim base no longer matches the pinned main revision")
-        print(f"exchange_claim_id={self.claim['id']} fence={self.claim['fence']}")
-        for superseded in self.claim.get("superseded", []):
-            print(f"skipped_submission={superseded}: superseded by a newer update from the same participant")
-        for skipped in self.claim.get("skipped", []):
-            print(f"skipped_submission={skipped}: creator's participant binding changed or membership revoked")
-        return self.explicit_submissions(repo_id, self.claim["inputs"])
+                self.client.abandon(repo_id, value)
+            except Exception:
+                pass  # The persisted acquisition key remains available for reconciliation.
+            raise
 
-    def _resume_claim(self, repo_id):
-        """Return the claim persisted by an interrupted run while it is still held; drop the file otherwise."""
-        if not self.claim_state or not self.claim_state.exists():
-            return None
-        saved = read_json(self.claim_state)
-        if saved.get("space") != repo_id or not saved.get("claim_id"):
-            return None
-        try:
-            return self.client.get_claim(repo_id, saved["claim_id"])
-        except ExchangeError as exc:
-            if exc.code not in STALE_CLAIM_CODES:
-                raise
-            self.claim_state.unlink(missing_ok=True)
-            return None
+    def renew_claim(self, repo_id, claim, lease_seconds):
+        value = self.client.renew(repo_id, claim.provider_handle)
+        return self._claim(value, claim.reference)
 
-    def _remember_claim(self, repo_id):
-        """Persist the held claim so a crashed round can be resumed (--claim-id) or abandoned by its ID."""
-        if self.claim_state:
-            saved = {key: self.claim[key] for key in ("fence", "base_record_id", "lease_until")}
-            write_json(self.claim_state, {"space": repo_id, "claim_id": self.claim["id"], **saved})
-
-    def _forget_claim(self):
-        """Drop the held claim and its persisted record once the server has released or completed it."""
-        self.claim = None
-        if self.claim_state:
-            self.claim_state.unlink(missing_ok=True)
-
-    def abandon_claim(self, repo_id):
-        if not self.claim:
-            return
-        claim, self.claim = self.claim, None
-        try:
-            self.client.request("POST", self.client.path(repo_id, "/claims/" + claim["id"] + ":abandon"), body={"fence": claim["fence"]})
-        except ExchangeError as exc:
-            if exc.code not in ("claim_not_found", "claim_held_by_other", "claim_fence_changed"):
-                # The claim may still be held server-side: keep its persisted ID for a manual abandon.
-                raise
-        self._forget_claim()
+    def abandon_claim(self, repo_id, claim):
+        self.client.abandon(repo_id, claim.provider_handle)
 
     def publish_aggregate(self, repo_id, folder, paths, *, expected_base, next_round, tag, reference=None, claim=None):
-        if reference is None:
-            # Legacy callers can resolve at publication; explicit callers preserve the originally observed generation.
-            reference = self.resolve_reference(repo_id)
-        if reference.revision != expected_base or reference.generation is None:
-            raise ValueError("Publication reference does not match the expected base")
-        if tag:
-            try:
-                self.client.resolve(repo_id, tag)
-            except ExchangeError as exc:
-                if exc.code != "reference_not_found":
-                    raise
-            else:
-                raise ValueError(f"Tag already exists: {tag}")
-        extra = None
-        if claim:
-            used = [entry["resolved_revision"] for entry in read_json(self.client.safe_destination(folder, ROUND_FILE))["submissions"]]
-            extra = {"input_record_ids": used}
-        revision = self._publish(repo_id, folder, paths, "model.global", expected_base, extra)
-        if claim:
-            self.client.request("POST", self.client.path(repo_id, "/claims/" + claim["id"] + ":publish"),
-                                body={"record_id": revision, "fence": claim["fence"]})
-            if self.claim and self.claim["id"] == claim["id"]:
-                self._forget_claim()
-        else:
-            self.client.set_ref(repo_id, "main", revision, generation=reference.generation, idempotency_key="aggregate-" + revision)
+        if claim is None:
+            raise ValueError("fedavg.v1 aggregation requires an explicit fenced claim")
+        if reference is None or reference.revision != expected_base:
+            raise ValueError("Publication requires the explicit observed reference")
+        if claim.provider_handle.reference != "main":
+            raise ValueError("Aggregate publication requires a claim for main")
+        if claim.reference != reference:
+            raise ValueError("Claim differs from the publication reference")
+        used = [entry["resolved_revision"] for entry in read_json(
+            self.client.safe_destination(folder, ROUND_FILE))["submissions"]]
+        if claim and (len(set(used)) < 2 or not set(used) <= set(claim.input_ids)):
+            raise ValueError("Aggregate must use at least two distinct inputs from the frozen claim")
+        revision = self._publish(repo_id, folder, paths, "model.global", expected_base, {"inputs": used})
+        try:
+            self.client.complete(repo_id, claim.provider_handle, revision, idempotency_key="aggregate-" + revision)
+        except ExchangeError as exc:
+            if exc.status < 500 and exc.status != 408:
+                raise
+            raise PublicationUncertain(f"Publication of {revision} requires reconciliation") from exc
+        except Exception as exc:
+            raise PublicationUncertain(f"Publication of {revision} requires reconciliation") from exc
         warnings, tagged = (), None
         if tag:
             try:
                 self.client.set_ref(repo_id, tag, revision, idempotency_key="tag-" + revision)
                 tagged = True
-            except ExchangeError as exc:
+            except Exception as exc:
                 tagged = False
-                warnings = (f"Published {revision}, but tag {tag!r} failed: {exc.code}",)
+                warnings = (f"Published {revision}, but tag {tag!r} failed: {exc}",)
         return PublishResult(revision, resolved_revision=revision, warnings=warnings, tag_created=tagged)

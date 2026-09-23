@@ -12,7 +12,7 @@ from hf2l.client_steps import download_client_round
 from hf2l.hub_helpers import CLIENT_CONTEXT_FILE
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-id", required=True)
     parser.add_argument(
@@ -22,14 +22,17 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--work-dir", type=Path, required=True)
     add_store_arguments(parser)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    store = None
     try:
+        options = {"principal": args.local_principal} if getattr(args, "local_principal", None) else {}
+        store = make_store(args.backend, args.token, args.endpoint, **options)
         context = download_client_round(
-            make_store(args.backend, args.token, args.endpoint),
+            store,
             args.repo_id,
             args.base_revision,
             args.work_dir,
@@ -41,10 +44,14 @@ def main() -> None:
         print(f"base_model={work_dir / 'base_model'}")
         print(f"context={work_dir / CLIENT_CONTEXT_FILE}")
         print("Train with your own code and write a complete checkpoint to a different directory.")
+        return 0
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
+        return 1
+    finally:
+        if store is not None:
+            store.close()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

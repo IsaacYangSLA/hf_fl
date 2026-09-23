@@ -31,7 +31,7 @@ if fixtures.EXCHANGE_AVAILABLE:
     from hf2l.exchange.api import create_app
     from hf2l.exchange.migrations import initialize, migrate
     from hf2l.backends.base import ResolvedReference
-    from hf2l.backends.exchange import ExchangeStore
+    from tests.legacy_exchange_adapter import ExchangeStore
     from hf2l.hub_helpers import ROUND_FILE, write_json
 
 

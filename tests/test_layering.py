@@ -1,4 +1,9 @@
-"""Layering gate: every hf2l import edge must be in the allowlist of docs/history/ARCHITECTURE_REVIEW.md principle 2."""
+"""V3 architecture gate over both distributions and their installed examples.
+
+The WP0 parser and adversarial tests are retained. All present source modules are
+checked, including untracked work. Historical v1 modules have named, bounded
+allowlists; they are not silently excluded from architecture verification.
+"""
 
 from __future__ import annotations
 
@@ -13,42 +18,8 @@ from pathlib import Path, PurePosixPath
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = "hf2l"
 
-# =====================================================================================================================
-# CUTOVER-WINDOW SCOPING (WP0..WP6) -- delete this block and the `in_scope` filter in WP6.
-#
-# Legacy modules awaiting deletion are dead code, not exempted behaviour, so until WP6 removes the last of them only
-# modules at or beneath these dotted names are checked. A name covers itself and its dotted children
-# ("hf2l.plugins.lenet" does not cover the legacy "hf2l.plugins.lenet_poc"); the __init__ of every ancestor package of
-# a scoped name ("hf2l", "hf2l.exchange", "hf2l.plugins") is checked as well. WP6 replaces the filter with "every
-# module under hf2l/".
-# =====================================================================================================================
-CUTOVER_SCOPE: frozenset[str] = frozenset(
-    {
-        "hf2l.common",
-        "hf2l.core",
-        "hf2l.checkpoint",
-        "hf2l.stores",
-        "hf2l.round",
-        "hf2l.plugins.api",
-        "hf2l.plugins.lenet",
-        "hf2l.plugins.vgg_cifar10",
-        "hf2l.examples",
-        "hf2l.cli",
-        "hf2l.relay",
-        "hf2l.exchange.vocabulary",
-        "hf2l.exchange.profiles",
-        "hf2l.exchange.settings",
-        "hf2l.exchange.models",
-        "hf2l.exchange.runtime",
-        "hf2l.exchange.identity",
-        "hf2l.exchange.storage",
-        "hf2l.exchange.s3",
-        "hf2l.exchange.domain",
-        "hf2l.exchange.http",
-        "hf2l.exchange.worker",
-        "hf2l.exchange.sdk",
-    }
-)
+SOURCE_ROOTS = ("hf2l", "packages/exchange/src/hf2l_exchange", "examples")
+INTERNAL_PACKAGES = ("hf2l", "hf2l_exchange", "examples")
 
 
 def covers(prefix: str, module: str) -> bool:
@@ -56,9 +27,13 @@ def covers(prefix: str, module: str) -> bool:
     return module == prefix or module.startswith(prefix + ".")
 
 
+def internal_name(module: str) -> bool:
+    return any(covers(package, module) for package in INTERNAL_PACKAGES)
+
+
 def in_scope(module: str) -> bool:
-    """Cutover-window filter: scoped names, their children and their ancestor packages."""
-    return any(covers(entry, module) or covers(module, entry) for entry in CUTOVER_SCOPE)
+    """V3 checks every source module, including retained compatibility modules."""
+    return internal_name(module)
 
 
 STDLIB_ONLY: frozenset[str] = frozenset()
@@ -77,88 +52,126 @@ class Layer:
 
 ROOT = Layer("root", (PACKAGE,), (), STDLIB_ONLY)  # hf2l/__init__.py: version only
 
-# Principle 2 verbatim for the hf2l edges; first match wins, so module-specific rows precede the row of their package.
-#
-# The third-party column is derived, not invented: STDLIB_ONLY where principle 1 makes the module the owner of literals
-# ("the owner is a stdlib module": common, core, exchange.vocabulary, exchange.profiles, round.exchange_profile) or the
-# target layout says so ("stdlib sniff/discover" for checkpoint.safetensors; "version only" for hf2l/__init__); the
-# distribution's base dependencies numpy + safetensors for the rest of checkpoint (the layer is torch-free, not
-# numpy-free); httpx only for exchange.sdk ("transitive third-party imports == {httpx}"); unrestricted elsewhere.
-#
-# Recorded WP0 deviations from the literal text of principle 2 (both also belong in ARCHITECTURE.md "Decisions", WP7):
-#   * `examples` may import its own package: the layout moves `stable_seed` into hf2l/examples/trainer.py, which
-#     mnist_data/cifar10_data consume, so "examples imports no hf2l module" is read as "no hf2l module outside itself".
-#   * hf2l/cli/__init__.py is exempt from "package __init__ files contain no hf2l imports" (COMPOSITION_ROOT below): it
-#     is the console-script module (`hf2l = hf2l.cli:main`) and the composition root, so it must import the subcommands.
+# New seams have narrow dependency directions. Compatibility surfaces are named
+# explicitly below so retaining the old CLIs and regression service cannot become
+# an escape hatch for new modules. A new top-level module needs an assigned row.
+LEGACY_EXCHANGE_MODULES = frozenset({
+    "hf2l.exchange", "hf2l.exchange.api", "hf2l.exchange.auth",
+    "hf2l.exchange.cli", "hf2l.exchange.client", "hf2l.exchange.config",
+    "hf2l.exchange.leases", "hf2l.exchange.migrations", "hf2l.exchange.models",
+    "hf2l.exchange.protocol", "hf2l.exchange.schemas", "hf2l.exchange.storage",
+    "hf2l.exchange.worker",
+})
+LEGACY_COMMANDS = (
+    "hf2l.owner_fedavg", "hf2l.init_repo", "hf2l.client_download",
+    "hf2l.client_upload", "hf2l.client_train", "hf2l.create_allowlist",
+)
+SDK_MODULES = (
+    "hf2l_exchange.client", "hf2l_exchange.client_types",
+    "hf2l_exchange.client_state", "hf2l_exchange.transfer_client",
+)
 LAYERS: tuple[Layer, ...] = (
-    Layer("common", ("hf2l.common",), (), STDLIB_ONLY),
+    Layer("common", ("hf2l.common",), ("hf2l.common",), STDLIB_ONLY),
     Layer("core", ("hf2l.core",), ("hf2l.common", "hf2l.core"), STDLIB_ONLY),
-    Layer(
-        "checkpoint numpy backend",
-        ("hf2l.checkpoint.safetensors_numpy",),
-        ("hf2l.common", "hf2l.core.errors", "hf2l.checkpoint"),
-        CHECKPOINT_BASE_DEPS,
-    ),
-    Layer(
-        "checkpoint torch backend",
-        ("hf2l.checkpoint.safetensors_torch",),
-        ("hf2l.common", "hf2l.core.errors", "hf2l.checkpoint"),
-        CHECKPOINT_BASE_DEPS | {"torch"},
-    ),
-    Layer(
-        "checkpoint.safetensors",  # stdlib sniff/discover: 8-byte LE header, offsets verified against the file size
-        ("hf2l.checkpoint.safetensors",),
-        ("hf2l.common", "hf2l.core.errors", "hf2l.checkpoint"),
-        STDLIB_ONLY,
-    ),
-    Layer(
-        "checkpoint",
-        ("hf2l.checkpoint",),
-        ("hf2l.common", "hf2l.core.errors", "hf2l.checkpoint"),
-        CHECKPOINT_BASE_DEPS,
-    ),
-    Layer(
-        "stores.exchange",
-        ("hf2l.stores.exchange",),
-        (
-            "hf2l.common",
-            "hf2l.core",
-            "hf2l.stores",
-            "hf2l.exchange.sdk",
-            "hf2l.exchange.vocabulary",
-            "hf2l.exchange.profiles",
-        ),
-    ),
-    Layer("stores", ("hf2l.stores",), ("hf2l.common", "hf2l.core", "hf2l.stores")),
-    Layer(
-        "round.exchange_profile",  # owner of the FedAvg profile literal (principle 1), hence stdlib
-        ("hf2l.round.exchange_profile",),
-        ("hf2l.common", "hf2l.core", "hf2l.checkpoint", "hf2l.round", "hf2l.exchange.profiles"),
-        STDLIB_ONLY,
-    ),
-    Layer("round", ("hf2l.round",), ("hf2l.common", "hf2l.core", "hf2l.checkpoint", "hf2l.round")),
+    Layer("checkpoint numpy backend", ("hf2l.checkpoint.safetensors_numpy",),
+          ("hf2l.common", "hf2l.core.errors", "hf2l.checkpoint"), CHECKPOINT_BASE_DEPS),
+    Layer("checkpoint torch backend", ("hf2l.checkpoint.safetensors_torch",),
+          ("hf2l.common", "hf2l.core.errors", "hf2l.checkpoint"), CHECKPOINT_BASE_DEPS | {"torch"}),
+    Layer("checkpoint.safetensors", ("hf2l.checkpoint.safetensors",),
+          ("hf2l.common", "hf2l.core.errors", "hf2l.checkpoint"), STDLIB_ONLY),
+    Layer("checkpoint", ("hf2l.checkpoint",),
+          ("hf2l.common", "hf2l.core.errors", "hf2l.checkpoint"), CHECKPOINT_BASE_DEPS),
+    Layer("checkpoint compatibility facade", ("hf2l.checkpoint_utils",),
+          ("hf2l.checkpoint", "hf2l.core.protocol"), STDLIB_ONLY),
+    Layer("compatibility helpers", ("hf2l.hub_helpers",),
+          ("hf2l.common", "hf2l.core.protocol"), STDLIB_ONLY),
+    Layer("backend exchange", ("hf2l.backends.exchange",),
+          ("hf2l.common", "hf2l.core", "hf2l.backends.base", "hf2l.hub_helpers") + SDK_MODULES),
+    Layer("backends", ("hf2l.backends",),
+          ("hf2l.common", "hf2l.core", "hf2l.backends")),
+    Layer("round", ("hf2l.round",),
+          ("hf2l.common", "hf2l.core", "hf2l.checkpoint", "hf2l.round")),
+    Layer("round orchestration", ("hf2l.fedavg_runner",),
+          ("hf2l.common", "hf2l.core", "hf2l.round", "hf2l.backends.base",
+           "hf2l.checkpoint", "hf2l.checkpoint_utils", "hf2l.hub_helpers",
+           "hf2l.allowlist", "hf2l.plugin_loader")),
+    Layer("client orchestration", ("hf2l.client_steps",),
+          ("hf2l.common", "hf2l.core", "hf2l.backends.base", "hf2l.checkpoint",
+           "hf2l.checkpoint_utils", "hf2l.hub_helpers")),
+    Layer("allowlist", ("hf2l.allowlist",),
+          ("hf2l.common", "hf2l.hub_helpers"), STDLIB_ONLY),
+    Layer("plugin loader", ("hf2l.plugin_loader",), (), STDLIB_ONLY),
     Layer("plugins.api", ("hf2l.plugins.api",), ("hf2l.common", "hf2l.core")),
-    Layer("plugins", ("hf2l.plugins",), ("hf2l.plugins.api", "hf2l.examples")),
+    Layer("plugins", ("hf2l.plugins",),
+          ("hf2l.plugins.api", "hf2l.examples", "examples", "hf2l.training", "hf2l.data_utils")),
+    Layer("training examples", ("hf2l.training", "hf2l.data_utils"), ()),
     Layer("examples", ("hf2l.examples",), ("hf2l.examples",)),
-    Layer("cli", ("hf2l.cli",), (PACKAGE,)),
+    Layer("installed generic example", ("examples.generic_exchange",), SDK_MODULES),
+    Layer("installed examples", ("examples",), ("examples", "hf2l.data_utils")),
+    Layer("cli", ("hf2l.cli",), ("hf2l", "hf2l_exchange.cli")),
+    Layer("legacy commands", LEGACY_COMMANDS, ("hf2l",)),
     Layer("relay", ("hf2l.relay",), ("hf2l.common",)),
+    Layer("legacy exchange protocol", ("hf2l.exchange.protocol",),
+          ("hf2l.hub_helpers",), STDLIB_ONLY),
+    Layer("legacy exchange client", ("hf2l.exchange.client",),
+          ("hf2l.exchange.protocol",), frozenset({"httpx"})),
+    Layer("legacy exchange", tuple(LEGACY_EXCHANGE_MODULES), ("hf2l.exchange",)),
+    Layer("exchange SDK", SDK_MODULES, SDK_MODULES, frozenset({"httpx"})),
+    Layer("exchange vocabulary", ("hf2l_exchange.vocabulary",), (), STDLIB_ONLY),
+    Layer("exchange domain", ("hf2l_exchange.domain",), ("hf2l_exchange.vocabulary",), STDLIB_ONLY),
+    Layer("exchange profiles", ("hf2l_exchange.profiles",), ("hf2l_exchange.domain",), STDLIB_ONLY),
+    Layer("exchange settings", ("hf2l_exchange.config",), (), STDLIB_ONLY),
+    Layer("exchange application", ("hf2l_exchange.application",),
+          ("hf2l_exchange.domain", "hf2l_exchange.models", "hf2l_exchange.profiles",
+           "hf2l_exchange.schemas", "hf2l_exchange.vocabulary"), frozenset({"sqlalchemy"})),
+    Layer("exchange persistence", ("hf2l_exchange.models", "hf2l_exchange.migrations"),
+          ("hf2l_exchange.domain", "hf2l_exchange.vocabulary"), frozenset({"sqlalchemy"})),
+    Layer("exchange schema validation", ("hf2l_exchange.schemas",),
+          ("hf2l_exchange.domain", "hf2l_exchange.vocabulary"), frozenset({"jsonschema", "referencing"})),
+    Layer("exchange identity", ("hf2l_exchange.auth",),
+          ("hf2l_exchange.domain", "hf2l_exchange.vocabulary"), frozenset({"jwt"})),
+    Layer("exchange storage", ("hf2l_exchange.storage",),
+          ("hf2l_exchange.domain", "hf2l_exchange.vocabulary"), frozenset({"boto3", "botocore"})),
+    Layer("exchange transfer orchestration", ("hf2l_exchange.transfers",),
+          ("hf2l_exchange.domain", "hf2l_exchange.models", "hf2l_exchange.storage",
+           "hf2l_exchange.vocabulary"), frozenset({"sqlalchemy"})),
+    Layer("exchange worker", ("hf2l_exchange.worker",),
+          ("hf2l_exchange.models", "hf2l_exchange.vocabulary"), frozenset({"sqlalchemy"})),
+    Layer("exchange HTTP composition", ("hf2l_exchange.api",),
+          ("hf2l_exchange.application", "hf2l_exchange.auth", "hf2l_exchange.config",
+           "hf2l_exchange.domain", "hf2l_exchange.migrations", "hf2l_exchange.storage",
+           "hf2l_exchange.transfers", "hf2l_exchange.vocabulary")),
+    Layer("exchange CLI composition", ("hf2l_exchange.cli",), ("hf2l_exchange",)),
+    Layer("exchange contract export", ("hf2l_exchange.contracts",),
+          ("hf2l_exchange.api", "hf2l_exchange.config", "hf2l_exchange.vocabulary")),
+    Layer("exchange package", ("hf2l_exchange",), (), STDLIB_ONLY),
+    # Historical target names stay covered for the WP0 adversarial parser tests;
+    # V3 does not create a second SDK under the legacy service package.
+    Layer("stores.exchange", ("hf2l.stores.exchange",),
+          ("hf2l.common", "hf2l.core", "hf2l.stores", "hf2l.exchange.sdk",
+           "hf2l.exchange.vocabulary", "hf2l.exchange.profiles")),
+    Layer("stores", ("hf2l.stores",), ("hf2l.common", "hf2l.core", "hf2l.stores")),
     Layer("exchange.vocabulary", ("hf2l.exchange.vocabulary",), ("hf2l.common",), STDLIB_ONLY),
     Layer("exchange.profiles", ("hf2l.exchange.profiles",), ("hf2l.common",), STDLIB_ONLY),
-    Layer("exchange.sdk", ("hf2l.exchange.sdk",), ("hf2l.common", "hf2l.exchange.vocabulary"), frozenset({"httpx"})),
-    Layer("exchange", ("hf2l.exchange",), ("hf2l.common", "hf2l.exchange")),
+    Layer("exchange.sdk", ("hf2l.exchange.sdk",),
+          ("hf2l.common", "hf2l.exchange.vocabulary"), frozenset({"httpx"})),
+    Layer("exchange", ("hf2l.exchange.domain",), ("hf2l.common", "hf2l.exchange")),
 )
 
-COMPOSITION_ROOT = "hf2l.cli"  # its __init__ is the console-script module (`hf2l = hf2l.cli:main`); see LAYERS note
-LAZY_REGISTRY_PACKAGE = "hf2l.stores"  # its __init__ holds the lazy REGISTRY dict
-TORCH_IMPORTERS = ("hf2l.checkpoint.safetensors_torch", "hf2l.plugins", "hf2l.examples")
-TORCH_MODULES = ("torch", "safetensors.torch")  # `safetensors.torch` imports torch, so it counts as a torch import
-PRINTERS = ("hf2l.cli", "hf2l.examples")  # principle 9: library code logs and returns diagnostics as data
+COMPOSITION_ROOT = "hf2l.cli"
+LAZY_REGISTRY_PACKAGE = "hf2l.stores"
+COMPATIBILITY_EXPORT_PACKAGE = "hf2l.backends"
+TORCH_IMPORTERS = ("hf2l.checkpoint.safetensors_torch", "hf2l.plugins", "hf2l.examples", "examples", "hf2l.training")
+TORCH_MODULES = ("torch", "safetensors.torch")
+PRINTERS = ("hf2l.cli", "hf2l.examples", "examples", "hf2l_exchange.cli", "hf2l.exchange.cli", "hf2l.training") + LEGACY_COMMANDS
 
 
 def layer_of(module: str) -> Layer | None:
     if module == PACKAGE:
         return ROOT
-    return next((layer for layer in LAYERS if any(covers(m, module) for m in layer.members)), None)
+    return next((layer for layer in LAYERS
+                 if (module in layer.members if layer.name in {"legacy exchange", "exchange package"}
+                     else any(covers(m, module) for m in layer.members))), None)
 
 
 @dataclass(frozen=True)
@@ -173,6 +186,8 @@ class Module:
         if path.suffix != ".py":
             return None
         parts = list(path.with_suffix("").parts)
+        if parts[:3] == ["packages", "exchange", "src"]:
+            parts = parts[3:]
         is_package = parts[-1] == "__init__"
         if is_package:
             parts.pop()
@@ -195,7 +210,7 @@ class Import:
 
     @property
     def internal(self) -> bool:
-        return covers(PACKAGE, self.target)
+        return internal_name(self.target)
 
 
 @dataclass(frozen=True)
@@ -245,7 +260,7 @@ class _ImportCollector(ast.NodeVisitor):
         base = self._resolve(node)
         for alias in node.names:
             candidate = f"{base}.{alias.name}"
-            self._add(candidate if candidate in self.known or not covers(PACKAGE, base) else base, node)
+            self._add(candidate if candidate in self.known or not internal_name(base) else base, node)
 
     def _resolve(self, node: ast.ImportFrom) -> str:
         if node.level == 0:
@@ -273,9 +288,9 @@ def analyse(module: Module, text: str, known: frozenset[str]) -> Source:
 
 
 def tracked_modules() -> list[Module]:
-    """Every Python module under hf2l/ that git tracks or that is untracked but not ignored."""
+    """All production Python modules, tracked and new nonignored sources alike."""
     listing = subprocess.run(
-        ["git", "ls-files", "-co", "--exclude-standard", PACKAGE],
+        ["git", "ls-files", "-co", "--exclude-standard", *SOURCE_ROOTS],
         cwd=REPO_ROOT,
         check=True,
         capture_output=True,
@@ -310,7 +325,7 @@ def edge_violations(source: Source) -> list[str]:
 
 
 def init_violations(source: Source) -> list[str]:
-    if not source.module.is_package or source.module.name == COMPOSITION_ROOT:
+    if not source.module.is_package or source.module.name in {COMPOSITION_ROOT, COMPATIBILITY_EXPORT_PACKAGE}:
         return []
     lazy_allowed = source.module.name == LAZY_REGISTRY_PACKAGE
     what = "only lazily (inside a function) for the stores REGISTRY" if lazy_allowed else "nothing from hf2l"
@@ -346,6 +361,22 @@ def torch_violations(source: Source) -> list[str]:
     ]
 
 
+def exchange_framework_violations(source: Source) -> list[str]:
+    if not covers("hf2l_exchange", source.module.name):
+        return []
+    forbidden = {"torch", "numpy", "safetensors", "huggingface_hub"}
+    return [f"{source.module.path}:{i.line}: generic exchange imports ML dependency {i.target}"
+            for i in source.imports if i.top in forbidden]
+
+
+def eager_backend_violations(source: Source) -> list[str]:
+    if source.module.name not in {"hf2l.backends", "hf2l.backends.factory"}:
+        return []
+    providers = ("hf2l.backends.huggingface", "hf2l.backends.jfrog", "hf2l.backends.exchange", "hf2l.backends.local")
+    return [f"{source.module.path}:{i.line}: registry eagerly imports provider {i.target}"
+            for i in source.imports if i.eager and any(covers(p, i.target) for p in providers)]
+
+
 def print_violations(source: Source) -> list[str]:
     if any(covers(p, source.module.name) for p in PRINTERS):
         return []
@@ -353,7 +384,7 @@ def print_violations(source: Source) -> list[str]:
 
 
 class LayeringTests(unittest.TestCase):
-    """The allowlist over `git ls-files`; passes vacuously while a scoped package does not exist yet."""
+    """Allowlist over every production module from `git ls-files -co`."""
 
     sources: list[Source]
 
@@ -373,6 +404,12 @@ class LayeringTests(unittest.TestCase):
     def test_every_scoped_module_is_assigned_a_layer(self) -> None:
         unassigned = [str(s.module.path) for s in self.sources if layer_of(s.module.name) is None]
         self.assertEqual([], unassigned, "modules without an allowlist row; add one to LAYERS")
+
+    def test_generic_exchange_has_no_ml_framework_dependencies(self) -> None:
+        self._assert_clean(exchange_framework_violations)
+
+    def test_backend_registry_loads_providers_lazily(self) -> None:
+        self._assert_clean(eager_backend_violations)
 
     def test_intra_package_edges_are_allowlisted(self) -> None:
         self._assert_clean(edge_violations)
@@ -521,12 +558,47 @@ class GateSelfTests(unittest.TestCase):
         self.assertEqual(1, len(problems))
         self.assertIn("hf2l/round/__init__.py:1", problems[0])
 
-    def test_scope_covers_new_names_and_their_ancestor_packages_only(self) -> None:
+    def test_scope_covers_all_production_modules_in_both_distributions(self) -> None:
         self.assertTrue(in_scope("hf2l.plugins.lenet"))
         self.assertTrue(in_scope("hf2l.exchange.domain.records"))
         self.assertTrue(in_scope("hf2l.exchange"))
-        self.assertFalse(in_scope("hf2l.plugins.lenet_poc"))
-        self.assertFalse(in_scope("hf2l.exchange.api"))
+        self.assertTrue(in_scope("hf2l.plugins.lenet_poc"))
+        self.assertTrue(in_scope("hf2l.exchange.api"))
+        self.assertTrue(in_scope("hf2l_exchange.client"))
+        self.assertFalse(in_scope("tests.test_layering"))
+
+    def test_standalone_sdk_cannot_import_server_or_application(self) -> None:
+        source = self._source("hf2l_exchange.client", "from hf2l_exchange.application import Service\nfrom hf2l.core import ports\nimport httpx\nimport sqlalchemy\n")
+        self.assertEqual(2, len(edge_violations(source)))
+        self.assertEqual(1, len(third_party_violations(source)))
+
+    def test_server_cannot_import_fl_even_lazily(self) -> None:
+        source = self._source("hf2l_exchange.application", "def bad():\n    from hf2l.core import ports\n    import torch\n")
+        self.assertEqual(1, len(edge_violations(source)))
+        self.assertEqual(1, len(exchange_framework_violations(source)))
+
+    def test_legacy_service_is_bounded_and_cannot_expand_into_new_application(self) -> None:
+        self.assertIsNone(layer_of("hf2l.exchange.new_feature"))
+        source = self._source("hf2l.exchange.api", "from hf2l.core import ports\n")
+        self.assertEqual(1, len(edge_violations(source)))
+        current = self._source("hf2l.fedavg_runner", "from hf2l.exchange.api import Service\n")
+        self.assertEqual(1, len(edge_violations(current)))
+
+    def test_transactional_application_cannot_import_http_or_sdk(self) -> None:
+        source = self._source("hf2l_exchange.application", "from hf2l_exchange.api import create_app\nfrom hf2l_exchange.client import ExchangeClient\n")
+        self.assertEqual(2, len(edge_violations(source)))
+        self.assertIsNone(layer_of("hf2l_exchange.unassigned_feature"))
+
+    def test_distribution_source_path_resolves_to_importable_package(self) -> None:
+        module = Module.from_path("packages/exchange/src/hf2l_exchange/client.py")
+        self.assertEqual(module.name, "hf2l_exchange.client")
+        self.assertEqual(str(module.path), "packages/exchange/src/hf2l_exchange/client.py")
+
+    def test_registry_imports_providers_only_when_called(self) -> None:
+        eager = self._source("hf2l.backends.factory", "import hf2l.backends.huggingface\n")
+        lazy = self._source("hf2l.backends.factory", "def make():\n    import hf2l.backends.huggingface\n")
+        self.assertEqual(1, len(eager_backend_violations(eager)))
+        self.assertEqual([], eager_backend_violations(lazy))
 
     def test_module_specific_rows_do_not_cover_their_siblings(self) -> None:
         self.assertEqual("checkpoint.safetensors", layer_of("hf2l.checkpoint.safetensors").name)
