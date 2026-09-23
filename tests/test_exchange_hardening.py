@@ -11,7 +11,10 @@ from unittest.mock import Mock, patch
 from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
 
-import test_exchange as fixtures
+try:
+    from . import test_exchange as fixtures  # `discover -s tests -t <root>` (tests is a package)
+except ImportError:
+    import test_exchange as fixtures  # `discover -s tests` (top-level modules)
 
 if fixtures.EXCHANGE_AVAILABLE:
     import httpx

@@ -1,0 +1,355 @@
+# Behaviour inventory of the legacy test modules (WP0)
+
+One row per distinct asserted behaviour in `tests/test_poc.py`, `tests/test_fedavg_readiness.py`, `tests/test_exchange.py`,
+`tests/test_exchange_hardening.py` and `tests/test_hf_webhook_relay.py`, extracted while those modules still run against the
+legacy package. Multi-scenario tests yield several rows; fixture helpers whose assertions every test relies on (`setUp`,
+`member`, `ready`, `upload`, `sdk`) are listed under their helper name. Error codes, states, messages and numbers are quoted
+exactly as asserted; a code the target design renames is noted inline as `(target: ...)`.
+
+Columns: `id` (S-001...), `source` (legacy `module::test`, module name without `.py`), `area`, `behaviour` (one sentence),
+`covered by` (empty here; filled during WP3-WP5 review with the new test's `module::test`, or `dropped: <reason>` for
+behaviour the design removes, and checked once in WP7). This file is a review artefact, not a permanent assertion.
+
+Areas, in table order: `checkpoint`, `common`, `core`, `examples`, `plugins`, `client`, `owner`, `hf`, `jfrog`,
+`exchange-auth`, `exchange-domain`, `exchange-upload`, `exchange-claims`, `exchange-worker`, `exchange-settings`, `sdk`,
+`adapter`, `cli`, `relay`. Rows tagged `(race)`, `(lost-response/resume)` and `(blob-lease)` in the behaviour column form
+the named groups indexed at the end of the file.
+
+| id | source | area | behaviour | covered by |
+|---|---|---|---|---|
+| S-001 | test_poc::test_fedavg_uses_supplied_coefficients | checkpoint | `fedavg_states` (in-memory state dicts) weights each tensor by the supplied coefficients: [0.25, 0.75] over ([2, 4], [1]) and ([6, 8], [3]) gives weight [5, 7] and bias [2.5]. |  |
+| S-002 | test_poc::test_generic_checkpoint_aggregation | checkpoint | `aggregate_checkpoints` over discovered single-file layouts writes `model.safetensors` whose float tensors are the coefficient-weighted sum (0.25 x 2 + 0.75 x 6 = 5.0). |  |
+| S-003 | test_poc::test_generic_checkpoint_aggregation | checkpoint | A non-floating tensor (int64 `constant`) that is identical across clients is copied through unchanged (7) instead of being averaged. |  |
+| S-004 | test_poc::test_vgg_uses_the_generic_checkpoint_aggregator | checkpoint | A transformers-style `save_pretrained` directory (VGG) is discovered and aggregated by the generic aggregator, and the output loads with `from_pretrained` with every parameter equal to the weighted mean (5.0). |  |
+| S-005 | test_poc::test_sharded_checkpoint_index_is_discovered | checkpoint | `discover_checkpoint` reads `model.safetensors.index.json` and reports two weight files with per-tensor shapes (`b` -> (3,)). |  |
+| S-006 | test_poc::test_sharded_checkpoint_index_is_discovered | checkpoint | Aggregating sharded layouts writes each output shard under its original file name (`model-0000N-of-00002.safetensors`) with the averaged values (5.0). |  |
+| S-007 | test_poc::test_checkpoint_hash_validation_detects_tampering | common | `validate_artifact_hashes` accepts files whose sha256 match `artifact_hashes` and raises `ValueError` "checksum mismatch" after a listed file is modified. |  |
+| S-008 | test_poc::test_schema_v1_base_commit_remains_readable | core | `base_revision_from` reads the schema-1 `base_commit` key as the base revision (pre-cutover compatibility; the target design reads no pre-cutover documents). |  |
+| S-009 | test_poc::test_lenet_shape_and_hf_round_trip | examples | `LeNet` maps a (3, 1, 28, 28) input to (3, 10) logits. |  |
+| S-010 | test_poc::test_lenet_shape_and_hf_round_trip | examples | `LeNet.save_pretrained` then `from_pretrained` reproduces every parameter exactly (same count, `assert_close`). |  |
+| S-011 | test_poc::test_vgg_shape_and_hf_round_trip | examples | `VGG(width_multiplier=0.03125, dropout=0.0)` maps a (2, 3, 32, 32) input to (2, 10) logits. |  |
+| S-012 | test_poc::test_vgg_shape_and_hf_round_trip | examples | `VGG` round-trips through `save_pretrained`/`from_pretrained` preserving `width_multiplier`, `dropout` and every parameter. |  |
+| S-013 | test_poc::test_synthetic_data_is_reproducible_and_client_specific | examples | MNIST `synthetic_dataset(name, n, seed)` is deterministic for the same client name and differs between client names. |  |
+| S-014 | test_poc::test_npz_dataset_loading | examples | MNIST `load_npz_dataset` turns uint8 `x` of shape (N, 28, 28) into float32 tensors of shape (N, 1, 28, 28). |  |
+| S-015 | test_poc::test_cifar10_data_shapes_and_reproducibility | examples | CIFAR-10 `synthetic_dataset` yields (n, 3, 32, 32) tensors that are deterministic per client name. |  |
+| S-016 | test_poc::test_cifar10_data_shapes_and_reproducibility | examples | CIFAR-10 `load_npz_dataset` converts uint8 HWC `x` (N, 32, 32, 3) into float32 CHW tensors (N, 3, 32, 32). |  |
+| S-017 | test_poc::test_plugin_arguments_decode_json_values | plugins | `parse_plugin_args(["epochs=3", "enabled=true", "name=alice"])` decodes JSON values where possible: {"epochs": 3, "enabled": True, "name": "alice"}. |  |
+| S-018 | test_poc::test_builtin_and_local_plugins_can_be_loaded | plugins | Built-in plugin names resolve to modules: "lenet" -> `hf2l.plugins.lenet_poc`, "vgg-cifar10" -> `hf2l.plugins.vgg_cifar10_poc` (renamed `lenet`/`vgg_cifar10` in the target). |  |
+| S-019 | test_poc::test_builtin_and_local_plugins_can_be_loaded | plugins | A filesystem path to a `.py` file loads as a plugin exposing a callable `train_model`. |  |
+| S-020 | test_poc::test_external_training_output_can_be_submitted | client | `upload_client_update` on an externally trained directory publishes exactly {config.json, model.safetensors, fedavg_submission.json}: the checkpoint files plus the one submission manifest it writes. |  |
+| S-021 | test_poc::test_external_training_output_can_be_submitted | client | The client context file's `base_revision` ("abc123") is forwarded to `publish_submission` as the precondition, and the store's returned revision (`refs/pr/9`) is returned to the caller. |  |
+| S-022 | test_poc::test_external_training_output_can_be_submitted | client | The written submission manifest records the supplied options under `training` and `checkpoint_files_sha256` equal to `artifact_hashes` of the trained checkpoint files. |  |
+| S-023 | test_exchange::test_client_sdk_and_fedavg_end_to_end | client | `download_client_round(store, space, base, folder)` followed by `upload_client_update(store, folder, trained, participant, count)` publishes a `training.update` record through the exchange adapter that the owner later aggregates. |  |
+| S-024 | test_exchange::test_client_sdk_and_fedavg_end_to_end | client | A repeated `upload_client_update` from the same work directory after a success creates a new record, which supersedes the participant's earlier one (only the newest per participant is aggregated). |  |
+| S-025 | test_fedavg_readiness::test_threshold_and_metadata_only_downloads | owner | `--check-only` writes `readiness.json` exactly {"ready": eligible >= 2, "eligible_count": n, "base_revision": <resolved main>} for 0, 1, 2 and 3 eligible submissions. |  |
+| S-026 | test_fedavg_readiness::test_threshold_and_metadata_only_downloads | owner | Check-only downloads only the round and submission manifests (`allow_patterns` in {fedavg_round.json, fedavg_submission.json}) and never calls `publish_aggregate`. |  |
+| S-027 | test_fedavg_readiness::test_stale_unauthorized_invalid_and_missing_manifests_do_not_count | owner | skip: a submission whose manifest `base_revision` is not the current base ("old-sha") is not eligible. |  |
+| S-028 | test_fedavg_readiness::test_stale_unauthorized_invalid_and_missing_manifests_do_not_count | owner | skip: a submission whose author is not in the allowlist ("mallory-hf") is not eligible. |  |
+| S-029 | test_fedavg_readiness::test_stale_unauthorized_invalid_and_missing_manifests_do_not_count | owner | skip: a submission whose manifest `source_round` differs from the current round (9 vs 0) is not eligible. |  |
+| S-030 | test_fedavg_readiness::test_stale_unauthorized_invalid_and_missing_manifests_do_not_count | owner | skip: a submission whose manifest declares `num_examples` 0 is not eligible. |  |
+| S-031 | test_fedavg_readiness::test_stale_unauthorized_invalid_and_missing_manifests_do_not_count | owner | skip: a submission whose manifest download yields no `fedavg_submission.json` is not eligible. |  |
+| S-032 | test_fedavg_readiness::test_stale_unauthorized_invalid_and_missing_manifests_do_not_count | owner | Five ineligible submissions beside one valid one produce `readiness.json` with `eligible_count` 1 and `ready` false instead of a failure. |  |
+| S-033 | test_fedavg_readiness::test_ancestry_is_required_even_with_matching_manifest | owner | skip: a submission whose revision is not a descendant of the base (`is_descendant` false) is not eligible even when its manifest matches, so two submissions with one non-descendant give `ready` false. |  |
+| S-034 | test_fedavg_readiness::test_duplicate_participant_fails | owner | fail: two eligible submissions from the same participant abort the run (`SystemExit`) with the message "Duplicate participant". |  |
+| S-035 | test_fedavg_readiness::test_changed_main_fails_before_download_or_publish | owner | fail: `--expected-base-revision` differing from the resolved main aborts with "Main changed since readiness check" before any `download_snapshot` or `publish_aggregate` call. |  |
+| S-036 | test_fedavg_readiness::test_check_only_cannot_publish | owner | fail: `--check-only` together with `--publish` aborts (`SystemExit`) and nothing is published. |  |
+| S-037 | test_fedavg_readiness::test_normal_aggregation_still_requires_two_submissions | owner | fail: an aggregation run with one eligible submission aborts with "requires at least two". |  |
+| S-038 | test_fedavg_readiness::test_aggregate_and_publish_uses_checked_base | owner | Aggregation weights submissions by `num_examples`: weights 1.0 (1 example) and 3.0 (3 examples) give 2.5 in `output/aggregated_model/model.safetensors`. |  |
+| S-039 | test_fedavg_readiness::test_aggregate_and_publish_uses_checked_base | owner | `publish_aggregate` is called with `expected_base` equal to the checked base revision ("base-sha"). |  |
+| S-040 | test_fedavg_readiness::test_aggregate_and_publish_uses_checked_base | owner | The `fedavg_round.json` written into the aggregate directory carries `round` = previous round + 1 (1). |  |
+| S-041 | test_poc::test_allowlist_binds_hf_author_to_participant | owner | `load_allowlist` lower-cases repository identities: {"Alice-HF": "alice", "bob-hf": "bob"} loads as {"alice-hf": "alice", "bob-hf": "bob"}. |  |
+| S-042 | test_poc::test_allowlist_binds_hf_author_to_participant | owner | `validate_submission_manifest` returns (participant, num_examples) = ("alice", 12) for a manifest matching repo, base revision, round and the participant bound to the author. |  |
+| S-043 | test_poc::test_allowlist_binds_hf_author_to_participant | owner | skip: `validate_submission_manifest` raises `ValueError` "approved only as participant" when the manifest's `participant` ("mallory") differs from the participant bound to the author. |  |
+| S-044 | test_poc::test_create_allowlist_writes_valid_normalized_json | owner | `create_allowlist(["Alice-HF=alice", "bob-hf=bob"], path)` writes {"alice-hf": "alice", "bob-hf": "bob"} (identities lower-cased) and `load_allowlist` reads back the same mapping. |  |
+| S-045 | test_poc::test_create_allowlist_writes_valid_normalized_json | owner | `create_allowlist` refuses to overwrite an existing file with `ValueError` "already exists". |  |
+| S-046 | test_poc::test_create_allowlist_rejects_ambiguous_mappings | owner | Two entries whose identities collide after normalisation ("Alice-HF", "alice-hf") are rejected with `ValueError` "Duplicate repository identity". |  |
+| S-047 | test_poc::test_create_allowlist_rejects_ambiguous_mappings | owner | Two identities mapped to the same participant are rejected with `ValueError` "mapped to both". |  |
+| S-048 | test_exchange::test_client_sdk_and_fedavg_end_to_end | owner | Check-only through the exchange adapter (`--discover-submissions --check-only`) counts 3 eligible among six ready `training.update` records from five participants: bob's older record is superseded by his newest (one candidate per participant), a record without a submission manifest and a record whose inline manifest lacks `num_examples` are skipped, and a manifest-valid but shape-incompatible checkpoint is counted because check-only downloads no checkpoints. |  |
+| S-049 | test_exchange::test_client_sdk_and_fedavg_end_to_end | owner | skip: a `training.update` whose inline manifest is incomplete is skipped even though an attachment named `fedavg_submission.json` carries a complete manifest; the attachment's claims (`num_examples` 999999) are never read. |  |
+| S-050 | test_exchange::test_client_sdk_and_fedavg_end_to_end | owner | fail: a frozen input whose checkpoint is incompatible (tensor shape (2,) vs (1,)) fails the `--claim-submissions --publish` run with `SystemExit`, and the claim is released (no `Claim` rows remain). |  |
+| S-051 | test_exchange::test_client_sdk_and_fedavg_end_to_end | owner | skip: a frozen input without a submission manifest is skipped and the round proceeds with the two remaining participants. |  |
+| S-052 | test_exchange::test_client_sdk_and_fedavg_end_to_end | owner | The published aggregate is the examples-weighted mean (alice 1.0 x 1, bob 3.0 x 3 -> 2.5); `main` moves to a record whose inline round file says `round` 1 and whose `input_record_ids` equal exactly {alice's update, bob's newest update}. |  |
+| S-053 | test_exchange::test_client_sdk_and_fedavg_end_to_end | owner | `--tag round-1` creates a named ref that resolves to the published record. |  |
+| S-054 | test_poc::test_pr_discovery_keeps_only_allowlisted_authors | hf | `discover_submissions` queries `get_repo_discussions(discussion_type="pull_request", discussion_status="open")` and returns one candidate per open PR as `refs/pr/<num>` in ascending PR order with the author string preserved verbatim ("Bob-HF") and an empty skipped list (despite the test name, allowlist filtering is asserted on the owner side). |  |
+| S-055 | test_poc::test_explicit_pr_selection_also_enforces_allowlist | hf | `explicit_submissions(repo, ["3"])` resolves a PR number to revision `refs/pr/3` with the author taken from `get_discussion_details`. |  |
+| S-056 | test_poc::test_jfrog_submission_revision_is_valid_and_unique | jfrog | `new_submission_revision("Alice Example", 3)` matches `^r0003-Alice-Example-[a-f0-9]{12}$` (zero-padded round, spaces replaced, random suffix) and two calls differ. |  |
+| S-057 | test_poc::test_jfrog_upload_repairs_placeholder_commit_url | jfrog | `_upload_folder` repairs the placeholder `commit_url` Artifactory returns so `CommitInfo.repo_url.repo_id` is the target repo ("owner/model") while the `oid` is preserved. |  |
+| S-058 | test_poc::test_jfrog_rejects_invalid_explicit_revision | jfrog | `explicit_submissions` rejects a revision outside the allowed charset (`refs/pr/1`) with `ValueError` "only letters". |  |
+| S-059 | test_poc::test_jfrog_discovery_uses_manifest_revision_and_uploader | jfrog | `discover_submissions` uses the manifest's `submission_revision` as the candidate revision and the AQL item's `created_by` as the author, with no skips. |  |
+| S-060 | test_poc::test_jfrog_endpoint_and_aql_manifest_discovery | jfrog | `_manifest_items` POSTs an AQL query to `<artifactory>/api/search/aql` as `text/plain` whose body constrains `"repo":{"$eq":"hf-local"}` (repository key derived from the endpoint URL). |  |
+| S-061 | test_poc::test_jfrog_endpoint_and_aql_manifest_discovery | jfrog | Each manifest is fetched from `<artifactory>/<repo>/<item path>/fedavg_submission.json` (`https://company.jfrog.io/artifactory/hf-local/models/org/model/rev/fedavg_submission.json`) and the item's `created_by` is kept on the record. |  |
+| S-062 | test_exchange::test_authentication_and_cross_space_isolation | exchange-auth | Requests with no token, a wrong `aud`, an expired token or an empty `scope` are refused with 401. |  |
+| S-063 | test_exchange::test_authentication_and_cross_space_isolation | exchange-auth | A token signed by a key other than the configured public key is refused with 401. |  |
+| S-064 | test_exchange::test_authentication_and_cross_space_isolation | exchange-auth | A valid principal who is not a member of the space gets 404 on space routes (`GET /records`). |  |
+| S-065 | test_exchange::test_authentication_and_cross_space_isolation | exchange-auth | A body carrying a server-controlled field (`created_by`) is rejected with 422. |  |
+| S-066 | test_exchange::test_authentication_and_cross_space_isolation | exchange-auth | A contributor creating a kind whose `creators` exclude its role (`model.global`) gets 403. |  |
+| S-067 | test_exchange::test_authentication_and_cross_space_isolation | exchange-auth | A record is unreachable through another space's route (404), even for that space's admin. |  |
+| S-068 | test_exchange_hardening::test_authentication_algorithms_issuer_type_and_jwks_outage | exchange-auth | Wrong issuer, wrong audience or expired token -> 401 `invalid_access_token` with header `WWW-Authenticate: Bearer`. |  |
+| S-069 | test_exchange_hardening::test_authentication_algorithms_issuer_type_and_jwks_outage | exchange-auth | An HS256-signed token and an RS256 token whose header `typ` is "JWT" instead of "at+jwt" are both refused with `invalid_access_token`. |  |
+| S-070 | test_exchange_hardening::test_authentication_algorithms_issuer_type_and_jwks_outage | exchange-auth | A key resolved through the JWKS client authenticates normally (200); a `PyJWKClientConnectionError` yields 503 `identity_provider_unavailable` with `Retry-After: 3`. |  |
+| S-071 | test_exchange_hardening::test_authorization_matrix_and_database_cross_space_constraint | exchange-auth | A reader, an admin and another contributor all get `record_not_found` on GET and on `:download` of a private `training.update`, while the coordinator's download grant succeeds (200). |  |
+| S-072 | test_exchange_hardening::test_authorization_matrix_and_database_cross_space_constraint | exchange-auth | A reader creating a record gets `record_kind_not_allowed`. |  |
+| S-073 | test_exchange_hardening::test_authorization_matrix_and_database_cross_space_constraint | exchange-auth | An admin listing records sees no private records ([]). |  |
+| S-074 | test_exchange_hardening::test_authorization_matrix_and_database_cross_space_constraint | exchange-auth | A download through another space's route -> `record_not_found`; an upload status through another space -> `upload_not_found`. |  |
+| S-075 | test_exchange_hardening::test_authorization_matrix_and_database_cross_space_constraint | exchange-auth | The database refuses a `Ref` in one space that points at a record of another (`IntegrityError` on flush). |  |
+| S-076 | test_exchange_hardening::test_authorization_matrix_and_database_cross_space_constraint | exchange-auth | After membership revocation (roles []) the former member gets `space_not_found`. |  |
+| S-077 | test_exchange::test_claim_is_idempotent_for_holder_listable_and_persisted_by_adapter | exchange-auth | `GET /claims` is allowed for a coordinator and an admin (200) and refused for a contributor (403). |  |
+| S-078 | test_exchange::test_idempotency_quota_and_cancellation | exchange-auth | `PATCH` on the space by a non-admin (contributor) -> 403. |  |
+| S-079 | test_exchange::test_reference_cas_lineage_and_duplicate_retry | exchange-auth | `PUT /refs/main` by a contributor -> 403. |  |
+| S-080 | test_exchange::test_bootstrap_admin_break_glass_and_last_admin_guard | exchange-auth | Another admin can revoke the bootstrap admin's roles (200); the revoked principal then gets 404 on `/me` and `/records`. |  |
+| S-081 | test_exchange::test_bootstrap_admin_break_glass_and_last_admin_guard | exchange-auth | Demoting or removing the last admin -> 409 `last_admin`. |  |
+| S-082 | test_exchange::test_bootstrap_admin_break_glass_and_last_admin_guard | exchange-auth | An admin removing its own admin role -> `cannot_remove_own_admin_role`. |  |
+| S-083 | test_exchange::test_bootstrap_admin_break_glass_and_last_admin_guard | exchange-auth | Break-glass: the configured bootstrap admin subject can `GET /members` (200) and `PUT` memberships while not a member; a contributor gets 403 and a non-member 404 on `GET /members`. |  |
+| S-084 | test_exchange::test_bootstrap_admin_break_glass_and_last_admin_guard | exchange-auth | The revoked bootstrap admin re-adding itself as reader is not a self-demotion (200, `/me` roles ["reader"]); break-glass keeps applying while it is a member without admin; it can restore itself to ["admin", "coordinator", "reader"]. |  |
+| S-085 | test_exchange::test_bootstrap_admin_break_glass_and_last_admin_guard | exchange-auth | Every committed break-glass use emits one `member.bootstrap_grant` event (4 after the sequence); the refused demotion is rolled back together with its event and later refusals add none. |  |
+| S-086 | test_exchange::test_bootstrap_admin_break_glass_and_last_admin_guard | exchange-auth | Regular admins (and the restored bootstrap admin) list members without break-glass; the restored bootstrap admin demoting itself -> `cannot_remove_own_admin_role`. |  |
+| S-087 | test_exchange::setUp | exchange-domain | `POST /v1/spaces` with an `Idempotency-Key` by the configured admin subject creates a space (201) and returns its id. |  |
+| S-088 | test_exchange::member | exchange-domain | `PUT /members/{principal_id}` with {subject, roles, participant} by an admin upserts the membership (200). |  |
+| S-089 | test_exchange::ready | exchange-domain | `POST /records/{id}:publish` on a draft without attachments succeeds immediately (200) and returns the ready record. |  |
+| S-090 | test_exchange::test_metadata_roundtrip_visibility_and_immutability | exchange-domain | A draft is invisible to everyone but its creator: `GET /records/{id}` by the admin -> 404 while the record is a draft. |  |
+| S-091 | test_exchange::test_metadata_roundtrip_visibility_and_immutability | exchange-domain | A ready record of a shared kind (`message`) exposes its metadata to another member exactly as written ({"hello": "world"}). |  |
+| S-092 | test_exchange::test_metadata_roundtrip_visibility_and_immutability | exchange-domain | `PATCH /records/{id}` metadata on a ready record -> `record_immutable`. |  |
+| S-093 | test_exchange::test_metadata_roundtrip_visibility_and_immutability | exchange-domain | A ready `training.update` (unshared kind) is 404 to another contributor and absent from that contributor's `GET /records` listing. |  |
+| S-094 | test_exchange::test_idempotency_quota_and_cancellation | exchange-domain | Repeating `POST /records` with the same `Idempotency-Key` and body returns the same record id; the same key with a different body -> `idempotency_key_reused`. |  |
+| S-095 | test_exchange::test_idempotency_quota_and_cancellation | exchange-domain | Space `allocated_bytes` equals the sum of reserved attachment sizes (3 after one 3-byte attachment). |  |
+| S-096 | test_exchange::test_idempotency_quota_and_cancellation | exchange-domain | `PATCH` on the space without `If-Match` -> 412; with the current `ETag` -> 200. |  |
+| S-097 | test_exchange::test_idempotency_quota_and_cancellation | exchange-domain | A reservation that would exceed `quota_bytes` -> `space_quota_exceeded`. |  |
+| S-098 | test_exchange::test_idempotency_quota_and_cancellation | exchange-domain | Cancelling a draft does not free its reservation until the worker reclaims it: a create after `DELETE` still -> `space_quota_exceeded`; after the blob expires and `tick` runs -> 201. |  |
+| S-099 | test_exchange::test_principal_quota_admin_cancel_and_revocation_release | exchange-domain | One reservation above `principal_quota_bytes` (11 > 10) -> `principal_quota_exceeded`; the limit is cumulative per principal (10 then +1 -> refused) and independent per principal (bob -> 201). |  |
+| S-100 | test_exchange::test_principal_quota_admin_cancel_and_revocation_release | exchange-domain | A coordinator-only member cannot see another member's draft (`DELETE` -> 404); the admin can cancel it ({"state": "cancelled"}) and `allocated_bytes` drops by its size. |  |
+| S-101 | test_exchange::test_principal_quota_admin_cancel_and_revocation_release | exchange-domain | Revoking a member (roles []) releases that member's reservations (`allocated_bytes` 0). |  |
+| S-102 | test_exchange::test_ready_record_withdrawal_protects_references_and_lineage | exchange-domain | Deleting a record that a ref points to -> `record_referenced`. |  |
+| S-103 | test_exchange::test_ready_record_withdrawal_protects_references_and_lineage | exchange-domain | Deleting another member's record -> `not_record_owner`; the creator withdrawing a ready record returns {"state": "withdrawn"} and the record becomes 404 to others. |  |
+| S-104 | test_exchange::test_ready_record_withdrawal_protects_references_and_lineage | exchange-domain | Deleting a record frozen as an input of an active claim -> `record_claimed`; once the claim is abandoned the withdrawal succeeds ({"state": "withdrawn"}). |  |
+| S-105 | test_exchange::test_ready_record_withdrawal_protects_references_and_lineage | exchange-domain | Withdrawal leaves the base's other ready update visible (200), and a new claim with one remaining input -> `insufficient_submissions`. |  |
+| S-106 | test_exchange::test_reference_cas_lineage_and_duplicate_retry | exchange-domain | `PUT /refs/main` to a record whose kind is not `model.global` -> `aggregate_kind_mismatch`. |  |
+| S-107 | test_exchange::test_reference_cas_lineage_and_duplicate_retry | exchange-domain | `If-None-Match: *` creates `main` (200); repeating the same `PUT` with the same `Idempotency-Key` and `If-Match` replays 200. |  |
+| S-108 | test_exchange::test_reference_cas_lineage_and_duplicate_retry | exchange-domain | `If-Match` naming a stale generation (1 while main is at 2) -> `reference_changed` (412). |  |
+| S-109 | test_exchange::test_reference_cas_lineage_and_duplicate_retry | exchange-domain | A target whose `base_record_id` is not the current `main` record, or that has no base at all, -> `aggregate_base_mismatch`. |  |
+| S-110 | test_exchange::test_reference_cas_lineage_and_duplicate_retry | exchange-domain | The kind rule applies to `main` even when the target builds on current main (`configuration` kind -> `aggregate_kind_mismatch`), while other ref names (`latest-config`) accept any kind (200). |  |
+| S-111 | test_exchange::test_reference_cas_lineage_and_duplicate_retry | exchange-domain | `GET /refs/main` returns exactly {"record_id": <id>, "generation": <n>}. |  |
+| S-112 | test_exchange::test_concurrent_publishers_only_one_advances_reference | exchange-domain | Two concurrent `PUT /refs/main` with the same `If-Match` generation end as exactly [200, 412]. (race) |  |
+| S-113 | test_exchange::test_concurrent_identical_space_creation_replays_one_result | exchange-domain | Two concurrent `POST /v1/spaces` with the same `Idempotency-Key` and body both return 201 with one shared id. (race) |  |
+| S-114 | test_exchange::test_concurrent_identical_space_creation_replays_one_result | exchange-domain | When the stored-operation lookup misses although the key was committed meanwhile, the request replays the stored result (201, same id) instead of failing on the unique key, and no extra space is created. (race) |  |
+| S-115 | test_exchange::test_concurrent_identical_space_creation_replays_one_result | exchange-domain | The same `Idempotency-Key` with a different body on `POST /v1/spaces` -> `idempotency_key_reused`. |  |
+| S-116 | test_exchange::test_pagination_and_event_visibility | exchange-domain | `GET /records?limit=2` returns 2 items and a `next_cursor` that yields the remaining 1. |  |
+| S-117 | test_exchange::test_pagination_and_event_visibility | exchange-domain | `GET /events` shows one event per shared publication (3, then 4 after a `model.global` publish) and none for an unshared `training.update`. |  |
+| S-118 | test_exchange_hardening::test_event_visibility_paging_and_retention_floor | exchange-domain | Paging `/events` with `cursor` and `limit=1` terminates when `next_cursor` equals the cursor; a private record's events are absent for another contributor and present for the owner, while shared records' events reach every member. |  |
+| S-119 | test_exchange_hardening::test_event_visibility_paging_and_retention_floor | exchange-domain | After `prune(service, 1000)` over aged rows, `GET /events?cursor=1` -> 410 `event_cursor_expired` and every `Operation` row is removed. |  |
+| S-120 | test_exchange::test_request_limits_safe_paths_and_missing_base | exchange-domain | Metadata larger than `METADATA_LIMIT_BYTES` (65536) -> 422 `metadata_too_large` with body fields `limit` = 65536 and `size` > limit. |  |
+| S-121 | test_exchange::test_request_limits_safe_paths_and_missing_base | exchange-domain | A request body over 1 MiB -> 413 with an `X-Request-ID` header. |  |
+| S-122 | test_exchange::test_request_limits_safe_paths_and_missing_base | exchange-domain | An attachment name containing `..` (`../escape`) -> 422. |  |
+| S-123 | test_exchange::test_request_limits_safe_paths_and_missing_base | exchange-domain | Attachment names `a` and `a/b` in one record -> `attachment_name_collides_with_directory`. |  |
+| S-124 | test_exchange::test_request_limits_safe_paths_and_missing_base | exchange-domain | A `base_record_id` that does not exist -> 404. |  |
+| S-125 | test_exchange::test_reserved_and_colliding_attachment_names | exchange-domain | Attachment names equal to a document name (`fedavg_submission.json`), nested under one case-insensitively (`FedAvg_Round.json/part-1`), or colliding with a name declared under `hf2l_files` (`notes/a` and `Notes` vs `notes`) -> 422 `attachment_name_reserved` with `name` set to the offender. |  |
+| S-126 | test_exchange::test_reserved_and_colliding_attachment_names | exchange-domain | Names equal ignoring case (`Model.bin`, `model.bin`) -> `duplicate_attachment_name`; `a` vs `A/b` -> `attachment_name_collides_with_directory` (case-insensitive). |  |
+| S-127 | test_exchange::test_reserved_and_colliding_attachment_names | exchange-domain | `PATCH` metadata adding an `hf2l_files` entry named like an existing attachment (`model.bin`) -> `attachment_name_reserved`. |  |
+| S-128 | test_exchange::test_rule_changes_apply_to_existing_records_and_keep_the_profile | exchange-domain | Setting `rules[kind].shared` true makes existing records of that kind visible (200) and listable (`?kind=`) to other members; setting it back to false hides them again (404, []). |  |
+| S-129 | test_exchange::test_rule_changes_apply_to_existing_records_and_keep_the_profile | exchange-domain | A rules change emits one `space.rules_changed` event with data {"added": [], "removed": [], "shared_changed": ["training.update"]}. |  |
+| S-130 | test_exchange::test_rule_changes_apply_to_existing_records_and_keep_the_profile | exchange-domain | Rules that drop a profile kind -> 422 `profile_kind_required` with `kind` ("model.global"); creating a space with partial rules -> 422 `profile_kind_required` naming the missing kind ("training.update"). |  |
+| S-131 | test_exchange::test_rule_changes_apply_to_existing_records_and_keep_the_profile | exchange-domain | Making `model.global` unshared -> `profile_kind_incompatible` with `reason` "must_be_shared"; a closed `metadata_schema` that forbids the profile's fields -> `profile_kind_incompatible`; a closed schema admitting `input_record_ids` and `hf2l_files` plus a new custom kind (`telemetry`) -> 200. |  |
+| S-132 | test_exchange_hardening::test_profile_compositions_and_metadata_patch_validation | exchange-domain | A profile kind schema closed through `allOf`, or one limiting `hf2l_files` to `maxProperties: 0`, -> `profile_kind_incompatible`; a schema that is not valid JSON Schema ({"type": "nonsense"}) -> `invalid_metadata_schema`. |  |
+| S-133 | test_exchange_hardening::test_profile_compositions_and_metadata_patch_validation | exchange-domain | `PATCH /records/{id}` with a stale `If-Match` -> `record_changed`; metadata violating the kind's schema -> `metadata_schema_mismatch`; a valid patch raises `generation` to 2 and the record still publishes (200). |  |
+| S-134 | test_exchange::test_metadata_schema_references_are_local_only_and_never_fetched | exchange-domain | A schema with only local `$ref` (`#/$defs/...`) is accepted (200) and enforced at creation (`metadata_schema_mismatch` for {"n": "x"}, 201 for {"n": 1}); URL-shaped strings in non-reference positions (`examples`) are not treated as references. |  |
+| S-135 | test_exchange::test_metadata_schema_references_are_local_only_and_never_fetched | exchange-domain | Schemas with a remote `$ref`, `$dynamicRef`, `$id` or `$recursiveRef` -> 422 `external_schema_references_not_supported` with `kind`, both on `PATCH` rules and on space creation. |  |
+| S-136 | test_exchange::test_metadata_schema_references_are_local_only_and_never_fetched | exchange-domain | A stored rule that bypassed validation (remote `$dynamicRef`) or names a missing local target (`#/$defs/missing`) makes record creation fail with 422 `metadata_schema_unresolvable` and performs no network fetch (`urlopen` never called). |  |
+| S-137 | test_exchange::test_participant_rebinding_invalidates_drafts_and_stale_updates | exchange-domain | Rebinding a member's `participant` cancels only that member's participant-bound drafts (`training.update` -> "cancelled"; a `message` draft stays "draft") and releases their quota (`allocated_bytes` 2). |  |
+| S-138 | test_exchange::test_participant_rebinding_invalidates_drafts_and_stale_updates | exchange-domain | A first-time binding leaves drafts of other kinds alone (the owner's `model.global` draft stays "draft"), and a role change that keeps the binding leaves the member's drafts alone. |  |
+| S-139 | test_exchange::test_participant_rebinding_invalidates_drafts_and_stale_updates | exchange-domain | Publishing a draft that was cancelled by clearing its creator's binding -> `record_expired`; creating a `training.update` without a participant binding -> `participant_and_base_required`. |  |
+| S-140 | test_exchange::test_participant_rebinding_invalidates_drafts_and_stale_updates | exchange-domain | Publish re-validates the binding against the current membership row: a `participant` changed directly in the database -> 409 `participant_binding_changed`; restored -> 200. |  |
+| S-141 | test_exchange::test_storage_and_database_errors_are_logged_json_with_request_id | exchange-domain | A database `OperationalError` -> 503 `database_unavailable`, `X-Request-ID` equal to the body's `request_id`, and an ERROR log line naming the code. |  |
+| S-142 | test_exchange_hardening::test_read_queries_are_batched_and_postgres_reads_do_not_wait_for_writer | exchange-domain | Listing 8 records issues exactly one query against `exchange_blobs` (batched) and no `FOR UPDATE`. |  |
+| S-143 | test_exchange_hardening::test_read_queries_are_batched_and_postgres_reads_do_not_wait_for_writer | exchange-domain | On PostgreSQL, `GET /me` completes while another transaction holds the space row `FOR UPDATE` (reads do not wait for the writer; runs only with EXCHANGE_TEST_DATABASE_URL). |  |
+| S-144 | test_exchange_hardening::test_explicit_v1_migration_is_repeatable_and_accounts_existing_garbage | exchange-domain | `initialize` refuses an outdated schema with `ValueError` mentioning "migrate-db"; `migrate` is repeatable and back-fills `reclaiming` (3) from cancelled reservations, nulls `worker_token` and sets `Operation.created_at` (pre-cutover migration; the target is greenfield with an `exchange_schema` revision row). |  |
+| S-145 | test_exchange::upload | exchange-upload | `POST /records/{id}/blobs/{blob}/uploads` (200) opens a multipart upload with `part_bytes` parts; `POST /uploads/{blob}:complete` after all parts are stored -> 202. |  |
+| S-146 | test_exchange::test_multipart_verification_and_pinned_download | exchange-upload | Publishing before the blob is verified -> `blobs_not_verified`; after completion and one worker `tick` (`verified` 1) publish succeeds (200). |  |
+| S-147 | test_exchange::test_multipart_verification_and_pinned_download | exchange-upload | The bucket is versioned: overwriting the key leaves the pinned `version` intact and `:download` grants a URL containing `versionId=<version>`. |  |
+| S-148 | test_exchange::test_multipart_verification_and_pinned_download | exchange-upload | `DELETE /uploads/{blob}` once the record is published -> `record_not_uploadable`. |  |
+| S-149 | test_exchange::test_digest_failure_and_revoked_membership | exchange-upload | Uploaded bytes whose sha256 differs from the declared digest are failed by the worker (`failed` 1) and the record's publish -> 409. |  |
+| S-150 | test_exchange::test_digest_failure_and_revoked_membership | exchange-upload | A revoked member's `parts:authorize` -> 404. |  |
+| S-151 | test_exchange::test_abort_upload_only_before_completion_and_upload_id_cleared | exchange-upload | After completion the blob is `verifying` with `upload_id` cleared, and an abort -> `upload_already_completed`. |  |
+| S-152 | test_exchange::test_abort_upload_only_before_completion_and_upload_id_cleared | exchange-upload | A blob left `completing` (completion response lost) refuses a stale abort with `upload_completing` until the worker settles it; `tick` recovers it (`recovered` 1), clears `upload_id`, verifies it, and the record publishes (200). (lost-response/resume) |  |
+| S-153 | test_exchange::test_abort_upload_only_before_completion_and_upload_id_cleared | exchange-upload | An unfinished upload can be aborted idempotently ({"state": "aborted"} twice) and the record then fails publish with `blobs_not_verified` until a new attempt. |  |
+| S-154 | test_exchange::test_abort_upload_only_before_completion_and_upload_id_cleared | exchange-upload | Aborting a blob the worker already failed -> 409 `upload_not_open`. |  |
+| S-155 | test_exchange_hardening::test_parts_authorization_and_completion_errors | exchange-upload | `parts:authorize` for part number 0 or beyond the part count (2 of 1) -> 422 `invalid_part_number`. |  |
+| S-156 | test_exchange_hardening::test_parts_authorization_and_completion_errors | exchange-upload | `:complete` with no parts, or with a stored part whose size does not match the declared layout, -> `upload_parts_incomplete_or_invalid`. |  |
+| S-157 | test_exchange_hardening::test_parts_authorization_and_completion_errors | exchange-upload | A granted part URL accepts the PUT (200); `GET /uploads/{blob}` lists confirmed parts as [{"part_number": 1, "size_bytes": 4}]; `:complete` -> 202 and the worker verifies it. |  |
+| S-158 | test_exchange_hardening::test_storage_misconfiguration_preserves_completion_for_recovery | exchange-upload | A `StorageMisconfigured` raised after the provider completed -> 503 `storage_misconfigured` with `Retry-After: 3`; the blob stays `completing` and the worker recovers then verifies it. |  |
+| S-159 | test_exchange_hardening::test_only_one_http_completion_attempt_enters_storage | exchange-upload | A second `:complete` arriving while the first is inside storage gets 202 with state "completing", and the provider's `complete` runs exactly once. (race) |  |
+| S-160 | test_exchange_hardening::test_losing_initiation_aborts_only_its_own_upload | exchange-upload | If the record is cancelled while `storage.start` is in flight, the initiation -> `upload_cancelled` and its own provider upload is aborted. (race) |  |
+| S-161 | test_exchange_hardening::test_losing_initiation_aborts_only_its_own_upload | exchange-upload | A recovery worker that loses the CAS to a successor aborts only the orphan provider upload it created; the successor's upload stays pending. (race) |  |
+| S-162 | test_exchange::test_storage_and_database_errors_are_logged_json_with_request_id | exchange-upload | A provider `ClientError` (AccessDenied) on initiation -> 503 `storage_unavailable` with the provider code in an ERROR log line, and the interrupted initiation is repaired by the worker (`recovered` 1). |  |
+| S-163 | test_exchange::test_storage_rejects_tampered_and_expired_grants | exchange-upload | With live signature enforcement, a grant whose query is altered (`partNumber`) and an expired presigned URL are both refused by storage (403); runs only with EXCHANGE_TEST_S3_ENDPOINT. |  |
+| S-164 | test_exchange_hardening::test_tls_readiness_docs_and_required_headers | exchange-upload | `/docs` and `/openapi.json` are 404 by default; with `docs_enabled` the OpenAPI schema marks `idempotency-key` required with minLength 1 and maxLength 128 on POST spaces, claims and records. |  |
+| S-165 | test_exchange_hardening::test_tls_readiness_docs_and_required_headers | exchange-upload | `/health` is 200 even when storage is misconfigured, while `/ready` -> 503 `storage_misconfigured`. |  |
+| S-166 | test_exchange::test_claim_freezes_inputs_and_fences_stale_worker | exchange-claims | `POST /claims` freezes the set of ready `training.update` records on the current base as `inputs`. |  |
+| S-167 | test_exchange::test_claim_freezes_inputs_and_fences_stale_worker | exchange-claims | A second coordinator acquiring while a claim is active -> `claim_busy`. |  |
+| S-168 | test_exchange::test_claim_freezes_inputs_and_fences_stale_worker | exchange-claims | Once the lease expires another acquisition succeeds, and the stale holder's `:publish` with the old fence -> `claim_fence_changed`. |  |
+| S-169 | test_exchange::test_claim_freezes_inputs_and_fences_stale_worker | exchange-claims | While a claim is active, a plain `PUT /refs/main` -> `active_claim_requires_fenced_publication`. |  |
+| S-170 | test_exchange::test_claim_freezes_inputs_and_fences_stale_worker | exchange-claims | `:publish` with a result whose `input_record_ids` differ from the frozen inputs -> `claim_inputs_mismatch`. |  |
+| S-171 | test_exchange::test_claim_freezes_inputs_and_fences_stale_worker | exchange-claims | `:publish` with the right fence and inputs -> 200 and is idempotent (second call 200); a different result after completion -> `claim_completed`. |  |
+| S-172 | test_exchange::test_claim_abandon_newest_per_participant_and_subset_publication | exchange-claims | Automatic freezing takes the newest ready update per participant and lists older ones under `superseded`. |  |
+| S-173 | test_exchange::test_claim_abandon_newest_per_participant_and_subset_publication | exchange-claims | `GET /claims/{id}` and `:abandon` by a coordinator who is not the holder -> `claim_held_by_other`; `:abandon` with a wrong fence -> `claim_fence_changed`; a correct abandon returns state "abandoned". |  |
+| S-174 | test_exchange::test_claim_abandon_newest_per_participant_and_subset_publication | exchange-claims | After abandonment a coordinator may acquire with explicit `inputs` (including a superseded update) -> 200; another acquisition by the same identity with a different key -> 409 `claim_busy`, as does the admin's. |  |
+| S-175 | test_exchange::test_claim_abandon_newest_per_participant_and_subset_publication | exchange-claims | The admin can abandon another holder's claim without knowing its fence (200). |  |
+| S-176 | test_exchange::test_claim_abandon_newest_per_participant_and_subset_publication | exchange-claims | Explicit `inputs` naming a missing record -> `claim_inputs_invalid`. |  |
+| S-177 | test_exchange::test_claim_abandon_newest_per_participant_and_subset_publication | exchange-claims | `:publish` by a non-holder admin -> `claim_held_by_other`; the holder publishing a result over a subset of the inputs -> 200 and `main` points to it. |  |
+| S-178 | test_exchange::test_claim_abandon_newest_per_participant_and_subset_publication | exchange-claims | An expired claim without a result does not block a plain generation-fenced `PUT /refs/main` (200). |  |
+| S-179 | test_exchange::test_claim_is_idempotent_for_holder_listable_and_persisted_by_adapter | exchange-claims | Re-posting the acquisition with the same `Idempotency-Key` returns the same claim id and fence (200). |  |
+| S-180 | test_exchange::test_claim_is_idempotent_for_holder_listable_and_persisted_by_adapter | exchange-claims | The `claim_busy` response (409) carries `claim_id` and the holder's `lease_until`; the SDK's `acquire_claim` raises `ExchangeError` with `details["claim_id"]`. |  |
+| S-181 | test_exchange::test_claim_is_idempotent_for_holder_listable_and_persisted_by_adapter | exchange-claims | `GET /claims` lists (id, holder, workflow "fedavg"); `?base_record_id=` filters (no match -> []); the SDK's `claims(workflow=, base_record_id=)` filters the same way. |  |
+| S-182 | test_exchange::test_claim_is_idempotent_for_holder_listable_and_persisted_by_adapter | exchange-claims | An expired lease without a result drops out of the active listing but remains visible with `active=False`; a published claim likewise, exposing `result_record_id`. |  |
+| S-183 | test_exchange_hardening::test_claim_keys_distinguish_jobs_and_renewal_is_fenced | exchange-claims | The same acquisition key replays id and fence; a different key while busy -> `claim_busy`; the same key with a different body (`minimum` 99) -> `idempotency_key_reused`. |  |
+| S-184 | test_exchange_hardening::test_claim_keys_distinguish_jobs_and_renewal_is_fenced | exchange-claims | `:renew` with the correct fence extends `lease_until` (200, greater); a wrong fence -> `claim_not_active` (target: `claim_fence_changed`); a non-holder -> `claim_held_by_other`. |  |
+| S-185 | test_exchange_hardening::test_claim_keys_distinguish_jobs_and_renewal_is_fenced | exchange-claims | `:renew` after the lease expired -> `claim_not_active` (target: `claim_lease_expired`); replaying the acquisition key after expiry -> `claim_not_active`; a fresh acquisition receives a greater fence. |  |
+| S-186 | test_exchange::test_participant_rebinding_invalidates_drafts_and_stale_updates | exchange-claims | Automatic freezing skips a ready update whose creator was rebound to another participant and lists it under `skipped`. |  |
+| S-187 | test_exchange::test_participant_rebinding_invalidates_drafts_and_stale_updates | exchange-claims | Explicit `inputs` including a rebound creator's update -> 409 `participant_binding_changed` with `record_id` naming it. |  |
+| S-188 | test_exchange::test_participant_rebinding_invalidates_drafts_and_stale_updates | exchange-claims | A membership revocation that keeps the participant string (roles []) also drops the member's ready update: automatic acquisition -> `insufficient_submissions` with both dropped ids in `skipped`; explicit inclusion -> `participant_binding_changed`. |  |
+| S-189 | test_exchange::test_participant_rebinding_invalidates_drafts_and_stale_updates | exchange-claims | Too few attributable updates -> `insufficient_submissions` naming the skipped records (a cleared binding counts as unattributable). |  |
+| S-190 | test_exchange::test_participant_rebinding_invalidates_drafts_and_stale_updates | exchange-claims | A rebinding after freezing is caught at `:publish` -> 409 `participant_binding_changed` with `record_id`; re-acquiring the expired claim gets fence 2, drops the update (`skipped`), refuses the old result (`claim_inputs_mismatch`) and accepts a result over the reduced inputs (200). |  |
+| S-191 | test_exchange::test_client_sdk_and_fedavg_end_to_end | exchange-claims | A coordinator run that fails after acquiring releases its claim (no active claim rows remain). |  |
+| S-192 | test_exchange::test_worker_recovers_completion_and_cleans_expired_object | exchange-worker | A blob stuck in `completing` beyond the recovery window is recovered (`recovered` 1) and then verified (`verified` 1) on successive ticks. |  |
+| S-193 | test_exchange::test_worker_recovers_completion_and_cleans_expired_object | exchange-worker | An expired record and blob are cleaned (`cleaned` 1): the space's `allocated` returns to 0 and no object versions remain in the bucket. |  |
+| S-194 | test_exchange::test_worker_does_not_expire_drafts_while_verifying | exchange-worker | A draft past `expires_at` whose blob is being verified is not expired: (`expired`, `verified`) == (0, 1) and the record still publishes (200). |  |
+| S-195 | test_exchange::test_worker_leases_blobs_and_cleanup_backlog_cannot_starve_verification | exchange-worker | 256 cancelled zero-byte reservations do not fill the worker batch: a real upload is still verified in the same tick. |  |
+| S-196 | test_exchange::test_worker_leases_blobs_and_cleanup_backlog_cannot_starve_verification | exchange-worker | Two concurrent ticks verify the blob exactly once (`verify` called once, summed `verified` 1) because blobs are leased per attempt. (race) |  |
+| S-197 | test_exchange::test_worker_recovers_lost_initiation | exchange-worker | A blob left `initiating` is recovered with a new provider upload id and the orphaned provider upload is aborted (no longer among pending uploads). (lost-response/resume) |  |
+| S-198 | test_exchange_hardening::test_expired_worker_cannot_commit_or_release_successor | exchange-worker | An attempt whose lease expired cannot `commit` (returns False) and its `release_lease` leaves the successor's `worker_token` and `worker_lease_until` intact; the successor's commit succeeds (True). (blob-lease) |  |
+| S-199 | test_exchange_hardening::test_renewal_and_active_lease_do_not_starve_other_blobs | exchange-worker | While one attempt holds and renews a blob lease through `heartbeat`, `tick(batch=1)` still verifies another blob; the renewed blob cannot be re-acquired after the nominal lease seconds (`acquire` None) and is verified once released. (blob-lease) |  |
+| S-200 | test_exchange_hardening::test_missing_version_is_terminal_and_cleanup_releases_physical_budget | exchange-worker | A blob whose object version is gone is failed terminally (`failed` 1, record state "failed"); its bytes move from `allocated` (0) to `reclaiming` (4), and cleanup returns `reclaiming` to 0. |  |
+| S-201 | test_exchange_hardening::test_cancelled_and_expired_multipart_uploads_are_actually_aborted | exchange-worker | Cleanup of a cancelled and of an expired record with an open multipart upload aborts the provider upload (no pending uploads) and leaves no versions or delete markers. |  |
+| S-202 | test_exchange_hardening::test_environment_configuration_and_bounded_worker_backoff | exchange-settings | `Settings.from_env` reads EXCHANGE_POOL_SIZE 7, EXCHANGE_POOL_OVERFLOW 2, EXCHANGE_POOL_TIMEOUT 2.5, EXCHANGE_JWKS_TIMEOUT 1.5 and EXCHANGE_DOCS_ENABLED false, with the public key from EXCHANGE_PUBLIC_KEY_FILE. |  |
+| S-203 | test_exchange_hardening::test_environment_configuration_and_bounded_worker_backoff | exchange-settings | A boolean env value outside the grammar (EXCHANGE_DOCS_ENABLED="typo") -> `ValueError`. |  |
+| S-204 | test_exchange_hardening::test_tls_readiness_docs_and_required_headers | exchange-settings | An `http://` S3 endpoint is refused (`ValueError`) unless `allow_local_http` is set and the host is loopback; `http://storage.example` is refused even with `allow_local_http`. |  |
+| S-205 | test_exchange_hardening::test_tls_readiness_docs_and_required_headers | exchange-settings | `s3_public_endpoint` is used for presigned URLs (host `download.example`) while service-side operations keep the internal client. |  |
+| S-206 | test_exchange::sdk | sdk | Transfer requests to storage grants carry no `Authorization` header (token-less transfer client). |  |
+| S-207 | test_exchange::test_request_limits_safe_paths_and_missing_base | sdk | `put_record` refuses oversized metadata before any request is sent: `ExchangeError` code `metadata_too_large`, `details["limit"]` = 65536, message containing "at most 65536". |  |
+| S-208 | test_exchange::test_sdk_resumes_after_transport_failure_and_releases_poisoned_drafts | sdk | A part PUT failing with `ConnectError` is retried (three injected failures are consumed) before `put_record` raises `blob_transfer_failed`, leaving `state_path` holding the draft's `record_id`. (lost-response/resume) |  |
+| S-209 | test_exchange::test_sdk_resumes_after_transport_failure_and_releases_poisoned_drafts | sdk | Retrying `put_record` with the same `state_path` resumes the same draft (same id) with refreshed metadata ({"attempt": 2, "at": "t1"}), reaches "ready", deletes the state file and appears exactly once among ready records. (lost-response/resume) |  |
+| S-210 | test_exchange::test_sdk_resumes_after_transport_failure_and_releases_poisoned_drafts | sdk | `download_attachment` resumes from an existing `<name>.<blob_id>.part` file and produces the complete payload. |  |
+| S-211 | test_exchange::test_sdk_resumes_after_transport_failure_and_releases_poisoned_drafts | sdk | A draft whose blob fails verification (declared digest differs from the bytes) raises `blob_verification_failed`, removes the state file and leaves no reservation behind (`allocated_bytes` equals the good payload only). |  |
+| S-212 | test_exchange_hardening::test_resume_already_failed_blob_cancels_poisoned_state | sdk | Resuming a draft whose blob is already `failed` raises `blob_verification_failed`, deletes the state file, cancels the record and releases its allocation (0). (lost-response/resume) |  |
+| S-213 | test_exchange_hardening::test_resume_does_not_resend_confirmed_parts | sdk | On resume only unconfirmed parts are sent: part 1 once in total, part 2 four times (three failures plus the success), part 3 once; the record ends "ready". (lost-response/resume) |  |
+| S-214 | test_exchange_hardening::test_separate_verification_budget_and_initialization_wait | sdk | `wait_seconds` bounds only the verification wait, not the transfer: a slow upload with `wait_seconds=0.01` still completes to "ready". |  |
+| S-215 | test_exchange_hardening::test_separate_verification_budget_and_initialization_wait | sdk | A 409 `upload_initialization_pending` from the uploads route is waited on and retried instead of failing the upload. |  |
+| S-216 | test_exchange_hardening::test_interrupted_download_preserves_partial_and_integrity_failure_removes_it | sdk | A download interrupted mid-stream raises `download_incomplete`, keeps the 1 MiB `.part` file and retries with `Range: bytes=1048576-`; a later download completes the file from the partial. |  |
+| S-217 | test_exchange_hardening::test_interrupted_download_preserves_partial_and_integrity_failure_removes_it | sdk | A `.part` whose bytes do not match the digest raises `download_integrity_failed` and the partial is removed. |  |
+| S-218 | test_exchange_hardening::test_tls_readiness_docs_and_required_headers | sdk | A grant URL that is plain `http://` is refused with `ValueError` before the transfer client is used. |  |
+| S-219 | test_exchange::test_client_sdk_and_fedavg_end_to_end | sdk | `put_record(..., files=, base_record_id=, wait_seconds=)`, `get_record`, `records(kind=, state=, base_record_id=)`, `cancel_record` ({"state": "withdrawn"}) and `resolve(space, ref)` round-trip against the service. |  |
+| S-220 | test_exchange::test_claim_is_idempotent_for_holder_listable_and_persisted_by_adapter | adapter | `claim_submissions(space, state_dir=)` persists `exchange-claim.json` {space, claim_id, fence} in the state directory and returns one candidate per frozen input (2). |  |
+| S-221 | test_exchange::test_claim_is_idempotent_for_holder_listable_and_persisted_by_adapter | adapter | A restarted store pointed at the same `state_dir` resumes the persisted claim by id using only `GET /claims/{id}` (no acquisition request). (lost-response/resume) |  |
+| S-222 | test_exchange::test_claim_is_idempotent_for_holder_listable_and_persisted_by_adapter | adapter | An `abandon_claim` whose request fails (`ExchangeError` 503 `connection_failed`) re-raises and keeps the persisted file; the claim stays active server-side for a manual abandon. |  |
+| S-223 | test_exchange::test_claim_is_idempotent_for_holder_listable_and_persisted_by_adapter | adapter | An explicit `claim_id` that is no longer active raises `ExchangeError` `claim_not_active` and keeps the file; without an explicit id a stale file is discarded and a fresh acquisition rewrites it (same claim id re-acquired, fence 2). |  |
+| S-224 | test_exchange::test_claim_is_idempotent_for_holder_listable_and_persisted_by_adapter | adapter | `abandon_claim` removes `exchange-claim.json` and leaves no active claims. |  |
+| S-225 | test_exchange_hardening::test_adapter_recovers_lost_claim_response_with_persisted_key | adapter | The acquisition key is persisted (`acquisition_key` in `exchange-claim.json`) before the request; after a lost acquisition response a restarted store replays it and adopts the claim the server created (same id and fence). (lost-response/resume) |  |
+| S-226 | test_exchange::test_reserved_and_colliding_attachment_names | adapter | `publish_submission` refuses a folder path that collides case-insensitively with a document name (`Fedavg_Submission.json`) with `ValueError` before uploading. |  |
+| S-227 | test_exchange::test_reserved_and_colliding_attachment_names | adapter | `download_snapshot(..., allow_patterns=fedavg_submission.json)` writes only the manifest from inline metadata and touches no attachment. |  |
+| S-228 | test_exchange::test_reserved_and_colliding_attachment_names | adapter | A record whose attachment shadows a document name raises `ValueError` naming the record id (not a filesystem error) on full download and on manifest-only download, and leaves no partial target directory. |  |
+| S-229 | test_exchange::test_reserved_and_colliding_attachment_names | adapter | `_check_layout` rejects stored records whose attachment names collide case-insensitively as directories (`a`, `A/b`) with `ValueError`. |  |
+| S-230 | test_exchange::test_large_round_manifest_is_bounded_inline_with_complete_attachment | adapter | `initialize_repository` creates the initial record with the checkpoint files as attachments and the round manifest inline under `metadata.hf2l_files`; a manifest that fits stays inline unchanged with no extra attachment. |  |
+| S-231 | test_exchange::test_large_round_manifest_is_bounded_inline_with_complete_attachment | adapter | A round manifest over 65536 bytes is bounded inline to <= 49152 bytes: `complete_manifest` names `fedavg_round-full.json`, `evaluation` keeps scalars only, each submission keeps participant, resolved_revision, num_examples, coefficient and scalar training fields while arrays (`loss_curve`) are dropped, and the attachments are [config.json, fedavg_round-full.json]. |  |
+| S-232 | test_exchange::test_large_round_manifest_is_bounded_inline_with_complete_attachment | adapter | A manifest-only download of the bounded record yields only `fedavg_round.json` (the bounded copy, `round` 1); a full download yields both the bounded copy and the complete manifest; `main` resolves to the new revision. |  |
+| S-233 | test_exchange_hardening::test_tag_failure_reports_published_revision_and_explicit_reference | adapter | When `main` advances but the tag ref fails with `reference_changed`, `publish_aggregate` returns `tag_created` False and a warning naming the published revision, and `main` points at that revision. |  |
+| S-234 | test_exchange_hardening::test_tag_failure_reports_published_revision_and_explicit_reference | adapter | A tag that already exists is refused with `ValueError` "Tag already exists" before any upload. |  |
+| S-235 | test_exchange::test_client_sdk_and_fedavg_end_to_end | adapter | `publish_submission` of a folder holding the manifest and checkpoint files creates a ready `training.update` record whose id is returned as the revision; `resolve_revision(space, "main")` returns the current main record id. |  |
+| S-236 | test_exchange_hardening::test_environment_configuration_and_bounded_worker_backoff | cli | `exchange worker` keeps running when `tick` raises, sleeping with a bounded backoff whose maximum is 300 seconds. |  |
+| S-237 | test_fedavg_readiness::test_duplicate_participant_fails | cli | The owner CLI maps every failure to `SystemExit` after emitting the reason ("Duplicate participant", "Main changed since readiness check", "requires at least two"). |  |
+| S-238 | test_hf_webhook_relay::test_open_and_reopened_prs_dispatch | relay | A `discussion` event with action `create` on an open pull request of the configured repo -> "202 Accepted" and `dispatch(GITHUB_REPOSITORY, GITHUB_DISPATCH_TOKEN)`. |  |
+| S-239 | test_hf_webhook_relay::test_open_and_reopened_prs_dispatch | relay | A `discussion` event with action `update` (reopen) on an open pull request -> "202 Accepted" and a dispatch. |  |
+| S-240 | test_hf_webhook_relay::test_updated_pr_ref_dispatches | relay | A `repo.content` update whose `updatedRefs` names `refs/pr/<n>` -> "202 Accepted" and exactly one dispatch. |  |
+| S-241 | test_hf_webhook_relay::test_aggregate_main_update_does_not_loop | relay | A `repo.content` update on `refs/heads/main` -> "200 OK" with body "Ignored\n" and no dispatch (no aggregate-triggered loop). |  |
+| S-242 | test_hf_webhook_relay::test_unrelated_repo_discussion_closed_pr_and_comment_are_ignored | relay | An event for another repo name (`other/model`) -> "200 OK" "Ignored\n", no dispatch. |  |
+| S-243 | test_hf_webhook_relay::test_unrelated_repo_discussion_closed_pr_and_comment_are_ignored | relay | An event whose repo `type` is not `model` (`dataset`) -> "200 OK" "Ignored\n", no dispatch. |  |
+| S-244 | test_hf_webhook_relay::test_unrelated_repo_discussion_closed_pr_and_comment_are_ignored | relay | A discussion that is not a pull request (`isPullRequest` false) -> "200 OK" "Ignored\n", no dispatch. |  |
+| S-245 | test_hf_webhook_relay::test_unrelated_repo_discussion_closed_pr_and_comment_are_ignored | relay | A pull request whose `status` is `closed` -> "200 OK" "Ignored\n", no dispatch. |  |
+| S-246 | test_hf_webhook_relay::test_unrelated_repo_discussion_closed_pr_and_comment_are_ignored | relay | A `discussion.comment` scope event -> "200 OK" "Ignored\n", no dispatch. |  |
+| S-247 | test_hf_webhook_relay::test_secret_is_checked_before_dispatch | relay | A wrong or empty `X-Webhook-Secret` header -> "403 Forbidden" and no dispatch. |  |
+| S-248 | test_hf_webhook_relay::test_invalid_requests_do_not_dispatch | relay | Wrong path -> "404 Not Found"; GET -> "405 Method Not Allowed"; missing `CONTENT_LENGTH` -> "400 Bad Request"; `CONTENT_LENGTH` 999999999 -> "413 Content Too Large"; invalid JSON or a non-object JSON body ([]) -> "400 Bad Request"; none dispatch. |  |
+| S-249 | test_hf_webhook_relay::test_dispatch_failure_returns_retryable_error_without_details | relay | A `URLError` from `dispatch` -> "502 Bad Gateway" whose body contains neither the error text nor the token. |  |
+| S-250 | test_hf_webhook_relay::test_github_request_uses_fixed_event_and_authentication | relay | `dispatch(repo, token)` POSTs to `https://api.github.com/repos/<repo>/dispatches` with `Authorization: Bearer <token>`, body {"event_type": "hf-pr-update"} and `timeout` 15. |  |
+
+## Named groups
+
+Indexes over the table for the WP7 completeness check; every id names one row of the table above (a row may belong to several groups).
+
+**Lost-response/resume scenarios** (8 rows): S-152, S-197, S-208, S-209, S-212, S-213, S-221, S-225.
+
+The five the spec names are the SDK draft resume with the same state file, the resume that re-sends only unconfirmed parts, the resume of an already-failed blob that cancels the poisoned draft, the adapter's resume of a persisted claim by id, and the adapter's replay of a persisted acquisition key after a lost acquisition response; the remaining tagged rows are the adjacent lost-response cases (lost completion response protected from a stale abort, lost initiation repaired by the worker, transfer retry before `blob_transfer_failed`).
+
+**Blob-lease hardening cases** (2 rows): S-198, S-199.
+
+**Concurrency races** (7 rows): S-112, S-113, S-114, S-159, S-160, S-161, S-196.
+
+**Owner skip/fail matrix** (14 rows): S-027, S-028, S-029, S-030, S-031, S-033, S-034, S-035, S-036, S-037, S-043, S-049, S-050, S-051.
+
+`skip:` rows are causes that exclude one candidate; `fail:` rows abort the run.
+
+**HF and JFrog behaviours** (8 rows): S-054, S-055, S-056, S-057, S-058, S-059, S-060, S-061.
+
+**Relay cases** (13 rows): S-238, S-239, S-240, S-241, S-242, S-243, S-244, S-245, S-246, S-247, S-248, S-249, S-250.
+
+8 legacy test functions: `test_aggregate_main_update_does_not_loop`, `test_dispatch_failure_returns_retryable_error_without_details`, `test_github_request_uses_fixed_event_and_authentication`, `test_invalid_requests_do_not_dispatch`, `test_open_and_reopened_prs_dispatch`, `test_secret_is_checked_before_dispatch`, `test_unrelated_repo_discussion_closed_pr_and_comment_are_ignored`, `test_updated_pr_ref_dispatches`.
+
+**Exact error-code assertions** (59 codes). Each code asserted by the legacy modules, with the rows that quote it:
+
+| code | rows |
+|---|---|
+| `active_claim_requires_fenced_publication` | S-169 |
+| `aggregate_base_mismatch` | S-109 |
+| `aggregate_kind_mismatch` | S-106, S-110 |
+| `attachment_name_collides_with_directory` | S-123, S-126 |
+| `attachment_name_reserved` | S-125, S-127 |
+| `blob_transfer_failed` | S-208 |
+| `blob_verification_failed` | S-211, S-212 |
+| `blobs_not_verified` | S-146, S-153 |
+| `cannot_remove_own_admin_role` | S-082, S-086 |
+| `claim_busy` | S-167, S-174, S-180, S-183 |
+| `claim_completed` | S-171 |
+| `claim_fence_changed` | S-168, S-173, S-184 |
+| `claim_held_by_other` | S-173, S-177, S-184 |
+| `claim_inputs_invalid` | S-176 |
+| `claim_inputs_mismatch` | S-170, S-190 |
+| `claim_not_active` | S-184, S-185, S-223 |
+| `connection_failed` | S-222 |
+| `database_unavailable` | S-141 |
+| `download_incomplete` | S-216 |
+| `download_integrity_failed` | S-217 |
+| `duplicate_attachment_name` | S-126 |
+| `event_cursor_expired` | S-119 |
+| `external_schema_references_not_supported` | S-135 |
+| `idempotency_key_reused` | S-094, S-115, S-183 |
+| `identity_provider_unavailable` | S-070 |
+| `insufficient_submissions` | S-105, S-188, S-189 |
+| `invalid_access_token` | S-068, S-069 |
+| `invalid_metadata_schema` | S-132 |
+| `invalid_part_number` | S-155 |
+| `last_admin` | S-081 |
+| `metadata_schema_mismatch` | S-133, S-134 |
+| `metadata_schema_unresolvable` | S-136 |
+| `metadata_too_large` | S-120, S-207 |
+| `not_record_owner` | S-103 |
+| `participant_and_base_required` | S-139 |
+| `participant_binding_changed` | S-140, S-187, S-188, S-190 |
+| `principal_quota_exceeded` | S-099 |
+| `profile_kind_incompatible` | S-131, S-132 |
+| `profile_kind_required` | S-130 |
+| `record_changed` | S-133 |
+| `record_claimed` | S-104 |
+| `record_expired` | S-139 |
+| `record_immutable` | S-092 |
+| `record_kind_not_allowed` | S-072 |
+| `record_not_found` | S-071, S-074 |
+| `record_not_uploadable` | S-148 |
+| `record_referenced` | S-102 |
+| `reference_changed` | S-108, S-233 |
+| `space_not_found` | S-076 |
+| `space_quota_exceeded` | S-097, S-098 |
+| `storage_misconfigured` | S-158, S-165 |
+| `storage_unavailable` | S-162 |
+| `upload_already_completed` | S-151 |
+| `upload_cancelled` | S-160 |
+| `upload_completing` | S-152 |
+| `upload_initialization_pending` | S-215 |
+| `upload_not_found` | S-074 |
+| `upload_not_open` | S-154 |
+| `upload_parts_incomplete_or_invalid` | S-156 |

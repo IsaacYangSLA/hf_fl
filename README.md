@@ -53,15 +53,14 @@ uploaded. Client datasets and training code remain local.
 
 ## Design overview
 
-[`docs/DESIGN_SLIDES.md`](docs/DESIGN_SLIDES.md) is a concise four-slide
-overview of the system architecture, client and owner operation sequence,
-credential boundaries, and large-model transfer and aggregation strategy. A
-rendered version is also available as
-[`docs/DESIGN_SLIDES.pdf`](docs/DESIGN_SLIDES.pdf).
+[`docs/history/DESIGN_SLIDES.md`](docs/history/DESIGN_SLIDES.md) is a concise
+four-slide overview of the system architecture, client and owner operation
+sequence, credential boundaries, and large-model transfer and aggregation
+strategy.
 
 The [exchange service](docs/EXCHANGE_SERVICE.md) adds a third backend with
 authenticated metadata exchange, PostgreSQL, and authorized S3 blob transfers.
-See its [design](docs/EXCHANGE_SERVICE_DESIGN.md) for the resource model.
+See its [design](docs/history/EXCHANGE_SERVICE_DESIGN.md) for the resource model.
 
 ## Install and authenticate
 

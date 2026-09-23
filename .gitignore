@@ -22,6 +22,8 @@ dist/
 *.bin
 *.pt
 *.pth
+# ...except the tiny golden fixtures the checkpoint tests compare against
+!tests/goldens/**
 
 # Local POC runs and downloaded Hub snapshots
 work/

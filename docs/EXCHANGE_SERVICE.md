@@ -4,7 +4,7 @@ The exchange backend implements authenticated JSON records, private/shared
 visibility, immutable published attachments, resumable direct S3 transfers,
 conditional references, a durable event feed, and fenced coordinator claims.
 It works with the existing HF2L client and owner commands through
-`--backend exchange`. The [design document](EXCHANGE_SERVICE_DESIGN.md)
+`--backend exchange`. The [design document](history/EXCHANGE_SERVICE_DESIGN.md)
 describes the resource model and trust boundaries.
 
 ## Install and configure

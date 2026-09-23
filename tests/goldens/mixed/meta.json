@@ -1,0 +1,30 @@
+{
+  "accumulator_dtype": "float32",
+  "coefficients": [
+    0.2,
+    0.3,
+    0.5
+  ],
+  "cpu_capability": "AVX2",
+  "file_sha256": {
+    "clients/0/config.json": "a39538c6212566d414c2b372315ef9c911dde07c4d9aa3ad5edd903fb01a4d09",
+    "clients/0/model.safetensors": "098ad5fbb0daca919fab41df0bc9bb8ea41efdd86631c0980340d8fa754b85e9",
+    "clients/1/config.json": "a39538c6212566d414c2b372315ef9c911dde07c4d9aa3ad5edd903fb01a4d09",
+    "clients/1/model.safetensors": "b96c4aaf59621e18567636b6738c51ee8fdd4f446b833bd156ce223607ec9bf2",
+    "clients/2/config.json": "a39538c6212566d414c2b372315ef9c911dde07c4d9aa3ad5edd903fb01a4d09",
+    "clients/2/model.safetensors": "3b4f43c9eb02e71dc24dc1fcc0c872f7ff4d5ffa2d8bf9dd1cd8bc2b00552962",
+    "expected/config.json": "a39538c6212566d414c2b372315ef9c911dde07c4d9aa3ad5edd903fb01a4d09",
+    "expected/model.safetensors": "9a84836ad1c5100dce7b332a1b970b6437798639f9abd0ffc46121be10754739"
+  },
+  "numpy_version": "2.5.2",
+  "platform_machine": "x86_64",
+  "safetensors_version": "0.8.0",
+  "tensor_sha256": {
+    "embed.scale": "de4c1342d7ab39f0ea4d80a879857b01d11392a8fd41cc1f073e777c2909607b",
+    "embed.weight": "f7d0d4d0f8e0be7aae7fb2ae37a570dc10ceb96a2ba14adf91c83c3f6db0f071",
+    "norm.weight": "1ed19ac7e25445a32f847d7a4a7039312cb9288e20d744cdecb43d8c3870cc4b",
+    "stats.count": "1dfa5b1a1f48abb3ffa96f963461d18a4ad02002b3db0db8184979b8ba5ba053",
+    "stats.mask": "3e983a3ffd9e2cc4297b5af94e7485bad293eca1321067602aa8a04bf26898cd"
+  },
+  "torch_version": "2.14.0+cu130"
+}

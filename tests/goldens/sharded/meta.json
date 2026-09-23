@@ -1,0 +1,37 @@
+{
+  "accumulator_dtype": "float32",
+  "coefficients": [
+    0.2,
+    0.3,
+    0.5
+  ],
+  "cpu_capability": "AVX2",
+  "file_sha256": {
+    "clients/0/config.json": "989e838578861371cb5d3d2d96179732b6e74a54bf67ae8ecaa0c00bdb20433d",
+    "clients/0/model-00001-of-00002.safetensors": "da4169c9de79938a47bd7c47014b783b3639155900c1f4e8fd9ee15242094dc2",
+    "clients/0/model-00002-of-00002.safetensors": "e47198406fee75292598027f5cf423542d27795ff5a1a183d3c0f1ff9b78e2e8",
+    "clients/0/model.safetensors.index.json": "6f95c2d52e8937393ead1c73b98897ac8a0f86effdde9065b3d7b5a34e7377d3",
+    "clients/1/config.json": "989e838578861371cb5d3d2d96179732b6e74a54bf67ae8ecaa0c00bdb20433d",
+    "clients/1/model-00001-of-00002.safetensors": "88f046097631535b14df9e77df5e7f3ced96e6cc540ced7640dbb201ffad6bbd",
+    "clients/1/model-00002-of-00002.safetensors": "a03c266002cfb80b222109aad15cffb1173b5303c927fcec76ed2a8c68307e6f",
+    "clients/1/model.safetensors.index.json": "6f95c2d52e8937393ead1c73b98897ac8a0f86effdde9065b3d7b5a34e7377d3",
+    "clients/2/config.json": "989e838578861371cb5d3d2d96179732b6e74a54bf67ae8ecaa0c00bdb20433d",
+    "clients/2/model-00001-of-00002.safetensors": "25e477b0ae39d5d14e30c5eafece771d282dabee3685d2ac348ae50d61393683",
+    "clients/2/model-00002-of-00002.safetensors": "70b0ab003b508ab820d7593884291f720d145e1a5d2aca30cccc774742ac3140",
+    "clients/2/model.safetensors.index.json": "6f95c2d52e8937393ead1c73b98897ac8a0f86effdde9065b3d7b5a34e7377d3",
+    "expected/config.json": "989e838578861371cb5d3d2d96179732b6e74a54bf67ae8ecaa0c00bdb20433d",
+    "expected/model-00001-of-00002.safetensors": "f752b2dcc14b111fa65ac0bfcf1073f2cd49e823a0322483fe11095ec7fd731d",
+    "expected/model-00002-of-00002.safetensors": "b4646804a59bdf1c8b8c6e748464e25d0fb01cf9b7955001ac80c401545bab7b",
+    "expected/model.safetensors.index.json": "6f95c2d52e8937393ead1c73b98897ac8a0f86effdde9065b3d7b5a34e7377d3"
+  },
+  "numpy_version": "2.5.2",
+  "platform_machine": "x86_64",
+  "safetensors_version": "0.8.0",
+  "tensor_sha256": {
+    "layers.0.bias": "ee7cea0725ace7279f1e4fb8eb6538b91ffde7535511f7e1fb3734d565f987ce",
+    "layers.0.weight": "b60766c6e890bcf48ea7863891098c5f7834bde09a07350f9793861981344447",
+    "layers.1.bias": "41dbba8d8d0b9952ce774360a97df2a7644ab1d01be6add953c51b52366da59a",
+    "layers.1.weight": "dfe739242d782f00f9fe1086cdde8515d5b177f99743ba4863cd019257796c53"
+  },
+  "torch_version": "2.14.0+cu130"
+}

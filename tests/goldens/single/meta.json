@@ -1,0 +1,28 @@
+{
+  "accumulator_dtype": "float32",
+  "coefficients": [
+    0.2,
+    0.3,
+    0.5
+  ],
+  "cpu_capability": "AVX2",
+  "file_sha256": {
+    "clients/0/config.json": "5ec7b66b870082653b1923dac54f3c955bd9ffd38baf3467cccb325d1d16025f",
+    "clients/0/model.safetensors": "e111a178ff3481a0e53e37f7d35ff3057e602b61981f6607aa3a495cebce1747",
+    "clients/1/config.json": "5ec7b66b870082653b1923dac54f3c955bd9ffd38baf3467cccb325d1d16025f",
+    "clients/1/model.safetensors": "52b23068a5c862485cbd27c05cdfcfce151ca6eb5650cb79b5826e9730f9b361",
+    "clients/2/config.json": "5ec7b66b870082653b1923dac54f3c955bd9ffd38baf3467cccb325d1d16025f",
+    "clients/2/model.safetensors": "c16b6f645761b2af5b9035dfc0406ac487b546bae5e20be0800f2393ec03aa52",
+    "expected/config.json": "5ec7b66b870082653b1923dac54f3c955bd9ffd38baf3467cccb325d1d16025f",
+    "expected/model.safetensors": "8edd9af54533e3f66389cd49115f0a77a7646f3ae1403c003e9d43076bb9dcfa"
+  },
+  "numpy_version": "2.5.2",
+  "platform_machine": "x86_64",
+  "safetensors_version": "0.8.0",
+  "tensor_sha256": {
+    "encoder.bias": "1348ec05b695eb7454d4a4c9e84d53905b492d919a5a4731a549bd19b3b580b2",
+    "encoder.weight": "6bbb6ce5f6bf9a4d5cfff21f4437e97adb8855ef5aa0ac87c71611af4483d30e",
+    "head.weight": "17b6cb5547b2b7c46f1c7204e0227e68b31e91fd6f3a6813e2eb1923d2029c82"
+  },
+  "torch_version": "2.14.0+cu130"
+}

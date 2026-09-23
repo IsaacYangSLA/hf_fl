@@ -1,7 +1,7 @@
 # General metadata exchange and blob storage
 
 Status: architecture design with an initial implementation. See the
-[implementation and deployment guide](EXCHANGE_SERVICE.md) for supported APIs,
+[implementation and deployment guide](../EXCHANGE_SERVICE.md) for supported APIs,
 operational boundaries, and validation. No production infrastructure has been
 provisioned.
 
@@ -424,7 +424,7 @@ GitHub credentials unless a deployment enables that integration.
 
 ## 8. Integration with the current repository
 
-The current [ModelStore contract](../hf2l/backends/base.py) already separates
+The current [ModelStore contract](../../hf2l/backends/base.py) already separates
 client/owner behavior from HF and JFrog implementations. Introduce a generic
 `ExchangeClient` for records, references and transfers, plus an `ExchangeStore`
 adapter implementing `ModelStore`. The new backend name can be `exchange`.
@@ -511,7 +511,7 @@ client code within the service.
 
 ## Implemented v2 contract clarifications
 
-The deployment/API contract is detailed in [EXCHANGE_SERVICE.md](EXCHANGE_SERVICE.md).
+The deployment/API contract is detailed in [EXCHANGE_SERVICE.md](../EXCHANGE_SERVICE.md).
 The implemented choices include:
 
 - Space, not the free-text tenant label, is the authorization boundary. Tenant

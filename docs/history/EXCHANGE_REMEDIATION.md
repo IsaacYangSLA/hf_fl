@@ -53,5 +53,5 @@ retention, rate limiting and backup/restore still require operator configuration
 `hf2l-exchange-service migrate-db`, and then restart.** Schema v2 adds attempt
 ownership, physical quota accounting, identity subjects, retention and indexes.
 The migration is transactional and repeatable and reconstructs pending-deletion
-bytes from legacy terminal records. See [the deployment guide](EXCHANGE_SERVICE.md)
+bytes from legacy terminal records. See [the deployment guide](../EXCHANGE_SERVICE.md)
 for the complete settings and upgrade procedure.

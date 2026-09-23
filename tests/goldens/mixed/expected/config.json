@@ -1,0 +1,7 @@
+{
+  "architectures": [
+    "Hf2lGolden"
+  ],
+  "fixture": "mixed",
+  "model_type": "hf2l-golden"
+}

@@ -1,6 +1,7 @@
 include README.md
 include requirements.txt
-recursive-include docs *.md *.pdf
+recursive-include docs *.md
+prune docs/history
 recursive-include examples *.py *.json
 recursive-include hf2l *.py
 recursive-include tests *.py
