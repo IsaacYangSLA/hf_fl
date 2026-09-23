@@ -20,7 +20,7 @@ formats; it does not rename them to version 3.
 |:---|:---|
 | **1. Pluggable models and client training** | Model-specific initialization, training, and evaluation can live in local plugins. Alice, Bob, and other clients may use different reviewed training implementations, frameworks, hyperparameters, and private datasets as long as they produce the same checkpoint schema. The included LeNet/MNIST and VGG/CIFAR-10 plugins demonstrate switching models by joining a differently initialized model repository without changing transport or FedAvg code. |
 | **2. Two client integration approaches** | Use three independent steps—download, train with arbitrary local code, and upload—or use the plugin-style `python -m hf2l.client_train` command to run all three around a trusted local training plugin. |
-| **3. Multiple federated-learning styles** | Synchronous **FedAvg** is implemented by `python -m hf2l.owner_fedavg`; sequential **cyclic federated learning** uses immutable submission-to-submission handoffs without averaging. A linear **swarm** follows the cyclic handoff pattern, while a branching swarm can follow the FedAvg fan-out/fan-in pattern when peers train from the same base. Swarm peer selection and coordination remain policy-specific. |
+| **3. Federated rounds with a shared base** | Synchronous **FedAvg** is implemented by `python -m hf2l.owner_fedavg`: participants train from one immutable global base and the owner validates, averages, and publishes their updates. Cyclic submission handoffs and swarm coordination are not implemented by the current client workflow. |
 
 ## Contents
 
@@ -161,8 +161,9 @@ export HF_HUB_DOWNLOAD_TIMEOUT=86400
 Add `--backend jfrog` to every HF²L command. `--endpoint` can be supplied instead
 of `HF_ENDPOINT`; `JFROG_ACCESS_TOKEN` can be used instead of `HF_TOKEN`. JFrog
 supports model download/upload and named revisions, but not Hub pull requests.
-HF²L therefore stores each JFrog client update under a generated immutable
-revision and discovers its manifest with Artifactory Query Language (AQL).
+The HF²L client commands therefore store each JFrog update under a generated
+unique named revision. The owner discovers its manifest with Artifactory Query
+Language (AQL). Server permissions must prevent overwriting those revisions.
 The one-day timeouts above are suitable for very large transfers; choose values
 appropriate for your network and model sizes. HF²L also handles Artifactory
 versions that return a literal `commitUrl` placeholder after a successful
@@ -176,7 +177,11 @@ reference](https://docs.jfrog.com/artifactory/docs/use-hugging-face-with-jfrog-c
 
 Never place a token in source control or share the owner's token. Disable
 overwrite permission for participant uploads so a named submission revision
-cannot be replaced.
+cannot be replaced, and restrict writes to `main` to the designated owner.
+The JFrog adapter's public `publish_submission` method currently accepts `main`
+as a caller-supplied revision. Generated client-command names avoid `main`, but
+direct library callers must enforce that restriction themselves; the adapter
+does not enforce it.
 
 ## Owner: initialize a repository
 
@@ -190,7 +195,8 @@ Initialize from any intentional, local HF-style model export:
 
 The directory may also contain model code, tokenizer files, and a model card;
 those files are copied during initialization. Local `.git`, `.cache`,
-`__pycache__`, and symlinks are excluded. Review the directory before upload.
+and `__pycache__` paths are excluded. A symlink elsewhere in the export causes
+initialization to fail. Review the directory before upload.
 
 For JFrog, the Artifactory repository itself must already exist. Initialize a
 model package inside it with the same command plus the backend selection:
@@ -403,97 +409,24 @@ numbers, booleans, arrays, and objects retain their types.
 
 ## Cyclic federated learning without FedAvg
 
-The same client scripts can also implement cyclic federated learning, sometimes
-called cyclical weight transfer. There is no averaging: exactly one participant
-trains the checkpoint and hands that result to the next participant. For four
-participants, the lineage is:
+Cyclic weight transfer would pass each participant's trained checkpoint to the
+next participant without averaging. **Submission-to-submission handoffs are not
+supported by the current client commands**, including on Hugging Face and
+JFrog. Linear swarm handoffs and automated swarm coordination are also not
+implemented.
 
-```text
-main@C0
-  -> Alice submission@A1
-  -> Bob submission@B1
-  -> Carol submission@C1
-  -> Dave submission@D1
-  -> Alice submission@A2
-  -> ...
-```
+Client download requires `fedavg_round.json` and validates its checkpoint
+hashes. Client upload writes checkpoint artifacts and `fedavg_submission.json`,
+without updating the global round record. A changed HF PR snapshot can inherit
+the old round record and fail checksum validation; a detached submission can
+lack that record altogether. Passing a predecessor's submission revision as
+`--base-revision` therefore does not provide a working cyclic workflow.
 
-More precisely, after Dave produces `D1`, Alice downloads `D1`, trains it, and
-creates the next submission. The order repeats as `Alice -> Bob -> Carol -> Dave ->
-Alice`. With two participants it is simply `Alice -> Bob -> Alice`.
-
-Each handoff uses an immutable resolved revision:
-
-1. Alice starts with the initial `main` SHA, uses the download/train/upload
-   workflow above, and sends Bob her submission and resolved revision.
-2. Bob passes Alice's resolved revision as `--base-revision`, trains that checkpoint,
-   uploads his result, and sends his new revision to the next participant.
-3. Every later participant repeats the same operation using only the immediate
-   predecessor's revision. After the last participant, control returns to
-   Alice.
-
-For example, Bob's download command is:
-
-```bash
-.venv/bin/python -m hf2l.client_download \
-  --repo-id OWNER_OR_ORG/my-fedavg-model \
-  --base-revision ALICE_RESOLVED_REVISION \
-  --work-dir work/bob-cycle-1
-```
-
-Bob then trains `work/bob-cycle-1/base_model` and runs
-`python -m hf2l.client_upload` as
-shown above with `--participant bob`.
-
-On Hugging Face Hub, the upload creates a PR whose parent is Alice's pinned
-commit. The commit DAG retains Alice's commit as an ancestor. See the Hub
-documentation for [PR refs and local
-access](https://huggingface.co/docs/hub/en/repositories-pull-requests-discussions)
-and the [`parent_commit` behavior of
-`create_commit`](https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api#huggingface_hub.HfApi.create_commit).
-
-On JFrog, add `--backend jfrog` to every command. Each handoff is a unique named
-revision. JFrog does not maintain the same Git ancestry, so the submission
-manifest records the exact predecessor in `base_revision`; an external cyclic
-coordinator must enforce the participant order and single-successor rule.
-
-Always hand off the exact resolved revision, not only a mutable name.
-`python -m hf2l.client_download` resolves the input and records it as
-`base_revision` in `fedavg_client_context.json`.
-
-### Operating rules for the cycle
-
-- Only the designated next participant should extend the chain. A backend can
-  accept two submissions with the same base, so storage alone does not prevent
-  a fork.
-- Keep `main` fixed while the chain is active. On Hub, do not merge intermediate
-  PRs. On JFrog, do not upload intermediate client revisions to `main`.
-- Never run `python -m hf2l.owner_fedavg` on the cyclic submissions. It requires multiple updates
-  from one common `main` commit and computes an average, which is a different
-  protocol.
-- Keep using new work directories. The upload step verifies that each trained
-  checkpoint has the same tensor names, shapes, dtypes, configuration, and
-  shard layout as its immediate predecessor.
-- Put non-secret cyclic metadata such as `protocol`, `cycle`, `position`, and
-  `predecessor_revision` in `--metadata-json`.
-- Do not execute code from a predecessor's submission. Use reviewed local training code
-  and treat the downloaded content as model data.
-
-At a checkpoint or release boundary on Hub, the owner can review and merge only
-the newest PR after verifying its ancestry. The Hub supports merging through its UI or
-[`HfApi.merge_pull_request`](https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api#huggingface_hub.HfApi.merge_pull_request).
-For JFrog, the owner validates the explicit manifest chain and uploads the
-latest accepted snapshot to `main` under an exclusive coordinator lock.
-
-The current `fedavg_round.json` value does not advance at each cyclic handoff;
-it belongs to the FedAvg publishing path. Use the training metadata for manual
-cyclic tracking. A fully automated cyclic deployment should add a dedicated
-state record containing the ordered participant list, cycle number, expected
-next participant, predecessor revision, and latest accepted submission. An [HF
-webhook](https://huggingface.co/docs/hub/en/webhooks) can notify an external
-coordinator when a PR changes, but that coordinator must still enforce the
-order and select a single successor. A JFrog webhook or pipeline can notify the
-same kind of external coordinator.
+Supporting this design would require submission-aware download validation of
+the predecessor's manifest, hashes, and lineage, plus explicit backend rules
+for using submissions as bases and a coordinator that enforces participant
+order and one successor. The implemented workflow below uses a common global
+base and owner-controlled FedAvg publication.
 
 ## FedAvg: validate, average, and publish submissions
 
@@ -550,7 +483,13 @@ For each run, automatic discovery:
 4. Downloads only `fedavg_submission.json` and verifies its repository, base
    revision, source round, backend, participant ID, and example count.
 5. Downloads full checkpoints only for eligible submissions, then validates
-   SHA-256 checksums, tensors, and shard layouts before aggregation.
+   tensors and shard layouts before aggregation. SHA-256 verification applies
+   to schema-2 base round records and submission manifests.
+
+Legacy schema-1 documents remain readable, but the owner currently skips their
+checkpoint hash verification even if they supply a hash map. Client download
+does verify a supplied schema-1 base hash map. Use schema-2 records produced by
+the current initialization and client commands for owner-side checksum checks.
 
 In discovery mode, unauthorized, stale, or invalid records are reported as
 `skipped_submission=...`. Automatic discovery and claimed rounds also skip
@@ -605,8 +544,9 @@ alias for `--submission`.
 For either selection mode, the owner verifies that current `main` is the
 clients' declared base, repository identities and participant IDs satisfy the
 optional allowlist, participant IDs are distinct, example counts are positive,
-and checkpoint schemas and hashes match. On Hub it also checks that every PR
-descends from the base. It computes
+and checkpoint schemas match. It verifies hashes for schema-2 base and
+submission documents; the schema-1 limitation described above applies to both
+selection modes. On Hub it also checks that every PR descends from the base. It computes
 dataset-size-weighted FedAvg:
 
 ```text
@@ -634,6 +574,13 @@ OWNER_OR_ORG/vgg-cifar10-fedavg-poc` and `--plugin vgg-cifar10`. Aggregation its
 model-agnostic; only
 optional evaluation needs the model-specific plugin.
 
+`--json` controls the owner's result rendering; it does not capture output from
+evaluation plugins. The built-in LeNet evaluator's model loader prints to
+stdout, so a run with `--plugin lenet --json` does not produce a standalone JSON
+stream. Other trusted plugins can also print. For machine-readable stdout,
+omit evaluation or use a plugin whose entire evaluation path is quiet. The
+library runner likewise does not suppress plugin output.
+
 After inspecting the aggregate, rerun into a new directory and publish:
 
 ```bash
@@ -652,8 +599,11 @@ before upload and only the designated owner/coordinator may write `main`.
 Artifactory does not provide the same atomic Git compare-and-swap, so concurrent
 owner processes require an external lock.
 
-The script reads `main` back after publication. Hub client PRs remain unmerged;
-JFrog client revisions remain separate from `main`. `fedavg_round.json` records
+On Hub, the accepted conditional commit's immutable OID identifies the published
+result; the adapter does not re-read `main` to establish success. JFrog reads
+`main` back after its upload. Hub client PRs remain unmerged; the JFrog client
+commands use separate named submission revisions, subject to the direct-library
+and server-permission restrictions above. `fedavg_round.json` records
 the backend, selection mode, base and resolved input revisions, uploader
 identities, checksums, example counts, and aggregation coefficients.
 
@@ -665,10 +615,14 @@ documents Xet support for files larger than 50 GB; consult its version matrix
 before selecting `huggingface_hub` and `hf_xet` versions.
 
 Aggregation works one SafeTensors shard at a time instead of loading all client
-models as Python
-state dictionaries. Peak RAM is driven mainly by one output shard, one current
-tensor from each client (normally memory-mapped), and the accumulator. Keep
-shards reasonably sized when exporting the initial model.
+models as Python state dictionaries. It retains the growing output shard, the
+current base tensor, the corresponding tensor from every client, and the
+accumulator. With the default NumPy backend and SafeTensors 0.8.0, input tensor
+payloads are private copies. Torch inputs can use memory-mapped storage, but
+resident pages still contribute to memory use. Dtype conversion, scaling,
+finite-value checks, and output casting can allocate additional arrays or
+tensors. Keep shards reasonably sized and budget for the number and size of
+participant tensors as well as these temporary allocations.
 
 `--accumulator-dtype float32` is the memory-conscious default. Float64 model
 tensors remain float64. Use `--accumulator-dtype float64` when the added

@@ -173,7 +173,8 @@ class TransferService:
                 attempt.grant_expires_at = max(attempt.grant_expires_at, grant.expires_at)
         return dict(asdict(grant), size=size, sha256=digest)
 
-    def acquire(self, attempt_id):
+    def acquire(self, attempt_id, *, cleanup=None):
+        """Lease current work, optionally restricted to its worker pool category."""
         with self.sessions.begin() as session:
             now = database_time(session)
             attempt = session.get(TransferAttempt, attempt_id)
@@ -182,6 +183,11 @@ class TransferService:
             blob = session.get(Blob, attempt.blob_id)
             session.scalar(select(Space).where(Space.id == blob.space_id).with_for_update())
             session.refresh(attempt)
+            # Selection is only a snapshot: cancellation can move verification
+            # work to cleanup before dispatch. Check under the same space lock
+            # as lifecycle mutations, before taking a lease or changing state.
+            if cleanup is not None and (attempt.state == "cleanup") != cleanup:
+                return None
             if attempt.next_attempt > now or (attempt.lease_until or 0) > now:
                 return None
             if attempt.state == "cleanup" and attempt.grant_expires_at > now:
@@ -404,7 +410,7 @@ class TransferService:
                 self._rearm_cleanup(session, space, blob, current)
 
     def process(self, attempt_id, cleanup=False):
-        attempt = self.acquire(attempt_id)
+        attempt = self.acquire(attempt_id, cleanup=cleanup)
         return self._execute(attempt) if attempt else "skipped"
 
     def work(self, batch):

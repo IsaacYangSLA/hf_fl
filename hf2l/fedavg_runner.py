@@ -14,7 +14,7 @@ from typing import Any
 
 
 from hf2l.allowlist import load_allowlist
-from hf2l.backends.base import (ClaimHandle, PublicationConsistency, PublicationUncertain,
+from hf2l.backends.base import (ClaimHandle, ClaimInactive, PublicationConsistency, PublicationUncertain,
                                 RoundContext, SubmissionCandidate)
 from hf2l.checkpoint_utils import (
     average_tensor,
@@ -160,6 +160,15 @@ class RunState:
         saved = read_json(self.path)
         saved.update(claim_id=claim.id, fence=claim.fence, lease_until=claim.lease_until)
         self._write(saved)
+
+    def restart(self):
+        """Persist a new key only after confirmed terminal nonpublication."""
+        saved = read_json(self.path)
+        for field in ("claim_id", "fence", "lease_until"):
+            saved.pop(field, None)
+        saved["acquisition_key"] = uuid.uuid4().hex
+        self._write(saved)
+        return saved
 
     def clear(self):
         self.path.unlink(missing_ok=True)
@@ -318,13 +327,27 @@ class FedAvgRunner:
         if claiming:
             self.run_state = RunState(config.run_state or output_dir.with_name(output_dir.name + ".run-state.json"))
             saved = self.run_state.acquire(context, config.claim_lease_seconds)
-            claim, candidates = store.claim_submissions(
-                config.repo_id, context=context, acquisition_key=saved["acquisition_key"],
-                claim_id=config.claim_id or saved.get("claim_id"), lease_seconds=saved["lease_seconds"],
-            )
+            def acquire():
+                options = dict(context=context, acquisition_key=saved["acquisition_key"],
+                               claim_id=config.claim_id or saved.get("claim_id"),
+                               lease_seconds=saved["lease_seconds"])
+                if callable(getattr(store, "acquire_claim", None)):
+                    return store.acquire_claim(config.repo_id, **options), None
+                # Compatibility with older duck-typed application adapters.
+                return store.claim_submissions(config.repo_id, **options)
+
+            try:
+                claim, candidates = acquire()
+            except ClaimInactive:
+                if config.claim_id:
+                    raise  # An explicitly selected claim must never be replaced.
+                saved = self.run_state.restart()
+                claim, candidates = acquire()
             self.renewal = ClaimRenewal(store, config.repo_id, claim, saved["lease_seconds"], self.run_state)
             self.run_state.remember(claim)
             self.renewal.start()
+            if candidates is None:
+                candidates = store.explicit_submissions(config.repo_id, claim.input_ids)
         elif automatic:
             candidates, skipped = store.discover_submissions(config.repo_id, context=context)
             for reason in skipped:

@@ -1,11 +1,11 @@
 """Compatibility imports for the canonical FL ports in :mod:`hf2l.core.ports`."""
 
 from hf2l.core.ports import (
-    BackendCapabilities, ClaimHandle, ModelStore, PublicationConsistency,
+    BackendCapabilities, ClaimHandle, ClaimInactive, ModelStore, PublicationConsistency,
     PublicationUncertain, PublishResult, ResolvedReference, RevisionNotFound, RoundContext,
     SubmissionCandidate,
 )
 
-__all__ = ["BackendCapabilities", "ClaimHandle", "ModelStore", "PublicationConsistency",
+__all__ = ["BackendCapabilities", "ClaimHandle", "ClaimInactive", "ModelStore", "PublicationConsistency",
            "PublicationUncertain", "PublishResult", "ResolvedReference", "RevisionNotFound", "RoundContext",
            "SubmissionCandidate"]

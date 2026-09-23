@@ -12,6 +12,12 @@ for the rationale and [package guide](../packages/exchange/README.md) for instal
 boundaries. This is an unreleased development implementation, not a provisioned
 service or a published package.
 
+This guide describes the implementation integrated at `60e4bf8` and subsequent
+Exchange fixes in the current implementation. The
+[implementation limitations](ARCHITECTURE_V3.md#current-implementation-limitations)
+track resolved and remaining audit findings; historical validation results are
+labeled separately below.
+
 ## Deployment boundary and installation
 
 Use a **fresh database and fresh S3 prefix**. The HTTP API is `/v2`; it does not
@@ -56,10 +62,22 @@ value in `EXCHANGE_JWT_PUBLIC_KEY`. The service validates RS256 access tokens wi
 `exchange` scope. It does not issue tokens. Human login and workload identity
 provisioning belong to the identity provider.
 
-S3 uses its credential provider chain unless a paired
-`EXCHANGE_S3_ACCESS_KEY`/`EXCHANGE_S3_SECRET_KEY` is configured. AWS environment
-credentials are also accepted. End clients receive only narrowly scoped signed
-transfer grants. If service-side and public S3 addresses differ, set
+S3 uses Boto's normal credential provider chain unless both
+`EXCHANGE_S3_ACCESS_KEY` and `EXCHANGE_S3_SECRET_KEY` are configured. The provider
+chain handles ambient `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
+`AWS_SESSION_TOKEN` together and retains provider-managed refresh for credentials
+obtained from roles. Exchange no longer copies ambient AWS keys into explicit
+settings (audit B2 is resolved).
+
+For explicit credentials, supply the two Exchange key variables together and
+set `EXCHANGE_S3_SESSION_TOKEN` when they are temporary. A session token without
+the explicit key pair is rejected. Explicit credentials take precedence over
+the provider chain; rotate those settings and restart affected processes before
+temporary explicit credentials expire. Both the internal client and the signer
+for a separate public endpoint use this configuration.
+
+End clients receive only narrowly scoped signed transfer grants. If service-side
+and public S3 addresses differ, set
 `EXCHANGE_S3_PUBLIC_ENDPOINT`; both addresses must resolve to the same bucket and
 use the same signing credentials.
 
@@ -83,9 +101,15 @@ and back up data before future schema upgrades.
 Expose the API through HTTPS. The ASGI application requires the HTTPS request
 scheme, so configure trusted proxy forwarding when TLS terminates upstream.
 Apply connection/request timeouts and rate limits at that boundary. Configured
-identity/storage URLs and SDK grant URLs require HTTPS. Explicit
-`EXCHANGE_ALLOW_LOCAL_HTTP=true` and SDK `allow_local_http=True` are for local
-loopback development only; bind such a development server to loopback.
+identity/storage URLs and SDK service/grant URLs require HTTPS by default.
+With `EXCHANGE_ALLOW_LOCAL_HTTP=true`, the server configuration accepts HTTP for
+`localhost`, loopback IP addresses, and the test hostname `testserver`. Its S3
+grant check accepts `localhost`, `127.0.0.1`, `::1`, and `testserver`; the ASGI
+request check permits a loopback peer or the test peer name `testclient`.
+The SDK's `allow_local_http=True` permits only `localhost` or loopback IP
+addresses and rejects `testserver`. Those server test-name exceptions are not
+proof of loopback resolution. Use actual loopback addresses and bind the server
+to loopback for local development; keep HTTPS for deployments.
 
 `GET /health` is process liveness; `GET /ready` checks the schema revision and
 versioned storage. Startup does not migrate the database or require dependencies
@@ -99,6 +123,18 @@ initiation/listing/completion/abort, exact-version reads and signing rights;
 cleanup also needs deletion of owned object versions. Do not configure a bucket
 lifecycle rule that removes versions referenced by live records. Configure
 encryption, TLS, IAM, backup/restore and central log retention for the deployment.
+
+Unmodified SeaweedFS 4.47 fails the multipart retry contract: repeated part uploads
+can produce duplicate part numbers, which Exchange rejects as `invalid_parts`.
+The optional [SeaweedFS compatibility build](../deploy/seaweedfs/README.md)
+patches provider part ordering and strict empty-bucket deletion while retaining
+Exchange's integrity checks. It is restricted to one S3 gateway and requires
+draining outstanding multipart uploads before upgrade. Remote tests against the
+patched provider binary passed the Exchange and application suites and live HTTP
+checks with one S3 gateway; see the
+[remediation report](validation/2026-09-23-exchange-remediation.md) for evidence
+and validation limits. That result applies to the tested binary and topology;
+upstream 4.47 still fails the retry contract.
 
 ## Spaces, roles and types
 
@@ -344,10 +380,25 @@ The owner validates and publishes through an acquisition:
 ```
 
 V2 Exchange publication requires `--claim-submissions` or `--claim-id`.
-`--run-state` preserves the acquisition key, reference and handle across an
-interrupted run; a retry uses a new output directory and the same run-state file.
-An explicit `--claim-id` resumes a known active acquisition. The owner renews the
-lease while processing and refuses publication after ownership loss.
+`--run-state` saves the acquisition key and reference before acquisition, then
+saves the handle and starts lease renewal before reading the frozen input
+metadata.
+Resuming an active acquisition uses a new output directory and the same run-state
+file. An explicit `--claim-id` resumes a known active acquisition. The owner
+renews the lease while processing and refuses publication after ownership loss.
+
+Input metadata failures now follow normal runner cleanup (audit B3 is resolved).
+If abandonment succeeds, the runner clears the state; if abandonment fails or
+its response is uncertain, it preserves the handle and key. Retrying with the
+same state resumes active ownership. The runner replaces the saved key only
+after the service confirms abandonment or expiry, including terminal replay
+responses for older state files that saved only a key. An explicit `--claim-id`
+is never replaced automatically.
+
+A completed acquisition or uncertain publication requires reconciliation of the
+acquisition, reference and result with service records/events before another
+logical operation. Preserve the state in those cases. Network errors alone do
+not authorize discarding the key or retrying publication with a new key.
 
 `--require-concurrent-publication` requires a backend with an atomic publication
 precondition. HF uses its conditional commit and Exchange uses its reference and
@@ -372,9 +423,11 @@ records they require.
 
 Cancelling, failing or withdrawing a record releases logical blob allocation but
 keeps physical pending-deletion allocation charged until cleanup succeeds.
-Reclamation waits for recorded grant expiry and confirmation that provider
-mutations are settled. Failed cleanup remains retryable and must not free the
-physical budget. Lease expiry alone does not prove an S3 mutation has finished.
+Cleanup selection waits for recorded grant expiry. Deletion sweeps may run while
+provider mutations remain uncertain, but cleanup completion and physical quota
+release wait until the durable mutation markers are settled. Failed cleanup
+remains retryable and must not free the physical budget. Lease expiry alone does
+not prove an S3 mutation has finished.
 Declared and verified content identities are separate; publication requires
 verification of the exact object version.
 
@@ -389,8 +442,15 @@ quotas are retained-state limits, not simply concurrent-upload limits.
 Upload and completion use attempt-owned storage resources and renewable worker
 ownership. A stale attempt can finish remote I/O without gaining the right to
 commit or clean a successor's resources. Worker verification streams exact object
-versions with bounded memory. Separate verification and cleanup concurrency
-prevents a cleanup backlog from taking every verification slot.
+versions with bounded memory. Verification and cleanup use separate thread pools
+with separately configured concurrency. Lease acquisition checks the attempt's
+current state under the same space lock used by lifecycle mutations. Work that
+has changed categories since selection is skipped without acquiring a lease, so
+cleanup cannot enter a verification slot (audit B8 is resolved). A cancellation
+after verification lease acquisition remains fenced by the lifecycle checks and
+does not turn that running task into cleanup. Each worker pass still waits for
+both selected batches to finish before selecting more work. Slow cleanup can
+therefore delay the next verification batch; the pools do not poll independently.
 
 Every provider start/complete call also has a durable mutation marker independent
 of the worker lease. Its callback settles only its own marker. If a process
@@ -486,8 +546,11 @@ operator assertions, not automatic detection of provider state.
 | `EXCHANGE_POOL_TIMEOUT` / `EXCHANGE_POOL_RECYCLE` | 30 / 1800 | Pool wait/recycling seconds |
 | `EXCHANGE_JWKS_TIMEOUT` / `EXCHANGE_JWKS_CACHE_SECONDS` | 5 / 300 | Key retrieval timeout/cache |
 
-Size pools for all API and worker processes. `worker --once` reports a pass and
-exits nonzero on failure. Centralize application/worker logs and configure alerting
+Size pools for all API and worker processes. `worker --once` logs the pass counts
+and exits zero when the pass returns normally, including handled per-transfer
+`retry` or `failed` outcomes. It exits nonzero when an exception escapes the whole
+pass. Inspect the counts and logs as well as the exit status. Centralize
+application/worker logs and configure alerting
 for dependency failures, verification backlogs, expired acquisitions and unreclaimed
 bytes. Per-request logs avoid bodies, bearer tokens and signed URL query strings.
 
@@ -514,7 +577,9 @@ PostgreSQL and MinIO pinned by digest for provider checks. This workflow has not
 been executed on GitHub for these changes.
 
 Local verification of the integrated sources on 2026-09-22 used the project
-`.venv` and Python 3.12:
+`.venv` and Python 3.12. These are historical results from before the subsequent
+audit, not a new verification run or evidence that the
+[eight audit findings](ARCHITECTURE_V3.md#current-implementation-limitations) were absent:
 
 | Suite | Database / storage | Result |
 |---|---|---|

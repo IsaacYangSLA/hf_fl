@@ -1,0 +1,59 @@
+sequenceDiagram
+    autonumber
+    actor App as Client application
+    participant SDK as Exchange SDK
+    participant API as API and service
+    participant DB as Metadata database
+    participant Worker as Transfer worker
+    participant S3 as Versioned blob storage
+
+    Note over App,S3: Prerequisites: external IdP access token, space membership, registered type and policy, versioned bucket
+    Note over SDK,API: All control requests carry Bearer JWT, API validates signature, issuer, audience, expiry and exchange scope<br/>Service checks current membership and applicable ownership, roles and policy
+    Note over SDK,API: Route prefixes: R = /v2/spaces/{space}/records, A = R/{record}/attachments/{attachment}
+    App->>SDK: put_record(metadata, files, schema_revision_id, state_path)
+    SDK->>SDK: Hash regular files and retain operation identity and keys
+    SDK->>API: POST R with metadata, attachment sizes and SHA-256, idempotency key
+    API->>DB: Validate schema, policy and quotas, commit draft, reservations and event
+    API-->>SDK: Draft record and attachment descriptors
+    SDK->>API: GET R/{record}
+    API-->>SDK: Authorized draft and attachment states
+
+    loop Each attachment needing upload
+        SDK->>API: POST A/upload
+        API->>DB: Authorize owner and draft, reserve attempt with private storage key
+        API->>S3: CreateMultipartUpload
+        S3-->>API: UploadId
+        API->>DB: Commit uploading state and upload handle
+        API-->>SDK: Uploading state, protocol and part size
+        SDK->>API: GET A/parts
+        API->>S3: ListParts after ownership and state checks
+        API-->>SDK: Existing part numbers and sizes
+        loop Each missing part
+            SDK->>API: POST A/grants with part number
+            API->>API: Sign expiring UploadPart URL with expected Content-Length
+            API->>DB: Recheck authorization and state, retain actual grant expiry
+            API-->>SDK: Signed URL and required headers
+            SDK->>S3: PUT bytes directly using signed URL
+            S3-->>SDK: Part upload result
+        end
+        SDK->>SDK: Recheck source size and SHA-256
+        SDK->>API: POST A/complete
+        API->>DB: Authorize and mark completing with mutation token
+        API->>S3: Check object and parts, CompleteMultipartUpload
+        S3-->>API: Stored object VersionId
+        API->>DB: Commit verifying state and VersionId
+        API-->>SDK: 202 with attachment state
+    end
+
+    Note over SDK,Worker: SDK may retry POST R/{record}/publish, receive 409 attachments_not_verified,<br/>GET the record and sleep while verification is pending
+    Worker->>DB: Select due attempts, acquire database lease
+    Worker->>S3: GET exact object VersionId and stream bytes
+    Worker->>Worker: Compare actual size and SHA-256 with declared values
+    Worker->>DB: If lease still owned, commit verified binding and event
+    Note over DB,Worker: Verification marks attachments verified, the record is still a draft
+    SDK->>API: POST R/{record}/publish with persisted idempotency key
+    API->>DB: Recheck policy and verified attachments, commit published record and event
+    API-->>SDK: Published record
+    SDK-->>App: RecordDescriptor
+
+    Note over App,S3: Normal successful path shown, upload retries, failed verification and cleanup are omitted<br/>Large client uploads bypass the API, the worker reads stored bytes to verify them

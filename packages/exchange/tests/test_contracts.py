@@ -80,10 +80,13 @@ class ContractTests(unittest.TestCase):
             owner, name = row["field"].split(".")
             self.assertEqual(row["default"], getattr(instances[owner], name))
         with patch.dict(os.environ, {"EXCHANGE_S3_SECRET_KEY": "private-never-render",
-                                     "AWS_SECRET_ACCESS_KEY": "private-never-render"}):
+                                     "AWS_SECRET_ACCESS_KEY": "private-never-render",
+                                     "EXCHANGE_S3_SESSION_TOKEN": "private-never-render",
+                                     "AWS_SESSION_TOKEN": "private-never-render"}):
             self.assertNotIn("private-never-render", json.dumps(render_contracts()))
         rows = {row["variable"]: row for row in environment_contract()}
-        self.assertIn("AWS_SECRET_ACCESS_KEY", rows["EXCHANGE_S3_SECRET_KEY"]["notes"])
+        self.assertEqual(rows["EXCHANGE_S3_SESSION_TOKEN"]["field"], "StorageSettings.session_token")
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", rows["EXCHANGE_S3_SECRET_KEY"]["notes"])
         self.assertIn("Overrides", rows["EXCHANGE_EVENT_RETENTION_SECONDS"]["notes"])
 
     def test_vocabulary_matches_allowed_roles_and_lifecycle_values(self):

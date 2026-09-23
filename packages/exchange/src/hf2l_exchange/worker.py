@@ -51,9 +51,12 @@ def tick(transfers, batch=None):
             log.exception("worker operation failed attempt=%s", attempt_id)
             return "retry"
 
-    # Separate budgets prevent long object reads from exhausting reclamation slots.
-    with ThreadPoolExecutor(max_workers=settings.verify_concurrency) as verify_pool, \
-            ThreadPoolExecutor(max_workers=settings.cleanup_concurrency) as cleanup_pool:
+    # Acquisition rechecks the selected category before leasing work, so a
+    # lifecycle change cannot consume the other pool's reserved capacity.
+    with ThreadPoolExecutor(max_workers=settings.verify_concurrency,
+                            thread_name_prefix="exchange-verification") as verify_pool, \
+            ThreadPoolExecutor(max_workers=settings.cleanup_concurrency,
+                               thread_name_prefix="exchange-cleanup") as cleanup_pool:
         futures = [verify_pool.submit(guarded, attempt) for attempt in verification]
         futures.extend(cleanup_pool.submit(guarded, attempt, True) for attempt in cleanup)
         for future in futures:

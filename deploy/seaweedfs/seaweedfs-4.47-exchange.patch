@@ -1,0 +1,800 @@
+--- a/weed/s3api/filer_multipart.go
++++ b/weed/s3api/filer_multipart.go
+@@ -385,7 +385,7 @@
+ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *s3.CompleteMultipartUploadInput, uploadDirectory, entryName, dirName string, completedPartNumbers []int, completedPartMap map[int][]string, maxPartNo int) (*multipartCompletionState, *CompleteMultipartUploadResult, s3err.ErrorCode) {
+ 	if entry, err := s3a.resolveObjectEntry(*input.Bucket, *input.Key, ""); err == nil && entry != nil && entry.Extended != nil {
+ 		if uploadId, ok := entry.Extended[s3_constants.SeaweedFSUploadId]; ok && *input.UploadId == string(uploadId) {
+-			cleanupEntries, _, cleanupErr := s3a.list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
++			cleanupEntries, cleanupErr := s3a.listAllMultipartEntries(uploadDirectory)
+ 			if cleanupErr != nil && !errors.Is(cleanupErr, filer_pb.ErrNotFound) {
+ 				glog.Warningf("completeMultipartUpload: failed to list stale upload directory %s for cleanup: %v", uploadDirectory, cleanupErr)
+ 			}
+@@ -393,7 +393,7 @@
+ 		}
+ 	}
+ 
+-	entries, _, err := s3a.list(uploadDirectory, "", "", false, s3_constants.MaxS3MultipartParts+1)
++	entries, err := s3a.listAllMultipartEntries(uploadDirectory)
+ 	if err != nil {
+ 		glog.Errorf("completeMultipartUpload %s %s error: %v", *input.Bucket, *input.UploadId, err)
+ 		if isFilerNotFound(err) {
+@@ -421,6 +421,12 @@
+ 	if !isMultipartUploadEntry(pentry) {
+ 		stats.S3HandlerCounter.WithLabelValues(stats.ErrorCompletedNoSuchUpload).Inc()
+ 		return nil, nil, s3err.ErrNoSuchUpload
++	}
++
++	latestParts, err := latestMultipartEntries(entries)
++	if err != nil {
++		glog.Errorf("completeMultipartUpload ambiguous parts: %v", err)
++		return nil, nil, s3err.ErrInternalError
+ 	}
+ 
+ 	deleteEntries := make([]*filer_pb.Entry, 0)
+@@ -439,8 +445,13 @@
+ 			glog.Errorf("completeMultipartUpload failed to parse partNumber %s:%s", entry.Name, parseErr)
+ 			continue
+ 		}
++		if latestParts[partNumber] != entry {
++			deleteEntries = append(deleteEntries, entry)
++			continue
++		}
+ 		completedPartsByNumber, ok := completedPartMap[partNumber]
+ 		if !ok {
++			deleteEntries = append(deleteEntries, entry)
+ 			continue
+ 		}
+ 		for _, partETag := range completedPartsByNumber {
+@@ -626,7 +637,7 @@
+ 	lastSeenPartNo := 0
+ 
+ 	for _, part := range parts.Parts {
+-		if part.PartNumber < lastSeenPartNo {
++		if part.PartNumber <= lastSeenPartNo {
+ 			return nil, s3err.ErrInvalidPartOrder
+ 		}
+ 		lastSeenPartNo = part.PartNumber
+@@ -1134,44 +1145,43 @@
+ 		StorageClass:     aws.String("STANDARD"),
+ 	}
+ 
+-	entries, isLast, err := s3a.list(s3a.genUploadsFolder(*input.Bucket)+"/"+*input.UploadId, "", fmt.Sprintf("%04d%s", *input.PartNumberMarker, multipartExt), false, uint32(*input.MaxParts))
++	entries, err := s3a.listAllMultipartEntries(s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId)
+ 	if err != nil {
+-		// A store that reports the missing upload directory as not-found means
+-		// the upload is gone (completed or aborted), not a store error.
+ 		if isFilerNotFound(err) {
+ 			return nil, s3err.ErrNoSuchUpload
+ 		}
+ 		glog.Errorf("listObjectParts %s %s error: %v", *input.Bucket, *input.UploadId, err)
+ 		return nil, s3err.ErrInternalError
+ 	}
+-
+-	// Note: The upload directory is sort of a marker of the existence of an multipart upload request.
+-	// So can not just delete empty upload folders.
+-
+-	output.IsTruncated = aws.Bool(!isLast)
+-
+-	for _, entry := range entries {
+-		if strings.HasSuffix(entry.Name, multipartExt) && !entry.IsDirectory {
+-			partNumber, err := parsePartNumber(entry.Name)
+-			if err != nil {
+-				glog.Errorf("listObjectParts %s %s parse %s: %v", *input.Bucket, *input.UploadId, entry.Name, err)
+-				continue
+-			}
+-
+-			partETag := getEtagFromEntry(entry)
+-			part := &s3.Part{
+-				PartNumber:   aws.Int64(int64(partNumber)),
+-				LastModified: aws.Time(time.Unix(entry.Attributes.Mtime, 0).UTC()),
+-				Size:         aws.Int64(int64(filer.FileSize(entry))),
+-				ETag:         aws.String(partETag),
+-			}
+-			output.Part = append(output.Part, part)
+-			glog.V(3).Infof("listObjectParts: Added part %d, size=%d, etag=%s",
+-				partNumber, filer.FileSize(entry), partETag)
+-			if !isLast {
+-				output.NextPartNumberMarker = aws.Int64(int64(partNumber))
+-			}
+-		}
++	latest, err := latestMultipartEntries(entries)
++	if err != nil {
++		glog.Errorf("listObjectParts ambiguous parts: %v", err)
++		return nil, s3err.ErrInternalError
++	}
++	// Pagination belongs to logical part numbers, never physical retry files.
++	numbers := make([]int, 0, len(latest))
++	for number := range latest {
++		if int64(number) > *input.PartNumberMarker {
++			numbers = append(numbers, number)
++		}
++	}
++	slices.Sort(numbers)
++	limit := int(*input.MaxParts)
++	output.IsTruncated = aws.Bool(len(numbers) > limit)
++	if len(numbers) > limit {
++		numbers = numbers[:limit]
++	}
++	for _, number := range numbers {
++		entry := latest[number]
++		output.Part = append(output.Part, &s3.Part{
++			PartNumber:   aws.Int64(int64(number)),
++			LastModified: aws.Time(time.Unix(entry.Attributes.Mtime, 0).UTC()),
++			Size:         aws.Int64(int64(filer.FileSize(entry))),
++			ETag:         aws.String(getEtagFromEntry(entry)),
++		})
++	}
++	if *output.IsTruncated && len(numbers) > 0 {
++		output.NextPartNumberMarker = aws.Int64(int64(numbers[len(numbers)-1]))
+ 	}
+ 
+ 	glog.V(2).Infof("listObjectParts: Returning %d parts for uploadId=%s", len(output.Part), *input.UploadId)
+--- a/weed/s3api/s3api_object_handlers_put.go
++++ b/weed/s3api/s3api_object_handlers_put.go
+@@ -751,6 +751,12 @@
+ 		},
+ 		Chunks:   chunkResult.FileChunks, // All chunks from auto-chunking
+ 		Extended: make(map[string][]byte),
++	}
++
++	if object == "" && partNumber > 0 {
++		// Retried parts keep immutable entries. Record write ordering separately
++		// from second-resolution S3 LastModified, including zero-byte parts.
++		markMultipartWrite(entry)
+ 	}
+ 
+ 	// Always set Md5 attribute for regular object uploads (PutObject)
+--- a/weed/s3api/s3api_object_handlers_copy.go
++++ b/weed/s3api/s3api_object_handlers_copy.go
+@@ -11,6 +11,7 @@
+ 	"net/http"
+ 	"net/url"
+ 	"os"
++	"path"
+ 	"reflect"
+ 	"strconv"
+ 	"strings"
+@@ -801,15 +802,11 @@
+ 	return result
+ }
+ 
+-// copyPartLocation returns the destination directory and filename for a
+-// server-side copy part under the destination bucket's .uploads folder. Copy
+-// parts carry a fixed "copy" suffix (rather than the random suffix
+-// genPartUploadPath mints for client uploads) so re-copying a part replaces
+-// its predecessor in place.
++// copyPartLocation keeps copied parts immutable just like uploaded parts.
++// Reusing a filename could garbage-collect chunks while completion reads them.
+ func (s3a *S3ApiServer) copyPartLocation(dstBucket, uploadID string, partID int) (uploadDir, partName string) {
+-	uploadDir = s3a.genUploadsFolder(dstBucket) + "/" + uploadID
+-	partName = fmt.Sprintf("%04d_%s.part", partID, "copy")
+-	return
++	filename := s3a.genPartUploadPath(dstBucket, uploadID, partID)
++	return path.Dir(filename), path.Base(filename)
+ }
+ 
+ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Request) {
+@@ -1076,14 +1073,9 @@
+ 		dstEntry.Chunks = dstChunks
+ 	}
+ 
+-	// Save the part entry to the multipart uploads folder
+-	// Check if part exists and remove it first (allow re-copying same part)
+-	if exists, _ := s3a.exists(uploadDir, partName, false); exists {
+-		if err := s3a.rm(r.Context(), uploadDir, partName, false, false); err != nil {
+-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+-			return
+-		}
+-	}
++	// All part write paths use the same timestamp ordering, including copies
++	// without chunks. The immutable name makes an overwrite an append.
++	markMultipartWrite(dstEntry)
+ 
+ 	if err := s3a.mkFile(uploadDir, partName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
+ 		entry.Attributes = dstEntry.Attributes
+--- a/weed/s3api/s3api_object_handlers_copy_part_sse.go
++++ b/weed/s3api/s3api_object_handlers_copy_part_sse.go
+@@ -414,16 +414,12 @@
+ // range, mirroring the legacy fast path's handling of endOffset < startOffset.
+ func (s3a *S3ApiServer) writeEmptyCopyPart(dstBucket, uploadID string, partID int) (string, s3err.ErrorCode) {
+ 	uploadDir, partName := s3a.copyPartLocation(dstBucket, uploadID, partID)
+-	if exists, _ := s3a.exists(uploadDir, partName, false); exists {
+-		if err := s3a.rm(context.Background(), uploadDir, partName, false, false); err != nil {
+-			return "", s3err.ErrInternalError
+-		}
+-	}
+ 	if err := s3a.mkFile(uploadDir, partName, nil, func(e *filer_pb.Entry) {
+ 		if e.Attributes == nil {
+ 			e.Attributes = &filer_pb.FuseAttributes{}
+ 		}
+ 		e.Attributes.FileSize = 0
++		markMultipartWrite(e)
+ 	}); err != nil {
+ 		return "", s3err.ErrInternalError
+ 	}
+--- a/weed/s3api/s3api_bucket_handlers.go
++++ b/weed/s3api/s3api_bucket_handlers.go
+@@ -545,31 +545,54 @@
+ 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
+ }
+ 
+-// bucketHasUserObjects checks whether a bucket contains any non-special entries.
+-// Special entries (.uploads, *.versions) are internal to S3 and don't count as user objects.
++// bucketHasUserObjects ignores empty implicit prefixes, but counts objects,
++// retained versions, delete markers, and active multipart uploads. Hidden filer
++// directories are not necessarily empty merely because S3 listings hide them.
+ func (s3a *S3ApiServer) bucketHasUserObjects(bucket string) (bool, error) {
+ 	bucketPath := s3a.option.BucketsPath + "/" + bucket
+-	startFrom := ""
+-	// Start with a small batch — most non-empty buckets have a real object early.
+-	// If we only find special entries, switch to larger batches to page through quickly.
+-	limit := uint32(10)
+-	for {
+-		entries, isLast, err := s3a.list(bucketPath, "", startFrom, false, limit)
+-		if err != nil {
+-			return false, err
+-		}
+-		for _, entry := range entries {
+-			if entry.Name != s3_constants.MultipartUploadsFolder &&
+-				!strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+-				return true, nil
+-			}
+-			startFrom = entry.Name
+-		}
+-		if isLast {
+-			return false, nil
+-		}
+-		limit = 1000
+-	}
++	return bucketHasUserObjectsWithList(bucketPath, s3a.list)
++}
++
++func bucketHasUserObjectsWithList(bucketPath string, list func(string, string, string, bool, uint32) ([]*filer_pb.Entry, bool, error)) (bool, error) {
++	var visit func(string, bool) (bool, error)
++	visit = func(directoryPath string, uploadsDirectory bool) (bool, error) {
++		startFrom := ""
++		// Most non-empty buckets have an object early. Larger subsequent pages
++		// avoid a round trip for every handful of empty prefixes.
++		limit := uint32(10)
++		for {
++			entries, isLast, err := list(directoryPath, "", startFrom, false, limit)
++			if err != nil {
++				return false, err
++			}
++			if len(entries) == 0 && !isLast {
++				return false, fmt.Errorf("incomplete empty listing for %s", directoryPath)
++			}
++			for _, entry := range entries {
++				if entry == nil || entry.Name <= startFrom || entry.Name == "." || entry.Name == ".." || strings.Contains(entry.Name, "/") {
++					return false, fmt.Errorf("invalid listing entry for %s", directoryPath)
++				}
++				// An initiated upload may have no parts yet. Its directory must
++				// still prevent deletion, even if upload metadata is missing.
++				if uploadsDirectory || !entry.IsDirectory || entry.IsDirectoryKeyObject() {
++					return true, nil
++				}
++				if _, isUpload := entry.Extended[s3_constants.ExtMultipartObjectKey]; isUpload {
++					return true, nil
++				}
++				isUploads := directoryPath == bucketPath && entry.Name == s3_constants.MultipartUploadsFolder
++				if found, err := visit(directoryPath+"/"+entry.Name, isUploads); found || err != nil {
++					return found, err
++				}
++				startFrom = entry.Name
++			}
++			if isLast {
++				return false, nil
++			}
++			limit = 1000
++		}
++	}
++	return visit(bucketPath, false)
+ }
+ 
+ // hasObjectsWithActiveLocks checks if any objects in the bucket have active retention or legal hold
+--- /dev/null
++++ b/weed/s3api/hf2l_multipart_parts.go
+@@ -0,0 +1,143 @@
++package s3api
++
++import (
++	"fmt"
++	"strconv"
++	"strings"
++	"sync/atomic"
++	"time"
++
++	"github.com/seaweedfs/seaweedfs/weed/filer"
++	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
++	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
++)
++
++const multipartWriteTimeKey = "Seaweedfs-Multipart-Write-Time-Ns"
++
++// Within one S3 gateway, wall-clock adjustments cannot reorder a later part.
++// This is intentionally not a distributed sequencing protocol.
++var multipartWriteSequence atomic.Int64
++
++func markMultipartWrite(entry *filer_pb.Entry) {
++	timestamp := time.Now().UnixNano()
++	for {
++		previous := multipartWriteSequence.Load()
++		if timestamp <= previous {
++			timestamp = previous + 1
++		}
++		if multipartWriteSequence.CompareAndSwap(previous, timestamp) {
++			break
++		}
++	}
++	if entry.Extended == nil {
++		entry.Extended = make(map[string][]byte)
++	}
++	entry.Extended[multipartWriteTimeKey] = []byte(strconv.FormatInt(timestamp, 10))
++}
++
++// listAllMultipartEntries walks physical entries without exposing retry-file
++// names through S3's part-number pagination. Completion must see the same full
++// set as ListParts, including when retries overflow the old 10001-entry limit.
++func (s3a *S3ApiServer) listAllMultipartEntries(directory string) ([]*filer_pb.Entry, error) {
++	return listAllMultipartEntriesWithList(directory, s3a.list)
++}
++
++func listAllMultipartEntriesWithList(directory string, list func(string, string, string, bool, uint32) ([]*filer_pb.Entry, bool, error)) ([]*filer_pb.Entry, error) {
++	var entries []*filer_pb.Entry
++	start := ""
++	for {
++		page, last, err := list(directory, "", start, false, 1000)
++		if err != nil {
++			return nil, err
++		}
++		if len(page) == 0 && !last {
++			return nil, fmt.Errorf("incomplete empty multipart listing")
++		}
++		previous := start
++		for _, entry := range page {
++			if entry == nil || entry.Name <= previous {
++				return nil, fmt.Errorf("invalid multipart listing entry")
++			}
++			previous = entry.Name
++		}
++		entries = append(entries, page...)
++		if last {
++			return entries, nil
++		}
++		next := page[len(page)-1].Name
++		if next <= start {
++			return nil, fmt.Errorf("multipart listing did not advance")
++		}
++		start = next
++	}
++}
++
++func multipartEntryTime(entry *filer_pb.Entry) (int64, error) {
++	if entry == nil || entry.Attributes == nil {
++		return 0, fmt.Errorf("multipart part missing attributes")
++	}
++	if raw := entry.Extended[multipartWriteTimeKey]; len(raw) != 0 {
++		value, err := strconv.ParseInt(string(raw), 10, 64)
++		if err != nil || value <= 0 {
++			return 0, fmt.Errorf("invalid multipart write timestamp")
++		}
++		return value, nil
++	}
++	// Compatibility with parts created before this patch: retain the provider's
++	// internal chunk timestamps, which are more precise than S3 LastModified.
++	if entry.Attributes == nil {
++		return 0, fmt.Errorf("multipart part missing attributes")
++	}
++	latest := entry.Attributes.Mtime * 1e9
++	for _, chunk := range entry.Chunks {
++		if chunk.ModifiedTsNs > latest {
++			latest = chunk.ModifiedTsNs
++		}
++	}
++	return latest, nil
++}
++
++// latestMultipartEntries is shared by listing and completion. UUID filenames
++// are not chronological. Never infer which conflicting bytes win from their
++// lexical order, and never accept an older ETag after its part was overwritten.
++func latestMultipartEntries(entries []*filer_pb.Entry) (map[int]*filer_pb.Entry, error) {
++	latest := make(map[int]*filer_pb.Entry)
++	times := make(map[int]int64)
++	ambiguous := make(map[int]bool)
++	for _, entry := range entries {
++		if entry == nil {
++			return nil, fmt.Errorf("nil multipart entry")
++		}
++		if entry.IsDirectory || !strings.HasSuffix(entry.Name, multipartExt) {
++			continue
++		}
++		number, err := parsePartNumber(entry.Name)
++		if err != nil || number < 1 || number > s3_constants.MaxS3MultipartParts {
++			return nil, fmt.Errorf("invalid multipart part name %q", entry.Name)
++		}
++		timestamp, err := multipartEntryTime(entry)
++		if err != nil {
++			return nil, err
++		}
++		old := latest[number]
++		if old == nil || timestamp > times[number] {
++			latest[number], times[number] = entry, timestamp
++			ambiguous[number] = false
++		} else if timestamp == times[number] {
++			if filer.FileSize(entry) != filer.FileSize(old) || getEtagFromEntry(entry) != getEtagFromEntry(old) {
++				ambiguous[number] = true
++			}
++			// Same bytes and timestamp: choose a stable metadata entry so both
++			// operations agree; immutable chunks remain owned until completion.
++			if entry.Name > old.Name {
++				latest[number] = entry
++			}
++		}
++	}
++	for number, conflict := range ambiguous {
++		if conflict {
++			return nil, fmt.Errorf("ambiguous multipart overwrite for part %d", number)
++		}
++	}
++	return latest, nil
++}
+--- /dev/null
++++ b/weed/s3api/hf2l_multipart_parts_test.go
+@@ -0,0 +1,160 @@
++package s3api
++
++import (
++	"fmt"
++	"strconv"
++	"testing"
++
++	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
++)
++
++func hf2lPart(name, etag string, size uint64, timestamp int64) *filer_pb.Entry {
++	return &filer_pb.Entry{
++		Name:       name,
++		Attributes: &filer_pb.FuseAttributes{FileSize: size, Mtime: timestamp / 1e9},
++		Extended: map[string][]byte{
++			multipartWriteTimeKey: []byte(strconv.FormatInt(timestamp, 10)),
++			"Seaweed-X-Amz-ETag":  []byte(etag),
++		},
++	}
++}
++
++func TestHF2LMultipartReplacement(t *testing.T) {
++	const now = int64(1_800_000_000_123_456_789)
++	for _, replacement := range []struct {
++		name, oldTag, newTag string
++		oldSize, newSize     uint64
++	}{
++		{"identical retry", "old", "old", 4, 4},
++		{"same size", "old", "new", 4, 4},
++		{"changed size", "old", "new", 3, 4},
++		{"empty replacement", "old", "empty", 4, 0},
++		{"empty original", "empty", "new", 0, 4},
++	} {
++		t.Run(replacement.name, func(t *testing.T) {
++			old := hf2lPart("0001_z.part", replacement.oldTag, replacement.oldSize, now)
++			latest := hf2lPart("0001_a.part", replacement.newTag, replacement.newSize, now+1)
++			for _, entries := range [][]*filer_pb.Entry{{old, latest}, {latest, old}} {
++				got, err := latestMultipartEntries(entries)
++				if err != nil || len(got) != 1 || got[1] != latest {
++					t.Fatalf("got %#v, %v; want latest entry", got, err)
++				}
++			}
++		})
++	}
++}
++
++func TestHF2LMultipartOrderingTie(t *testing.T) {
++	const now = int64(1_800_000_000_123_456_789)
++	first := hf2lPart("0001_a.part", "same", 4, now)
++	retry := hf2lPart("0001_z.part", "same", 4, now)
++	if _, err := latestMultipartEntries([]*filer_pb.Entry{first, retry}); err != nil {
++		t.Fatal(err)
++	}
++	for _, mismatch := range []*filer_pb.Entry{hf2lPart("0001_b.part", "different", 4, now), hf2lPart("0001_b.part", "same", 3, now)} {
++		if _, err := latestMultipartEntries([]*filer_pb.Entry{first, mismatch}); err == nil {
++			t.Fatal("conflicting same-time entries were accepted")
++		}
++	}
++}
++
++func TestHF2LMultipartManyRetries(t *testing.T) {
++	entries := make([]*filer_pb.Entry, 10002)
++	for i := range entries {
++		entries[i] = hf2lPart(fmt.Sprintf("0001_%06d.part", i), "same", 4, int64(i+1))
++	}
++	latest := hf2lPart("0002_latest.part", "last", 2, 20000)
++	entries = append(entries, latest)
++	got, err := latestMultipartEntries(entries)
++	if err != nil || len(got) != 2 || got[1] != entries[10001] || got[2] != latest {
++		t.Fatalf("latest parts lost beyond physical entry limit: %#v, %v", got, err)
++	}
++}
++
++func TestHF2LMultipartMalformedPartFailsClosed(t *testing.T) {
++	for _, name := range []string{"bad.part", "0000_uuid.part", "10001_uuid.part"} {
++		if _, err := latestMultipartEntries([]*filer_pb.Entry{hf2lPart(name, "tag", 4, 1)}); err == nil {
++			t.Fatalf("accepted invalid part %s", name)
++		}
++	}
++	bad := hf2lPart("0001_uuid.part", "tag", 4, 1)
++	bad.Extended[multipartWriteTimeKey] = []byte("not-a-timestamp")
++	if _, err := latestMultipartEntries([]*filer_pb.Entry{bad}); err == nil {
++		t.Fatal("accepted invalid timestamp")
++	}
++}
++
++func TestHF2LMultipartLatestResolvesOlderAmbiguity(t *testing.T) {
++	first := hf2lPart("0001_a.part", "a", 4, 1)
++	second := hf2lPart("0001_b.part", "b", 4, 1)
++	latest := hf2lPart("0001_z.part", "latest", 4, 2)
++	got, err := latestMultipartEntries([]*filer_pb.Entry{first, second, latest})
++	if err != nil || got[1] != latest {
++		t.Fatalf("definitive later replacement failed: %#v, %v", got, err)
++	}
++}
++
++func TestHF2LMultipartPhysicalPagination(t *testing.T) {
++	calls := 0
++	entries, err := listAllMultipartEntriesWithList("/uploads/id", func(directory, prefix, start string, inclusive bool, limit uint32) ([]*filer_pb.Entry, bool, error) {
++		calls++
++		if directory != "/uploads/id" || inclusive {
++			t.Fatalf("unexpected list arguments")
++		}
++		if calls == 1 {
++			if start != "" {
++				t.Fatalf("first marker %q", start)
++			}
++			return []*filer_pb.Entry{hf2lPart("0001_a.part", "old", 4, 1)}, false, nil
++		}
++		if start != "0001_a.part" {
++			t.Fatalf("physical marker %q", start)
++		}
++		return []*filer_pb.Entry{hf2lPart("0001_b.part", "new", 4, 2), hf2lPart("0002_a.part", "last", 2, 3)}, true, nil
++	})
++	if err != nil || len(entries) != 3 || calls != 2 {
++		t.Fatalf("pagination failed: %v, %v, %d", entries, err, calls)
++	}
++	got, err := latestMultipartEntries(entries)
++	if err != nil || len(got) != 2 || got[1] != entries[1] {
++		t.Fatalf("boundary retry failed: %v, %v", got, err)
++	}
++}
++
++func TestHF2LMultipartInvalidListingFailsClosed(t *testing.T) {
++	for _, page := range [][]*filer_pb.Entry{nil, {nil}, {hf2lPart("0001_a.part", "a", 4, 1), hf2lPart("0001_a.part", "a", 4, 1)}} {
++		if _, err := listAllMultipartEntriesWithList("/uploads/id", func(string, string, string, bool, uint32) ([]*filer_pb.Entry, bool, error) { return page, false, nil }); err == nil {
++			t.Fatalf("accepted invalid physical page %#v", page)
++		}
++	}
++	part := hf2lPart("0001_a.part", "a", 4, 1)
++	part.Attributes = nil
++	if _, err := latestMultipartEntries([]*filer_pb.Entry{part}); err == nil {
++		t.Fatal("accepted missing attributes")
++	}
++}
++
++func TestHF2LMultipartCopyNamesAreImmutable(t *testing.T) {
++	server := &S3ApiServer{option: &S3ApiServerOption{BucketsPath: "/buckets"}}
++	firstDir, first := server.copyPartLocation("bucket", "upload", 1)
++	secondDir, second := server.copyPartLocation("bucket", "upload", 1)
++	if firstDir != secondDir || first == second {
++		t.Fatalf("copy reused a mutable part path: %q, %q", first, second)
++	}
++}
++
++func TestHF2LMultipartWriteSequenceSurvivesClockRollback(t *testing.T) {
++	saved := multipartWriteSequence.Load()
++	t.Cleanup(func() { multipartWriteSequence.Store(saved) })
++	const future = int64(4_000_000_000_000_000_000)
++	multipartWriteSequence.Store(future)
++	first := hf2lPart("0001_a.part", "a", 4, 1)
++	second := hf2lPart("0001_b.part", "b", 0, 1)
++	markMultipartWrite(first)
++	markMultipartWrite(second)
++	firstTime, _ := multipartEntryTime(first)
++	secondTime, _ := multipartEntryTime(second)
++	if firstTime != future+1 || secondTime != future+2 {
++		t.Fatalf("write order regressed: %d, %d", firstTime, secondTime)
++	}
++}
+--- /dev/null
++++ b/weed/s3api/hf2l_bucket_delete_test.go
+@@ -0,0 +1,194 @@
++package s3api
++
++import (
++	"errors"
++	"fmt"
++	"sort"
++	"testing"
++
++	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
++	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
++)
++
++func TestHF2LBucketHasUserObjects(t *testing.T) {
++	const bucket = "/buckets/test"
++	dir := func(name string) *filer_pb.Entry {
++		return &filer_pb.Entry{Name: name, IsDirectory: true}
++	}
++	file := func(name string) *filer_pb.Entry {
++		return &filer_pb.Entry{Name: name}
++	}
++	marker := dir("folder")
++	marker.Attributes = &filer_pb.FuseAttributes{Mime: s3_constants.FolderMimeType}
++	prefixObject := dir("prefix")
++	prefixObject.Extended = map[string][]byte{s3_constants.SeaweedFSPrefixObject: []byte("true")}
++	promotedFile := dir("promoted")
++	promotedFile.Content = []byte("object data")
++	upload := dir("upload")
++	upload.Extended = map[string][]byte{s3_constants.ExtMultipartObjectKey: []byte("key")}
++	deleteMarker := file("marker")
++	deleteMarker.Extended = map[string][]byte{s3_constants.ExtDeleteMarkerKey: []byte("true")}
++
++	tests := []struct {
++		name    string
++		entries map[string][]*filer_pb.Entry
++		want    bool
++	}{
++		{name: "empty"},
++		{
++			name: "empty implicit prefixes",
++			entries: map[string][]*filer_pb.Entry{
++				bucket:                        {dir("artifacts")},
++				bucket + "/artifacts":         {dir("attempt")},
++				bucket + "/artifacts/attempt": {dir("object.versions")},
++			},
++		},
++		{
++			name: "empty internal directories",
++			entries: map[string][]*filer_pb.Entry{
++				bucket: {dir(s3_constants.MultipartUploadsFolder), dir("object.versions")},
++			},
++		},
++		{name: "ordinary object", entries: map[string][]*filer_pb.Entry{bucket: {file("object")}}, want: true},
++		{name: "file with versions suffix", entries: map[string][]*filer_pb.Entry{bucket: {file("object.versions")}}, want: true},
++		{name: "file named uploads", entries: map[string][]*filer_pb.Entry{bucket: {file(s3_constants.MultipartUploadsFolder)}}, want: true},
++		{name: "explicit directory marker", entries: map[string][]*filer_pb.Entry{bucket: {marker}}, want: true},
++		{name: "zero byte prefix object", entries: map[string][]*filer_pb.Entry{bucket: {prefixObject}}, want: true},
++		{name: "promoted file", entries: map[string][]*filer_pb.Entry{bucket: {promotedFile}}, want: true},
++		{
++			name: "nested object",
++			entries: map[string][]*filer_pb.Entry{
++				bucket:             {dir("prefix")},
++				bucket + "/prefix": {file("object")},
++			},
++			want: true,
++		},
++		{
++			name: "retained version under hidden directories",
++			entries: map[string][]*filer_pb.Entry{
++				bucket:                             {dir("prefix")},
++				bucket + "/prefix":                 {dir("object.versions")},
++				bucket + "/prefix/object.versions": {dir(".nested")},
++				bucket + "/prefix/object.versions/.nested": {file("version")},
++			},
++			want: true,
++		},
++		{
++			name: "retained delete marker",
++			entries: map[string][]*filer_pb.Entry{
++				bucket:                      {dir("object.versions")},
++				bucket + "/object.versions": {deleteMarker},
++			},
++			want: true,
++		},
++		{
++			name: "upload with no parts or metadata",
++			entries: map[string][]*filer_pb.Entry{
++				bucket:               {dir(s3_constants.MultipartUploadsFolder)},
++				bucket + "/.uploads": {dir("upload-id")},
++			},
++			want: true,
++		},
++		{
++			name: "multipart metadata on otherwise empty directory",
++			entries: map[string][]*filer_pb.Entry{
++				bucket:             {dir("prefix")},
++				bucket + "/prefix": {upload},
++			},
++			want: true,
++		},
++	}
++	for _, test := range tests {
++		t.Run(test.name, func(t *testing.T) {
++			list := func(path, prefix, start string, inclusive bool, limit uint32) ([]*filer_pb.Entry, bool, error) {
++				if prefix != "" || inclusive || start != "" || limit != 10 {
++					t.Fatalf("unexpected list arguments: %q %q %v %d", prefix, start, inclusive, limit)
++				}
++				return test.entries[path], true, nil
++			}
++			got, err := bucketHasUserObjectsWithList(bucket, list)
++			if err != nil || got != test.want {
++				t.Fatalf("got (%v, %v), want (%v, nil)", got, err, test.want)
++			}
++		})
++	}
++}
++
++func TestHF2LBucketHasUserObjectsPagination(t *testing.T) {
++	const bucket = "/buckets/test"
++	for _, nested := range []bool{false, true} {
++		for _, hasObject := range []bool{false, true} {
++			t.Run(fmt.Sprintf("nested=%v/object=%v", nested, hasObject), func(t *testing.T) {
++				directory := bucket
++				if nested {
++					directory += "/prefix"
++				}
++				entries := make([]*filer_pb.Entry, 11)
++				for i := range entries {
++					entries[i] = &filer_pb.Entry{Name: fmt.Sprintf("prefix%02d", i), IsDirectory: true}
++				}
++				entries[10].IsDirectory = !hasObject
++				pages := 0
++				list := func(path, prefix, start string, inclusive bool, limit uint32) ([]*filer_pb.Entry, bool, error) {
++					if nested && path == bucket {
++						return []*filer_pb.Entry{{Name: "prefix", IsDirectory: true}}, true, nil
++					}
++					if path != directory {
++						return nil, true, nil
++					}
++					pages++
++					if (pages == 1 && limit != 10) || (pages == 2 && limit != 1000) || prefix != "" || inclusive {
++						t.Fatalf("unexpected page arguments: page=%d limit=%d prefix=%q inclusive=%v", pages, limit, prefix, inclusive)
++					}
++					begin := sort.Search(len(entries), func(i int) bool { return entries[i].Name > start })
++					end := begin + int(limit)
++					if end > len(entries) {
++						end = len(entries)
++					}
++					return entries[begin:end], end == len(entries), nil
++				}
++				got, err := bucketHasUserObjectsWithList(bucket, list)
++				if err != nil || got != hasObject || pages != 2 {
++					t.Fatalf("got (%v, %v), pages=%d; want (%v, nil), pages=2", got, err, pages, hasObject)
++				}
++			})
++		}
++	}
++}
++
++func TestHF2LBucketHasUserObjectsListErrors(t *testing.T) {
++	const bucket = "/buckets/test"
++	listError := errors.New("filer unavailable")
++	for _, nested := range []bool{false, true} {
++		t.Run(fmt.Sprintf("nested=%v", nested), func(t *testing.T) {
++			list := func(path, _, _ string, _ bool, _ uint32) ([]*filer_pb.Entry, bool, error) {
++				if nested && path == bucket {
++					return []*filer_pb.Entry{{Name: "prefix", IsDirectory: true}}, true, nil
++				}
++				return nil, false, listError
++			}
++			if _, err := bucketHasUserObjectsWithList(bucket, list); !errors.Is(err, listError) {
++				t.Fatalf("listing failure was not preserved: %v", err)
++			}
++		})
++	}
++	for _, entries := range [][]*filer_pb.Entry{nil, {nil}, {{Name: ""}}, {{Name: "."}}, {{Name: ".."}}, {{Name: "invalid/path"}}} {
++		list := func(_, _, _ string, _ bool, _ uint32) ([]*filer_pb.Entry, bool, error) {
++			return entries, false, nil
++		}
++		if _, err := bucketHasUserObjectsWithList(bucket, list); err == nil {
++			t.Fatalf("invalid listing must fail closed: %+v", entries)
++		}
++	}
++	t.Run("non advancing page", func(t *testing.T) {
++		list := func(path, _, _ string, _ bool, _ uint32) ([]*filer_pb.Entry, bool, error) {
++			if path != bucket {
++				return nil, true, nil
++			}
++			return []*filer_pb.Entry{{Name: "prefix", IsDirectory: true}}, false, nil
++		}
++		if _, err := bucketHasUserObjectsWithList(bucket, list); err == nil {
++			t.Fatal("repeated page must fail closed")
++		}
++	})
++}

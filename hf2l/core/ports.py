@@ -67,6 +67,14 @@ class PublicationUncertain(RuntimeError):
     """A primary write may have succeeded; reconcile before retrying it."""
 
 
+class ClaimInactive(ValueError):
+    """The service confirmed this acquisition can no longer publish a result.
+
+    A completed acquisition is deliberately excluded: its publication must be
+    reconciled before replacing the persisted acquisition key.
+    """
+
+
 @dataclass(frozen=True)
 class PublishResult:
     """Backend-neutral result of publishing a model snapshot."""
@@ -175,6 +183,21 @@ class ModelStore(ABC):
     ) -> tuple[ClaimHandle, list[SubmissionCandidate]]:
         """Acquire or resume explicitly owned, fenced round inputs."""
         raise ValueError(f"The {self.name} backend does not support claims")
+
+    def acquire_claim(
+        self, repo_id: str, *, context: RoundContext, acquisition_key: str,
+        claim_id: str | None = None, lease_seconds: int = 3600,
+    ) -> ClaimHandle:
+        """Acquire ownership separately so it can be saved before reading inputs.
+
+        The default retains compatibility with existing fenced adapters. New
+        adapters should return the handle before resolving input descriptors.
+        """
+        claim, _ = self.claim_submissions(
+            repo_id, context=context, acquisition_key=acquisition_key,
+            claim_id=claim_id, lease_seconds=lease_seconds,
+        )
+        return claim
 
     def renew_claim(self, repo_id: str, claim: ClaimHandle, lease_seconds: int) -> ClaimHandle:
         raise ValueError(f"The {self.name} backend does not support claims")

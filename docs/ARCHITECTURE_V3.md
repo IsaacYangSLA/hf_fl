@@ -7,7 +7,11 @@ maintenance design for this repository, not a third incompatible wire protocol.
 The Exchange HTTP API remains `/v2`; existing HF²L manifest versions, filenames
 and command aliases remain readable. Python 3.10 remains supported.
 
-This document is the implementation contract. The associated
+This document records the accepted design integrated at `60e4bf8` and subsequent
+Exchange fixes in the current implementation.
+The [current implementation limitations](#current-implementation-limitations)
+track audit findings and distinguish resolved findings from remaining gaps.
+The associated
 [Exchange runbook](EXCHANGE_V3.md) distinguishes combined verification results
 from earlier sibling-checkout evidence. A design section is not itself proof
 that its acceptance tests passed.
@@ -25,8 +29,10 @@ The independent `hf_fl-v2` checkout contains an actual implementation of its
 Its source, tests and operational procedures are integrated into the
 current checkout. The sibling's historical
 [runbook](history/EXCHANGE_V2.md) records its own verification; those counts must
-not be reused as evidence for the combined code. No new implementation branch,
-commit, push, service deployment or package publication is part of this change.
+not be reused as evidence for the combined code. The integration was subsequently
+committed as `60e4bf8` on `redesign`, rebased onto local `main` (already up to
+date), and fast-forward merged into local `main`. That operation did not push,
+deploy a service or publish a package.
 
 | V2 design requirement | Incorporated implementation | Verification anchor |
 |---|---|---|
@@ -57,7 +63,7 @@ smaller application boundary. V3 selects the following combination.
 | Replace every backend with a new generic `ArtifactStore` | Defer | `ModelStore` remains an explicit FL facade in `hf2l/core/ports.py`; a second generic abstraction would duplicate the Exchange SDK without a demonstrated caller |
 | Explicit capabilities and operation context | Accept | Immutable round/ref/claim values and lazy backend registry; decisions use capabilities rather than backend names |
 | Local store and backend contract tests | Accept | A real single-host store provides immutable snapshots, atomic reference preconditions and explicit local participant identity |
-| Library runner and thin command edge | Accept | Typed `RoundConfig`, `RoundResult` and reusable `run_round`; diagnostics returned as data; CLI renders them |
+| Library runner and thin command edge | Accept, with output gap | Typed `RoundConfig`, `RoundResult` and reusable `run_round`; runner diagnostics are data, but evaluation plugins can print directly ([B4](#b4--evaluation-output-can-break-json)) |
 | Replace trusted training plugins with a new versioned plugin protocol | Defer | Retain current plugin entry points; typed FL documents and runner boundaries do not require rewriting trusted training code |
 | Aggregation algorithm seam | Modify | FedAvg supports examples/uniform weighting and an injected strategy; defer FedProx until client algorithm propagation and training semantics are implemented together |
 | Framework-neutral checkpoint operations | Accept | Header-only layout discovery, NumPy/Torch array implementations and one averaging policy; retain numeric and shard-streaming oracles |
@@ -121,6 +127,10 @@ provider errors; the worker uses the same ownership rules as API requests.
 There is one metadata service and one recovery worker, not a new microservice
 for every layer.
 
+The [call sequence diagrams](diagrams/README.md) trace upload, download, and an
+owner-controlled FedAvg round through these components. Editable Mermaid sources
+and an offline HTML rendering are included.
+
 HF²L `common` contains reusable filesystem operations. `core` contains typed FL
 protocol values and the FL store port. Backends implement that port, while the
 runner owns selection, checkpoint validation, averaging and publication. The
@@ -162,7 +172,9 @@ malformed candidates and use a valid frozen subset of at least two; explicit
 selection failures remain errors. Legacy inventory expectation S-050, which
 aborted a whole automatic round for a shape-invalid input, is superseded by this
 documented behavior. Check-only readiness inspects metadata; full aggregation
-still verifies hashes and checkpoint compatibility before publication.
+checks checkpoint compatibility and verifies schema-2 hashes before publication.
+The owner does not verify schema-1 hashes, even when supplied
+([B6](#b6--owner-hash-verification-is-limited-to-schema-2)).
 
 ### Blob transfer and recovery
 
@@ -175,9 +187,11 @@ still verifies hashes and checkpoint compatibility before publication.
    paths verify ownership on the database clock and cannot overwrite a successor.
 4. Persist a separate mutation marker before initiating or completing provider
    work. A lost callback keeps the outcome uncertain even after the lease expires.
-5. Cancellation moves bytes to pending reclamation. Cleanup waits for issued
-   grants to expire and provider mutations to settle. It must not free physical
-   capacity or allow metadata purge while an attempt could still create objects.
+5. Cancellation moves bytes to pending reclamation. Scheduled cleanup waits for
+   issued grants to expire. Deletion sweeps may run while provider mutation
+   markers remain, but cleanup cannot commit completion or release capacity
+   until those markers are cleared. Metadata purge also remains blocked while
+   an attempt could still create objects.
 6. Uncertain orphan mutations have a bounded inspection and offline repair path.
    An operator must stop all writers and independently establish provider
    quiescence before clearing markers. Repair schedules recovery or cleanup; it
@@ -201,13 +215,18 @@ after retention expires can create a new operation.
 
 Typed readers and writers own the accepted manifest versions and filenames.
 Parsing validates immutable base identity, participant attribution, example
-counts and checkpoint hashes before the runner trusts them. Compatibility
-exports remain available while production callers use the canonical modules.
-The client checks declared checkpoint hashes before writing its downloaded
-round context, so a corrupt base is not recorded as a usable training input.
+counts and the shape of declared checkpoint hashes. Byte verification is a
+separate step: the owner verifies schema-2 hash maps but ignores schema-1 maps,
+even when present ([B6](#b6--owner-hash-verification-is-limited-to-schema-2)).
+The client verifies hashes for schema 2 and any supplied map in schema 1 before
+writing its downloaded round context. Schema-1 documents without hashes remain
+readable without digest verification. Compatibility exports remain available
+while production callers use the canonical modules.
 
 When supplied, `algorithm_spec` propagates from the round to client context and
-submission. The owner checks its name, version and client-affecting parameters.
+submission. The owner checks its name, version and client-affecting parameters
+using Python equality, which does not distinguish JSON booleans from equivalent
+numbers ([B5](#b5--algorithm-parameter-equality-is-not-json-type-aware)).
 FedAvg declares weighting a server-only parameter: switching examples/uniform
 weighting does not require clients to retrain. A legacy descriptive `algorithm`
 string alone is not a structured algorithm identity. Custom strategies must
@@ -216,8 +235,14 @@ participate in eligibility checks.
 
 Reference snapshots, round context and claim handles are explicit arguments.
 The run-state file belongs to one logical operation, survives interrupted
-responses and is distinct from the published model directory. A claim renewer
-protects long downloads and averaging; ownership loss prevents publication.
+responses and is distinct from the published model directory. The Exchange
+runner persists its claim handle and starts renewal before reading acquired
+input metadata. Recovery can replace a saved acquisition key only after the
+service confirms that the prior acquisition cannot publish; completed or
+uncertain publication requires reconciliation
+([B3](#b3--same-state-acquisition-retry-can-get-stuck)). A claim renewer protects
+input metadata reads, long downloads and averaging; ownership loss prevents
+publication.
 
 Checkpoint discovery reads and validates SafeTensors headers, index membership,
 tensor names, shapes, dtypes and safe paths without importing Torch. Averaging
@@ -241,11 +266,108 @@ reference. Source symlinks, path escapes and colliding artifact paths are refuse
 A confirmed primary publication stays successful if a subsequent tag operation
 fails. The result carries the committed revision and a separate warning. An
 uncertain primary response requires reconciliation; blindly retrying a new
-publication is unsafe. JFrog's documented single-writer restriction remains.
+publication is unsafe. JFrog's documented single-writer restriction remains;
+its direct submission API does not reject the reserved `main` revision
+([B7](#b7--jfrog-direct-submission-can-target-main)).
 Automatic discovery can skip a malformed or deleted candidate; a backend outage
 propagates as a round failure instead of being silently treated as an invalid
 participant submission. HF/JFrog contract tests use deterministic SDK doubles;
 they do not establish live remote-provider behavior.
+
+## Current implementation limitations
+
+The documentation/implementation audit of `60e4bf8` confirmed the eight findings
+below. The current implementation addresses B2, B3 and B8; B1 and B4–B7 remain
+unresolved. Earlier full-suite passes do not establish that these gaps were
+absent. The original finding headings are retained for stable links.
+
+### B1 — Cyclic submission handoffs are unsupported
+
+[Client download](../hf2l/client_steps.py) requires `fedavg_round.json` and
+validates its checkpoint hashes, while submission uploads contain checkpoint
+artifacts and `fedavg_submission.json`. A changed HF submission can inherit stale
+global hashes; detached submissions can lack the round document altogether.
+Downloading one client's submission as the next client's training base is
+unsupported and can fail these checks.
+Use an owner-published global round as the training base; the cyclic recipe is
+unsupported until submission-aware validation and lineage rules are implemented.
+
+### B2 — AWS environment session tokens are dropped
+
+**Resolved.**
+[Storage configuration](../packages/exchange/src/hf2l_exchange/config.py) leaves
+ambient AWS credentials to Boto's provider chain, preserving session tokens and
+refreshable credential providers. Explicit `EXCHANGE_S3_ACCESS_KEY` and
+`EXCHANGE_S3_SECRET_KEY` must be supplied together; temporary explicit credentials
+also use `EXCHANGE_S3_SESSION_TOKEN`. The
+[S3 client factory](../packages/exchange/src/hf2l_exchange/storage.py) applies the
+same credential configuration to internal clients and public-endpoint signers.
+See the [runbook](EXCHANGE_V3.md) for configuration details.
+
+### B3 — Same-state acquisition retry can get stuck
+
+**Resolved.**
+[ExchangeStore.acquire_claim](../hf2l/backends/exchange.py) returns the owned
+handle before reading input metadata. The [runner](../hf2l/fedavg_runner.py)
+persists that handle and starts renewal before requesting the input descriptors.
+A metadata failure therefore follows normal runner cleanup: confirmed
+abandonment clears run-state, while a failed or uncertain abandonment preserves
+the saved handle and key for reconciliation or retry.
+
+On retry, only confirmed abandonment or expiry permits replacing the saved key,
+including terminal replay responses for older key-only state files. An explicit
+`--claim-id` is never replaced automatically. A completed acquisition or uncertain
+publication preserves the state and requires reconciliation before another
+logical operation; transport errors alone do not authorize a replacement key.
+
+### B4 — Evaluation output can break JSON
+
+The [runner](../hf2l/fedavg_runner.py) returns its own diagnostics in
+`RoundResult`, but invokes evaluation directly without capturing plugin output.
+The built-in [LeNet evaluator](../hf2l/plugins/lenet_poc.py) calls a model loader
+that prints to stdout. Consequently `run_round` is not unconditionally silent,
+and `--json` with that evaluator can emit non-JSON text before its result.
+Machine-readable stdout requires an evaluation path that emits no extra output.
+
+### B5 — Algorithm parameter equality is not JSON-type-aware
+
+The [runner's eligibility check](../hf2l/fedavg_runner.py) compares ordinary
+Python dictionaries after excluding declared server-only parameters. This
+accepts JSON `true` and `1` as equal, including nested values. The intended
+client-affecting parameter contract needs a type-aware comparison; the current
+implementation does not enforce that distinction.
+
+### B6 — Owner hash verification is limited to schema 2
+
+The [owner runner](../hf2l/fedavg_runner.py) verifies checkpoint bytes only for
+schema-2 round and submission documents, ignoring supplied schema-1 digests.
+In contrast, [client download](../hf2l/client_steps.py) verifies any supplied
+hash map regardless of schema. Legacy schema-1 aggregation therefore lacks
+digest verification even when its documents contain hashes; use schema-2
+documents when relying on the owner's digest checks.
+
+### B7 — JFrog direct submission can target main
+
+[JFrogStore.publish_submission](../hf2l/backends/jfrog.py) accepts
+`submission_revision="main"`, contrary to the detached-submission intent in
+[ModelStore](../hf2l/core/ports.py). Normal CLI-generated submission names avoid
+this, but direct callers can upload to `main` subject to server permissions.
+Server-side write restrictions and the single-writer requirement remain
+necessary; generated names alone do not enforce immutability.
+
+### B8 — Verification slots are not isolated from cleanup races
+
+**Resolved.** The
+[worker](../packages/exchange/src/hf2l_exchange/worker.py) dispatches verification
+and cleanup to separate pools.
+[Transfers.process](../packages/exchange/src/hf2l_exchange/transfers.py) now checks
+the requested category against the refreshed attempt state while acquiring its
+lease under the same space lock used by lifecycle mutations. A category mismatch
+is skipped without acquiring a lease, so a cancellation between selection and
+dispatch cannot move cleanup into a verification slot. Cancellation after lease
+acquisition remains subject to existing lifecycle fencing. The worker still
+waits for both selected batches before its next pass; slow cleanup can delay
+subsequent verification batches.
 
 ## Integration and compatibility
 
@@ -301,8 +423,9 @@ summary = result.to_dict()
 `RoundResult` reports readiness/aggregation/publication status, eligible and
 skipped candidates, warnings and any confirmed publication. An application can
 pass an `Aggregator` implementation through `run_round(..., aggregator=...)`;
-its coefficients and reduction behavior remain explicit. CLI output is an edge
-concern, and `--json` renders the structured result.
+its coefficients and reduction behavior remain explicit. The CLI renders that
+structured result with `--json`, but evaluation can add stdout text as described
+in [B4](#b4--evaluation-output-can-break-json).
 
 | Boundary | Required evidence |
 |---|---|
@@ -317,6 +440,10 @@ concern, and `--json` renders the structured result.
 | Packaging | Fresh minimal root/SDK/server environments, lazy optional imports, both wheels and dependency checks |
 | Integration | Root regression suite plus independent Exchange suite with SQLite/Moto and PostgreSQL/MinIO |
 | Documentation | Generated contracts match implemented sources; commands/examples execute; historical claims are labeled |
+
+The table records required evidence, not a claim that every intended guarantee
+has been met. The unresolved limitations above remain outside the coverage of
+the previously recorded full-suite passes.
 
 The original golden fixtures and behavior inventory are retained as evidence
 sources. Each replaced or changed behavior needs a current test mapping or an

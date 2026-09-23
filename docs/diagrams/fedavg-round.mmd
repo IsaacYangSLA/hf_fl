@@ -1,0 +1,78 @@
+sequenceDiagram
+    autonumber
+    actor C as Clients A and B
+    actor O as Owner
+    participant R as FedAvgRunner
+    participant S as ExchangeStore / SDK
+    participant X as Exchange API
+    participant D as SQL database
+
+    Note over C,D: Prerequisites: configured fedavg.v1 space and memberships,<br/>registered types, published global base and initialized main.<br/>All clients use the same immutable base record ID.
+    Note over S,X: Separate adapter / SDK per caller.<br/>API calls use bearer authentication.<br/>Route prefix: /v2/spaces/{space}
+
+    loop Each independent client, at least two
+        Note over C,S: Clients may run concurrently.<br/>Each starts from the shared global base.
+        C->>S: download_client_round() uses<br/>download_snapshot(base_id)
+        Note over C,X: Read metadata and download attachments.<br/>See download diagram.<br/>Validate round manifest and supplied hashes.
+        S-->>C: Base checkpoint + client context
+        C->>C: Train locally<br/>Build update manifest + hashes
+        C->>S: upload_client_update() uses<br/>publish_submission(base_revision=base_id)
+        Note over S,X: _publish(kind=training.update)<br/>calls put_record().<br/>See upload diagram.
+        S-->>C: Published update record ID<br/>main remains unchanged
+    end
+
+    O->>R: run(selection=claim,<br/>publish=true)
+    R->>S: resolve_reference(main)
+    S->>X: GET /refs/main
+    X-->>S: Base ID + generation token
+    S-->>R: ResolvedReference(base_id, token)
+    R->>S: download_snapshot(base_id)<br/>Round manifest only
+    S->>X: GET /records/{base_id}
+    X-->>S: Published record<br/>Inline round metadata
+    S-->>R: fedavg_round.json
+    R->>R: Persist round and acquisition key<br/>under run-state lock
+    R->>S: acquire_claim(context,<br/>acquisition_key)
+    S->>X: POST /acquisitions<br/>main + expected_token<br/>input_record_ids=[]<br/>Persisted idempotency key
+    X->>D: Transaction: authorize publisher<br/>Check reference generation<br/>Newest eligible update per participant<br/>Require at least 2, freeze IDs<br/>Persist holder, fence and lease
+    D-->>X: Acquisition committed
+    X-->>S: Active acquisition<br/>Frozen input IDs
+    S-->>R: ClaimHandle with frozen input IDs
+    R->>R: Persist claim ID, fence and lease<br/>Start ClaimRenewal thread
+
+    par Background renewal until publication or exit
+        loop While the claim is held
+            R->>S: renew_claim(claim)
+            S->>X: POST /acquisitions/{id}/renew<br/>fence
+            X->>D: Check holder, lease and fence<br/>Extend lease
+            X-->>S: Renewed acquisition
+            S-->>R: Updated ClaimHandle<br/>Persist run-state
+        end
+    and Owner processes the frozen candidates
+        R->>S: explicit_submissions(input_ids)
+        loop Each frozen input
+            S->>X: GET /records/{input_id}
+            X-->>S: Published training.update descriptor
+        end
+        S-->>R: Frozen candidates
+        Note over R,X: Metadata failures reach the runner with saved ownership.<br/>Confirmed abandon clears run-state, failed abandon retains it.<br/>Without an explicit claim ID, confirmed inactive attempts can restart.<br/>Completed or uncertain publication requires reconciliation.
+        R->>S: Resolve inputs<br/>Download submission manifests
+        S-->>R: Immutable IDs<br/>Participant-bound metadata
+        R->>R: Validate base, round and participant<br/>Check algorithm, require at least 2
+        Note over R,X: Download base and candidate attachments.<br/>Check checkpoint compatibility and schema-2 hashes.<br/>Owner ignores schema-1 supplied hashes.<br/>Require at least 2 valid checkpoints after filtering.
+        R->>R: Compute coefficients, reduce shards<br/>Optionally evaluate<br/>Write round manifest + hashes
+        R->>S: publish_aggregate(reference,<br/>claim, used input IDs)
+        Note over S,X: _publish(kind=model.global)<br/>uses the upload lifecycle.<br/>Published record precedes main update.
+        S->>X: POST /acquisitions/{id}/complete<br/>fence + result_record_id<br/>Idempotency-Key:<br/>aggregate-{record_id}
+        X->>D: Atomic transaction:<br/>Check holder, lease, fence, generation<br/>Validate provenance and membership<br/>Advance main and generation<br/>Complete acquisition
+        D-->>X: Reference and acquisition committed
+        X-->>S: Completed acquisition
+        opt A tag was requested
+            S->>X: PUT /refs/{tag}<br/>If-None-Match: *
+            X-->>S: Tag created or warning<br/>Main remains published
+        end
+        S-->>R: PublishResult
+    end
+
+    R->>R: Stop renewal, clear run-state<br/>Write result.json
+    R-->>O: RoundResult(status=published)
+    Note over O,X: Ambiguous completion raises PublicationUncertain.<br/>Run-state is retained for reconciliation.<br/>The owner launches aggregation, not the service.

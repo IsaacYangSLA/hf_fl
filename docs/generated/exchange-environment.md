@@ -31,13 +31,14 @@ configuration is separate; this table covers the Exchange server and worker sett
 | `EXCHANGE_POOL_RECYCLE` | `1800` | `DatabaseSettings.pool_recycle` |  |
 | `EXCHANGE_POOL_SIZE` | `5` | `DatabaseSettings.pool_size` |  |
 | `EXCHANGE_POOL_TIMEOUT` | `30` | `DatabaseSettings.pool_timeout` |  |
-| `EXCHANGE_S3_ACCESS_KEY` | `""` | `StorageSettings.access_key` | Falls back to `AWS_ACCESS_KEY_ID`. |
+| `EXCHANGE_S3_ACCESS_KEY` | `""` | `StorageSettings.access_key` |  |
 | `EXCHANGE_S3_BUCKET` | `""` | `StorageSettings.bucket` |  |
 | `EXCHANGE_S3_ENDPOINT` | `""` | `StorageSettings.endpoint` |  |
 | `EXCHANGE_S3_PREFIX` | `"exchange-v2/"` | `StorageSettings.prefix` |  |
 | `EXCHANGE_S3_PUBLIC_ENDPOINT` | `""` | `StorageSettings.public_endpoint` |  |
 | `EXCHANGE_S3_REGION` | `"us-east-1"` | `StorageSettings.region` |  |
-| `EXCHANGE_S3_SECRET_KEY` | `""` | `StorageSettings.secret_key` | Falls back to `AWS_SECRET_ACCESS_KEY`. |
+| `EXCHANGE_S3_SECRET_KEY` | `""` | `StorageSettings.secret_key` |  |
+| `EXCHANGE_S3_SESSION_TOKEN` | `""` | `StorageSettings.session_token` |  |
 | `EXCHANGE_WORKER_BATCH_SIZE` | `32` | `WorkerSettings.batch_size` |  |
 | `EXCHANGE_WORKER_CLEANUP_CONCURRENCY` | `2` | `WorkerSettings.cleanup_concurrency` |  |
 | `EXCHANGE_WORKER_EVENT_RETENTION_SECONDS` | `2592000` | `WorkerSettings.event_retention_seconds` |  |

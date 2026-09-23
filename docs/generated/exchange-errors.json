@@ -141,7 +141,7 @@
     {
       "code": "attempt_not_found",
       "sources": [
-        "transfers.py:482"
+        "transfers.py:488"
       ],
       "statuses": [
         404
@@ -150,7 +150,7 @@
     {
       "code": "attempt_not_repairable",
       "sources": [
-        "transfers.py:494"
+        "transfers.py:500"
       ],
       "statuses": [
         409
@@ -470,8 +470,8 @@
     {
       "code": "invalid_attempt_selection",
       "sources": [
-        "transfers.py:462",
-        "transfers.py:474"
+        "transfers.py:468",
+        "transfers.py:480"
       ],
       "statuses": [
         422
@@ -1181,7 +1181,7 @@
     {
       "code": "storage_quiescence_required",
       "sources": [
-        "transfers.py:478"
+        "transfers.py:484"
       ],
       "statuses": [
         409
@@ -1314,7 +1314,7 @@
       "call_sites": [
         {
           "retryable": "True",
-          "source": "storage.py:249",
+          "source": "storage.py:250",
           "uncertain": "False"
         }
       ],
@@ -1324,7 +1324,7 @@
       "call_sites": [
         {
           "retryable": "False",
-          "source": "storage.py:154",
+          "source": "storage.py:155",
           "uncertain": "False"
         }
       ],
@@ -1334,7 +1334,7 @@
       "call_sites": [
         {
           "retryable": "True",
-          "source": "transfers.py:360",
+          "source": "transfers.py:366",
           "uncertain": "False"
         }
       ],
@@ -1354,7 +1354,7 @@
       "call_sites": [
         {
           "retryable": "False",
-          "source": "storage.py:209",
+          "source": "storage.py:210",
           "uncertain": "False"
         },
         {
@@ -1369,12 +1369,12 @@
       "call_sites": [
         {
           "retryable": "True",
-          "source": "storage.py:146",
+          "source": "storage.py:147",
           "uncertain": "False"
         },
         {
           "retryable": "True",
-          "source": "storage.py:165",
+          "source": "storage.py:166",
           "uncertain": "False"
         },
         {
@@ -1414,7 +1414,7 @@
       "call_sites": [
         {
           "retryable": "False",
-          "source": "storage.py:225",
+          "source": "storage.py:226",
           "uncertain": "False"
         }
       ],

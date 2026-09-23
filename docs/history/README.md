@@ -2,8 +2,9 @@
 
 These frozen reviews, findings, remediation notes, designs and slides describe
 their original baselines. A proposed rewrite in this directory is not a claim
-that the rewrite was completed. The current implementation contract is
-[architecture v3](../ARCHITECTURE_V3.md), and the current independent Exchange
+that the rewrite was completed. The current architecture and its known
+[implementation limitations](../ARCHITECTURE_V3.md#current-implementation-limitations)
+are documented in [architecture v3](../ARCHITECTURE_V3.md), and the current independent Exchange
 runbook is [EXCHANGE_V3.md](../EXCHANGE_V3.md). Historical test counts apply only
 to the code and environment identified by the original document.
 The source distribution retains these documents so links from the v3 comparison

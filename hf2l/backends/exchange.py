@@ -9,7 +9,7 @@ import tempfile
 from functools import wraps
 from pathlib import Path
 
-from hf2l.core.ports import (BackendCapabilities, ClaimHandle, ModelStore, PublicationConsistency,
+from hf2l.core.ports import (BackendCapabilities, ClaimHandle, ClaimInactive, ModelStore, PublicationConsistency,
                                   PublicationUncertain, PublishResult, RevisionNotFound, ResolvedReference, RoundContext,
                                   SubmissionCandidate)
 from hf2l_exchange.client import ExchangeClient, ExchangeError
@@ -276,34 +276,65 @@ class ExchangeStore(ModelStore):
 
     @staticmethod
     def _claim(value, reference, reference_name="main"):
-        if value.state != "active":
-            raise ValueError("The coordination attempt is no longer active")
         if value.reference != reference_name:
             raise ValueError("Claim belongs to a different reference")
         if value.expected_token != reference.token:
             raise ValueError("Claim base no longer matches the explicit reference")
+        if value.state == "completed":
+            raise PublicationUncertain(
+                f"Acquisition {value.id} completed with result {value.result_record_id}; "
+                "reconcile its publication before starting another round"
+            )
+        if value.state in {"abandoned", "expired"}:
+            raise ClaimInactive(f"Acquisition {value.id} is {value.state}")
+        if value.state != "active":
+            raise ValueError("The coordination attempt is no longer active")
         return ClaimHandle(value.id, value.fence, reference, value.input_ids, value.lease_until, value)
 
-    def claim_submissions(self, repo_id, *, context, acquisition_key, claim_id=None, lease_seconds=3600):
+    def acquire_claim(self, repo_id, *, context, acquisition_key, claim_id=None, lease_seconds=3600):
+        """Return owned inputs before any fallible input metadata requests."""
         self._require_profile(repo_id)
         if context.repo_id != repo_id:
             raise ValueError("Round context belongs to a different space")
-        value = (self.client.get_acquisition(repo_id, claim_id) if claim_id else
-                 self.client.acquire(repo_id, reference=self._snapshot(context.reference, context.reference_name),
-                                     input_ids=(), idempotency_key=acquisition_key, lease_seconds=lease_seconds))
+        if claim_id:
+            value = self.client.get_acquisition(repo_id, claim_id)
+        else:
+            try:
+                value = self.client.acquire(
+                    repo_id, reference=self._snapshot(context.reference, context.reference_name),
+                    input_ids=(), idempotency_key=acquisition_key, lease_seconds=lease_seconds,
+                )
+            except ExchangeError as exc:
+                # Only acquisition-create replay has this contract: completed
+                # attempts return their handle; these errors confirm a terminal
+                # nonpublication. This also recovers older key-only state files.
+                if exc.status == 409 and exc.code in {"acquisition_not_active", "acquisition_expired"}:
+                    raise ClaimInactive(f"Acquisition replay confirmed {exc.code}") from exc
+                raise
         self._claim(value, context.reference, context.reference_name)
         if claim_id:
             # Reading an attempt is not proof of its ownership; renewal verifies it.
-            value = self.client.renew(repo_id, value)
-        claim = self._claim(value, context.reference, context.reference_name)
-        try:
-            return claim, self.explicit_submissions(repo_id, claim.input_ids)
-        except Exception:
             try:
-                self.client.abandon(repo_id, value)
-            except Exception:
-                pass  # The persisted acquisition key remains available for reconciliation.
-            raise
+                value = self.client.renew(repo_id, value)
+            except ExchangeError as exc:
+                if exc.status == 409 and exc.code == "acquisition_not_active":
+                    # Completion may have raced renewal. Inspect it before
+                    # deciding whether the saved ownership can be discarded.
+                    latest = self.client.get_acquisition(repo_id, claim_id)
+                    self._claim(latest, context.reference, context.reference_name)
+                    # Expired attempts may still be stored as active until a
+                    # successor is acquired. The failed fenced renewal is the
+                    # service's proof that this attempt can no longer publish.
+                    raise ClaimInactive(f"Acquisition {claim_id} is no longer renewable") from exc
+                raise
+        return self._claim(value, context.reference, context.reference_name)
+
+    def claim_submissions(self, repo_id, *, context, acquisition_key, claim_id=None, lease_seconds=3600):
+        claim = self.acquire_claim(repo_id, context=context, acquisition_key=acquisition_key,
+                                   claim_id=claim_id, lease_seconds=lease_seconds)
+        # On descriptor failure the acquisition remains replayable by its key.
+        # The runner saves the handle before reaching this separate read step.
+        return claim, self.explicit_submissions(repo_id, claim.input_ids)
 
     def renew_claim(self, repo_id, claim, lease_seconds):
         value = self.client.renew(repo_id, claim.provider_handle)

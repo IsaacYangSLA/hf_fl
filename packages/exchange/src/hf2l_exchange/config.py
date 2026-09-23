@@ -102,6 +102,7 @@ class StorageSettings:
     grant_seconds: int = 300
     part_size: int = 8388608
     allow_local_http: bool = False
+    session_token: str = ""
 
     def validate(self):
         if not self.bucket:
@@ -111,6 +112,8 @@ class StorageSettings:
                 require_tls(endpoint, self.allow_local_http)
         if bool(self.access_key) != bool(self.secret_key):
             raise ValueError("Storage access key and secret key must be supplied together")
+        if self.session_token and not self.access_key:
+            raise ValueError("Storage session token requires an access key and secret key")
         if len(self.prefix.encode("utf-8")) > 800 or self.prefix.startswith("/") or ".." in self.prefix.split("/"):
             raise ValueError("Storage prefix must be a relative path")
         if not 1 <= self.grant_seconds <= 3600:
@@ -123,8 +126,10 @@ class StorageSettings:
     def from_env(cls):
         return cls(endpoint=_env("S3_ENDPOINT"), public_endpoint=_env("S3_PUBLIC_ENDPOINT"),
                    bucket=_env("S3_BUCKET"), region=_env("S3_REGION", "us-east-1"),
-                   access_key=_env("S3_ACCESS_KEY", os.getenv("AWS_ACCESS_KEY_ID", "")),
-                   secret_key=_env("S3_SECRET_KEY", os.getenv("AWS_SECRET_ACCESS_KEY", "")),
+                   # Leave ambient AWS credentials to boto3's provider chain so
+                   # temporary credentials retain their token and can refresh.
+                   access_key=_env("S3_ACCESS_KEY"), secret_key=_env("S3_SECRET_KEY"),
+                   session_token=_env("S3_SESSION_TOKEN"),
                    prefix=_env("S3_PREFIX", "exchange-v2/"), grant_seconds=int(_env("GRANT_SECONDS", "300")),
                    part_size=int(_env("PART_SIZE", "8388608")),
                    allow_local_http=_bool("ALLOW_LOCAL_HTTP")).validate()

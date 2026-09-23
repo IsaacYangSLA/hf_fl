@@ -24,8 +24,12 @@ issuer/audience, `sub`, `iat`, `exp`, and the `exchange` scope. The API does not
 issue tokens or use a shared client password.
 
 ```bash
-.venv/bin/python -m pip install -e '.[service,exchange]'
+.venv/bin/python -m pip install -e './packages/exchange[server]' -e '.[service,exchange]'
 ```
+
+The current source tree's extras depend on the independent Exchange package,
+so install both local distributions. The `hf2l.exchange.cli` commands below
+explicitly select the retained v1 service.
 
 Set deployment configuration through your environment or secret manager:
 
@@ -109,11 +113,18 @@ a live record can deliberately point to a noncurrent version.
 
 ## Create a space and bind identities
 
-Install `.[exchange]` on client machines. Obtain a token from your identity
-provider and supply `EXCHANGE_ENDPOINT` and `EXCHANGE_TOKEN`. The examples read
-tokens from the environment; no token value needs to be put in source code.
-Automations can use `EXCHANGE_TOKEN_FILE`, whose contents the CLI rereads on
-each API request, or pass a token-provider callable to `ExchangeClient`.
+For the retained Python SDK, install both local distributions on client machines:
+
+```bash
+.venv/bin/python -m pip install -e ./packages/exchange -e '.[exchange]'
+```
+
+Obtain a token from your identity provider and supply `EXCHANGE_ENDPOINT` and
+`EXCHANGE_TOKEN`. The examples read tokens from the environment; no token value
+needs to be put in source code. Automations can pass a token-provider callable
+to `hf2l.exchange.client.ExchangeClient`, which reads it for each API request.
+The current FL CLI's `EXCHANGE_TOKEN_FILE` support belongs to its v2 adapter;
+it does not select this legacy SDK.
 
 Run the following with the bootstrap admin's token:
 
@@ -311,131 +322,35 @@ accepts only a ready, shared `model.global` record (`aggregate_kind_mismatch`
 otherwise) whose base is the current `main` (`aggregate_base_mismatch`).
 Other reference names accept any ready shared record.
 
-## Existing federated-learning commands
+## Legacy FL adapter compatibility
 
-For this backend, `--repo-id` is the generated space ID. Create the space and
-memberships first. The owner initializes the global record using its own token:
+Current `hf2l.init_repo`, participant commands, and `hf2l.owner_fedavg` select the
+independent `/v2` service when passed `--backend exchange`. There is no current
+CLI backend selector for `/v1`. Use the [v2 service setup and FL workflow](EXCHANGE_V3.md)
+for those commands, including its claim renewal and run-state recovery procedures.
 
-```bash
-.venv/bin/python -m hf2l.init_repo \
-  --backend exchange --repo-id "$EXCHANGE_SPACE_ID" --plugin lenet
-```
+The old FL integration survives only in the frozen
+[adapter](../tests/legacy_exchange_adapter.py) and
+[owner runner](../tests/legacy_owner_fedavg.py) regression fixtures from `714fd66`.
+These fixtures are not shipped as application commands. Their
+`exchange-claim.json` state and claim lifecycle do not describe the current
+adapter's `--run-state` behavior.
 
-Each participant uses its own token and the owner-supplied immutable base ID:
-
-```bash
-.venv/bin/python -m hf2l.client_train \
-  --backend exchange --repo-id "$EXCHANGE_SPACE_ID" \
-  --base-revision "$BASE_RECORD_ID" --participant alice \
-  --work-dir work/alice-round-0 --plugin lenet
-```
-
-The participant argument must equal that identity's server-managed binding.
-The owner can inspect eligibility without downloading checkpoints:
-
-```bash
-.venv/bin/python -m hf2l.owner_fedavg \
-  --backend exchange --repo-id "$EXCHANGE_SPACE_ID" \
-  --discover-submissions --check-only --output-dir work/readiness
-```
-
-For a manually selected or discovered round, use `--submission` or
-`--discover-submissions`, then `--publish` as with other backends. For multiple
-automated coordinators, acquire a durable claim and freeze the input set:
-
-```bash
-.venv/bin/python -m hf2l.owner_fedavg \
-  --backend exchange --repo-id "$EXCHANGE_SPACE_ID" \
-  --claim-submissions --claim-lease-seconds 3600 \
-  --output-dir work/owner-round-1 --publish
-```
-
-The claim ID and fence are printed and also written to
-`<output-dir>/exchange-claim.json` while the claim is held; the file is
-removed once the server has released or completed the claim, and kept when an
-abandon request never reached the server so the ID stays available for a
-manual abandon. `POST /claims` freezes the newest ready `training.update` per
-participant for the current `main` base; older updates from the same
-participant are reported as `superseded`, and updates whose creator was revoked
-or no longer holds the recorded participant are left out and reported as
-`skipped` (the CLI
-prints both as `skipped_submission`). A coordinator may instead pass an
-explicit `inputs` list of ready update IDs. The call is
-idempotent by acquisition key: `POST /claims` requires `Idempotency-Key`, scoped
-to that principal and request body. The adapter persists a random key before the
-first POST and reuses it after a lost response. A different job, even under the
-same principal, gets `claim_busy` instead of sharing the fence. Reusing a key
-with a different body fails with `idempotency_key_reused`; replaying an expired,
-released, or completed acquisition fails with `claim_not_active`. To explicitly
-resume a known active run, use `--claim-id` or the persisted state directory.
-An acquisition while another run's lease is active fails with `claim_busy`, and the error body carries
-the active `claim_id` and `lease_until`; fewer than two usable candidates fails
-with `insufficient_submissions` (the body lists the `skipped` updates); a base
-whose claim already produced a result fails with `claim_completed`; an explicit
-input whose creator was rebound or revoked fails with `participant_binding_changed`,
-as does publishing a claimed aggregate that declares such an update. These are
-expected coordinator control conditions. Coordinators and admins can list
-claims with `GET /claims?base_record_id=...&workflow=...&active=true` (the
-SDK's `client.claims(space_id)`); `active=false` includes completed and expired
-ones.
-Domain validation still happens in the owner command: in claim mode an input
-that fails manifest or allowlist checks is skipped, and the published aggregate
-declares exactly the inputs it used, which must be a subset of the frozen set.
-If the round fails after acquisition (for example an incompatible checkpoint),
-the CLI abandons the claim so `main` is not left frozen; the holder can also
-call `POST /claims/{id}:abandon` with its fence, and a space admin can abandon
-any claim without one. Withdraw the offending update, then claim again.
-After lease expiry, a new acquisition retains the frozen inputs, minus any whose
-creator was rebound or revoked in the meantime (reported as `skipped`), or accepts a
-new explicit `inputs` list, and advances the fence; an expired lease no longer
-blocks a plain generation-fenced `PUT /refs/main`. Stale holders cannot publish
-or bypass an active claim by directly updating `main`. A known active claim can
-be explicitly resumed with `--claim-id ID` in a new output directory; after a
-crash, read the ID from the interrupted run's `exchange-claim.json` or from
-`GET /claims`, or simply run `--claim-submissions` again with the same
-coordinator identity, which returns the held claim (`--output-dir` must be a
-new directory, so the CLI always recovers through this holder idempotency).
-Programmatic callers of `ExchangeStore.claim_submissions(state_dir=...)` that
-reuse a directory resume the persisted claim while it is still held; a stale
-file (claim expired, completed or taken over) is discarded and a fresh
-acquisition made instead. A running
-coordinator can renew through `POST /claims/{id}:renew` with its fence and
-`lease_seconds`; the CLI does not automatically renew, so select a sufficient
-lease duration (up to 24 hours).
-
-Record metadata is limited to 64 KiB. The SDK's `put_record` measures the
-serialized metadata and raises `ExchangeError` with code `metadata_too_large`
-(and `size`/`limit` in `details`) before creating a draft, so a participant
-whose `--metadata-json` training metadata is too large fails at upload time
-with a clear message instead of after the transfer. The owner's round record
-`fedavg_round.json` is stored inline in the aggregate's metadata next to
-`input_record_ids`. When that metadata would exceed 48 KiB (three quarters of
-the limit), the adapter uploads the complete manifest as the attachment
-`fedavg_round-full.json` and stores a bounded copy inline: every top-level
-field is kept, each submission keeps `participant`, `resolved_revision`,
-`num_examples`, `coefficient` and as many scalar `training` values as its share
-of the budget allows (lists and nested objects are dropped), `evaluation`
-keeps scalar values only, and `complete_manifest` names the attachment.
-Readers that need the round number, backend or checkpoint hashes keep using
-the inline copy; `download_snapshot` without a pattern materialises both files.
-
-Before writing anything, the adapter's `download_snapshot` checks the record's
-file layout: an attachment named like an inline manifest (case-insensitively,
-including nested names) or colliding with another attachment, as records
-accepted before these server checks may be, fails with `ValueError` naming the
-record, and a filesystem error while materialising an attachment is reported
-the same way. `owner_fedavg` therefore skips such a record in discovery and
-claim modes (`skipped_submission=...`) instead of aborting the round.
-Manifest-only reads, such as the readiness check, never download attachments,
-and the adapter refuses to upload an attachment named like a manifest.
+Explicit legacy applications can still use `hf2l.exchange.client.ExchangeClient`
+and the `hf2l.exchange.cli` service commands in this guide. The v1 service
+retains coordinator claim endpoints: acquire with `POST /claims` and an
+`Idempotency-Key`, inspect with `GET /claims` or `GET /claims/{id}`, and renew or
+abandon with `POST /claims/{id}:renew` or `POST /claims/{id}:abandon`. Callers must
+manage claim leases and fences; those endpoints do not provide an automatic
+renewing FL runner. See the [historical design](history/EXCHANGE_SERVICE_DESIGN.md)
+for the original resource model.
 
 Each successful publication stores an event transactionally with its state
 change. Poll `GET /events?cursor=...` using the returned `next_cursor`, persist
 that cursor, and re-query ready records when a `record.ready` event arrives.
 Consumers may receive duplicate events and should deduplicate by event ID.
-The first implementation provides this pull feed, not outbound webhooks;
-an external bridge can dispatch the existing GitHub workflow. The existing HF
-webhook workflow remains HF-specific and is not silently redirected.
+The v1 service provides this pull feed, not outbound webhooks. The existing
+HF webhook workflow remains HF-specific.
 
 ## Recovery and operational scope
 
@@ -492,7 +407,8 @@ commands.
 Install the optional test dependencies and run the offline suite:
 
 ```bash
-.venv/bin/python -m pip install -e '.[service,exchange,exchange-test]'
+.venv/bin/python -m pip install -e './packages/exchange[server,test]' \
+  -e '.[torch,hf,examples,service,exchange,exchange-test]'
 .venv/bin/python -m unittest discover -s tests -v
 ```
 

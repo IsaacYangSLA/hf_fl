@@ -121,7 +121,8 @@ class S3BlobStore:
                                     retries={"mode": "standard", "max_attempts": 3})}
         if self.settings.access_key:
             options.update(aws_access_key_id=self.settings.access_key,
-                           aws_secret_access_key=self.settings.secret_key)
+                           aws_secret_access_key=self.settings.secret_key,
+                           aws_session_token=getattr(self.settings, "session_token", "") or None)
         return boto3.session.Session().client("s3", endpoint_url=endpoint or None, **options)
 
     @property

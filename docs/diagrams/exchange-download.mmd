@@ -1,0 +1,37 @@
+sequenceDiagram
+    autonumber
+    actor App as Client application
+    participant SDK as Exchange SDK
+    participant API as API and service
+    participant DB as Metadata database
+    participant S3 as Versioned blob storage
+
+    Note over App,S3: Prerequisites: external IdP access token and current membership with access to a published record
+    Note over SDK,API: Route prefixes: R = /v2/spaces/{space}/records, A = R/{record}/attachments/{attachment}
+    App->>SDK: get_record(space, record_id)
+    SDK->>API: GET R/{record} with Bearer JWT
+    API->>API: Authenticate JWT and required exchange scope
+    API->>DB: Check current membership and record visibility, read metadata
+    API-->>SDK: Metadata and attachment descriptors including size and SHA-256
+    SDK-->>App: RecordDescriptor
+    App->>SDK: download_attachment(space, record_id, attachment, output)
+    Note over App,SDK: SDK can return immediately if an existing local file already matches size and SHA-256
+
+    loop Initial transfer or bounded retry after interruption
+        SDK->>API: GET A/download with Bearer JWT
+        API->>API: Authenticate JWT and required exchange scope
+        API->>DB: Check membership and visibility, require published record and verified attachment
+        DB-->>API: Storage key, verified VersionId, size and SHA-256
+        API->>API: Sign expiring GetObject URL bound to VersionId
+        API->>DB: Recheck authorization and states, retain grant expiry
+        API-->>SDK: Signed URL, headers, expiry, size and SHA-256
+        SDK->>SDK: Check grant descriptor against expected attachment
+        SDK->>S3: GET signed URL, Range header if resuming partial file
+        S3-->>SDK: 200 or validated 206 response with bytes
+        SDK->>SDK: Stream into local partial file within size and time bounds
+    end
+    SDK->>SDK: Verify final size and SHA-256, replace destination with completed file
+    SDK-->>App: Local file path
+
+    Note over SDK,S3: Blob requests use signed grants without the Exchange Bearer token<br/>New grants require current authorization, already issued grants remain usable until expiry
+    Note over App,S3: Successful download path shown, authentication failures and integrity errors stop the operation
