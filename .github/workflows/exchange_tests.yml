@@ -94,6 +94,7 @@ jobs:
       - name: Install local distributions and legacy regression dependencies
         run: |
           python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           .venv/bin/python -m pip install -e './packages/exchange[server,test]' -e '.[torch,hf,examples,exchange,service,exchange-test]'
       - name: Run all application, numeric golden, architecture and legacy regressions
@@ -114,7 +115,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd 'pg_isready -U hf2l_test'
+          --health-cmd "pg_isready -U hf2l_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
@@ -135,6 +136,7 @@ jobs:
       - name: Install both distributions and test dependencies
         run: |
           python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           .venv/bin/python -m pip install -e './packages/exchange[server,test]' -e '.[torch,hf,examples,exchange,service,exchange-test]'
       - name: Start pinned ephemeral S3 test service

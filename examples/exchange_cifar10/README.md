@@ -30,6 +30,7 @@ Create it if it does not exist:
 
 ```bash
 python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
 # CPU PyTorch; skip this line if the environment already has suitable PyTorch.
 .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
 .venv/bin/python -m pip install -e './packages/exchange[server]' \

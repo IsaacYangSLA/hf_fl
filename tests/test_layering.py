@@ -107,6 +107,12 @@ LAYERS: tuple[Layer, ...] = (
     Layer("training examples", ("hf2l.training", "hf2l.data_utils"), ()),
     Layer("examples", ("hf2l.examples",), ("hf2l.examples",)),
     Layer("installed generic example", ("examples.generic_exchange",), SDK_MODULES),
+    # These demo composition scripts need specific Exchange helpers. Keep the
+    # grants on the scripts so sibling examples cannot import server internals.
+    Layer("CIFAR-10 setup composition", ("examples.exchange_cifar10.setup_federation",),
+          ("hf2l_exchange.auth", "hf2l_exchange.client")),
+    Layer("CIFAR-10 service composition", ("examples.exchange_cifar10.start_service",),
+          ("hf2l_exchange.transfer_client",)),
     Layer("installed examples", ("examples",), ("examples", "hf2l.data_utils")),
     Layer("cli", ("hf2l.cli",), ("hf2l", "hf2l_exchange.cli")),
     Layer("legacy commands", LEGACY_COMMANDS, ("hf2l",)),
@@ -551,6 +557,54 @@ class GateSelfTests(unittest.TestCase):
         problems = edge_violations(self._source("hf2l.examples.mnist_data", "from hf2l.core import ports\n"))
         self.assertEqual(1, len(problems))
         self.assertIn("layer 'examples' may import hf2l.examples", problems[0])
+
+    def test_cifar10_composition_scripts_accept_their_required_exchange_imports(self) -> None:
+        scripts = {
+            "examples.exchange_cifar10.setup_federation": (
+                "from hf2l_exchange.auth import principal_id\n"
+                "from hf2l_exchange.client import ExchangeClient\n"
+            ),
+            "examples.exchange_cifar10.start_service": (
+                "def run():\n    from hf2l_exchange.transfer_client import require_tls\n"
+            ),
+        }
+        for name, text in scripts.items():
+            with self.subTest(module=name):
+                self.assertEqual([], edge_violations(self._source(name, text)))
+
+    def test_cifar10_composition_scripts_reject_unrelated_exchange_imports(self) -> None:
+        forbidden = {
+            "examples.exchange_cifar10.setup_federation": (
+                "hf2l_exchange.api", "hf2l_exchange.application", "hf2l_exchange.storage",
+                "hf2l_exchange.transfer_client",
+            ),
+            "examples.exchange_cifar10.start_service": (
+                "hf2l_exchange.api", "hf2l_exchange.application", "hf2l_exchange.storage",
+                "hf2l_exchange.auth", "hf2l_exchange.client",
+            ),
+        }
+        for name, targets in forbidden.items():
+            for target in targets:
+                with self.subTest(module=name, target=target):
+                    problems = edge_violations(self._source(name, f"import {target}\n"))
+                    self.assertEqual(1, len(problems))
+                    self.assertIn(f"imports {target};", problems[0])
+
+    def test_cifar10_composition_allowances_do_not_extend_to_sibling_examples(self) -> None:
+        siblings = (
+            "examples.exchange_cifar10", "examples.exchange_cifar10.train_client",
+            "examples.exchange_cifar10.setup_federation_extra", "examples.exchange_cifar10.start_service_extra",
+            "examples.other.setup_federation", "examples.other.start_service",
+        )
+        text = (
+            "from hf2l_exchange.auth import principal_id\n"
+            "from hf2l_exchange.client import ExchangeClient\n"
+            "from hf2l_exchange.transfer_client import require_tls\n"
+        )
+        for name in siblings:
+            with self.subTest(module=name):
+                self.assertEqual("installed examples", layer_of(name).name)
+                self.assertEqual(3, len(edge_violations(self._source(name, text))))
 
     def test_only_the_cli_init_may_import_hf2l_eagerly(self) -> None:
         self.assertEqual([], init_violations(self._source("hf2l.cli", "from hf2l.cli import fl\n", is_package=True)))

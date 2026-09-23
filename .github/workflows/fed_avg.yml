@@ -37,6 +37,7 @@ jobs:
       - name: Install HF2L with CPU PyTorch
         run: |
           python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           .venv/bin/python -m pip install '.[hf]'
       - name: Check current-round PRs
@@ -99,6 +100,7 @@ jobs:
       - name: Install HF2L with CPU PyTorch
         run: |
           python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           .venv/bin/python -m pip install '.[hf]'
       - name: Validate, average, and publish
