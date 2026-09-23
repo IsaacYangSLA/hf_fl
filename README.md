@@ -26,6 +26,7 @@ formats; it does not rename them to version 3.
 
 - [Three design pillars](#three-design-pillars)
 - [Design overview](#design-overview)
+- [Examples](#examples)
 - [Install and authenticate](#install-and-authenticate)
   - [Local store](#local-store)
   - [Hugging Face Hub](#hugging-face-hub)
@@ -71,6 +72,27 @@ profile supplies the FL rules; generic spaces need no model vocabulary.
 The [historical slides](docs/history/DESIGN_SLIDES.md) and
 [legacy v1 service guide](docs/EXCHANGE_SERVICE.md) describe earlier interfaces.
 New `--backend exchange` usage targets the independent service's `/v2` API.
+
+## Examples
+
+The [`examples/`](examples/) folder contains runnable demonstrations, model and
+data helpers used by the built-in training plugins, and integration samples.
+Start with the two-client Exchange demo for a complete training round, or the
+generic Exchange example for metadata and file exchange without ML dependencies.
+
+| Example | What it demonstrates | Documentation |
+| --- | --- | --- |
+| [Two-client VGG/CIFAR-10 demo](examples/exchange_cifar10/) | Real CIFAR-10 preparation, authenticated Exchange startup, separate client training, weighted owner FedAvg, evaluation, and subsequent rounds. | [Demo walkthrough](examples/exchange_cifar10/README.md) |
+| [Generic Exchange](examples/generic_exchange.py) | Upload, discover, download, and process a document using generic records, blob transfers, and coordinated publication. | [Generic SDK guide](docs/EXCHANGE_V3.md#generic-sdk-example) |
+| [LeNet model](examples/lenet_model.py) and [MNIST-shaped data](examples/mnist_data.py) | Model and data helpers for the `lenet` plugin, using local NPZ data or synthetic smoke-test data. | [Initialization](#lenet-with-mnist-shaped-data) and [client training](#client-option-b-trusted-training-plugin) |
+| [VGG model](examples/vgg_model.py) and [CIFAR-10 data](examples/cifar10_data.py) | Model and data helpers for the `vgg-cifar10` plugin, using local NPZ data or synthetic smoke-test data. | [Initialization](#vgg-with-cifar-10-data) and [client training](#client-option-b-trusted-training-plugin) |
+| [Hugging Face webhook relay](examples/hf_webhook_relay.py) | Authenticate HF webhook events and dispatch the GitHub workflow that checks whether two eligible PRs share the latest base before running FedAvg. | [Webhook and workflow setup](docs/FEDAVG_WORKFLOW.md) |
+| [Participant allowlist](examples/participant_allowlist.example.json) | Placeholder mapping from HF/JFrog repository identities to approved participant IDs for submission discovery. | [Allowlist and discovery guide](#automatically-discover-the-current-round) |
+
+Run example commands from the repository root with the project `.venv`, and
+install the dependencies described in the corresponding guide. The LeNet and
+VGG helpers do not download datasets themselves; the Exchange CIFAR-10 demo
+includes a separate script that downloads and verifies the real dataset.
 
 ## Install and authenticate
 
@@ -374,6 +396,11 @@ The CIFAR-10 NPZ format uses integer `y` shaped `[N]` and `x` shaped either
 `[0, 255]` or floating-point values in `[0, 1]`; the plugin applies standard
 CIFAR-10 channel normalization. Omitting `dataset_npz` uses deterministic
 synthetic RGB data for an offline smoke test, not for meaningful evaluation.
+
+For a complete run with real data, see the
+[two-client VGG/CIFAR-10 Exchange demo](examples/exchange_cifar10/README.md).
+It includes dataset preparation, authenticated service startup, separate client
+commands, sample-weighted owner aggregation, and subsequent rounds.
 
 Users of the three-step workflow make the same switch in their own trainer:
 load the VGG repository checkpoint, train it on local CIFAR-10 data, and write a
