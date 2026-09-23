@@ -22,16 +22,18 @@ sequenceDiagram
         API->>API: Authenticate JWT and required exchange scope
         API->>DB: Check membership and visibility, require published record and verified attachment
         DB-->>API: Storage key, verified VersionId, size and SHA-256
-        API->>API: Sign expiring GetObject URL bound to VersionId
+        API->>API: Locally sign expiring GetObject URL bound to verified VersionId
+        Note right of API: Use explicit Exchange S3 credentials with any configured session token,<br/>or boto3's AWS credential provider chain and supported refresh<br/>Temporary credentials include their session token in the signed URL
         API->>DB: Recheck authorization and states, retain grant expiry
         API-->>SDK: Signed URL, headers, expiry, size and SHA-256
         SDK->>SDK: Check grant descriptor against expected attachment
         SDK->>S3: GET signed URL, Range header if resuming partial file
-        S3-->>SDK: 200 or validated 206 response with bytes
-        SDK->>SDK: Stream into local partial file within size and time bounds
+        S3-->>SDK: 200 response or 206 response with Content-Range and bytes
+        SDK->>SDK: Validate 206 range against offset and expected total size
+        SDK->>SDK: Stream into partial file within size and time bounds<br/>Append valid 206 bytes, restart local file on 200
     end
     SDK->>SDK: Verify final size and SHA-256, replace destination with completed file
     SDK-->>App: Local file path
 
-    Note over SDK,S3: Blob requests use signed grants without the Exchange Bearer token<br/>New grants require current authorization, already issued grants remain usable until expiry
+    Note over SDK,S3: Blob requests use signed grants without the Exchange Bearer token<br/>New grants require current authorization, membership changes do not revoke an issued grant<br/>A grant can stop working before its signed expiry if the signing credentials expire or are revoked
     Note over App,S3: Successful download path shown, authentication failures and integrity errors stop the operation

@@ -18,11 +18,13 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const output = join(root, 'docs', 'diagrams');
 const diagrams = [
   { id: 'upload', file: 'exchange-upload', title: 'Upload & publish',
-    description: 'Small metadata requests go to the service. Large files go directly to private blob storage. The worker verifies each stored version before the client publishes its record.' },
+    description: 'Small metadata requests go to the service. Large files go directly to private blob storage, including retries after a lost response. The worker verifies each stored version before the client publishes its record.' },
   { id: 'download', file: 'exchange-download', title: 'Read & download',
     description: 'The service checks current access and returns metadata or a short-lived download grant. The client reads the pinned object version directly and verifies the downloaded bytes.' },
+  { id: 'worker', file: 'exchange-worker', title: 'Worker & cleanup',
+    description: 'Cancellation can change an attempt after a worker selects it. Acquisition rechecks its category under the lifecycle lock, so cleanup runs through the cleanup pool when it becomes eligible.' },
   { id: 'fedavg', file: 'fedavg-round', title: 'Federated round',
-    description: 'Two participants train from one immutable global base. The owner freezes eligible updates, validates and averages them, then advances main through a fenced acquisition.' },
+    description: 'Two participants train from one immutable global base. The owner acquires or resumes frozen inputs, saves ownership before metadata reads, then validates and averages updates and advances main through a fenced acquisition.' },
 ];
 const puppeteer = createRequire(import.meta.url)(resolve(values.puppeteer));
 const profile = await mkdtemp(join(tmpdir(), 'hf2l-mermaid-'));
@@ -134,7 +136,7 @@ a{color:#255c93}footer{font-size:12px;color:#61738b;margin-top:22px;padding-top:
 <main><nav aria-label="Choose a call sequence">${diagrams.map(d => `<a href="#${d.id}">${escape(d.title)}</a>`).join('')}</nav>
 ${panels}
 <div class="context"><div><h3>Reading the diagrams</h3><p>Solid arrows are calls; dashed arrows are responses. Notes group prerequisites and intentional omissions. Routes are relative to the space prefix identified in each diagram. The API lane includes authentication, transactional application commands, and transfer orchestration.</p></div>
-<div><h3>Scope and current limitations</h3><p>These views cover the independent Exchange backend and a successful owner-controlled FedAvg round. Identity provisioning, HF/JFrog transports, and failure/cleanup paths are outside this view. Existing implementation gaps remain: see the <a href="../ARCHITECTURE_V3.md#current-implementation-limitations">v3 limitations</a> and <a href="../EXCHANGE_V3.md">service runbook</a>.</p></div></div>
+<div><h3>Scope and current limitations</h3><p>These views cover the independent Exchange backend, multipart retry, cancellation and worker isolation, and owner-controlled FedAvg with acquisition recovery. Identity provisioning, HF/JFrog transports, and the complete failure state machine are outside this view. Existing implementation gaps remain: see the <a href="../ARCHITECTURE_V3.md#current-implementation-limitations">v3 limitations</a> and <a href="../EXCHANGE_V3.md">service runbook</a>.</p></div></div>
 <footer>Rendered from editable Mermaid sources. All diagrams and source text are embedded; this page makes no network requests. <a href="README.md">Source map and regeneration instructions</a>.</footer>
 </main>
 <script>

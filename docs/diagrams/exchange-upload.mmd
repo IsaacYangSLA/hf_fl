@@ -27,26 +27,42 @@ sequenceDiagram
         API-->>SDK: Uploading state, protocol and part size
         SDK->>API: GET A/parts
         API->>S3: ListParts after ownership and state checks
-        API-->>SDK: Existing part numbers and sizes
-        loop Each missing part
+        API-->>SDK: Existing part numbers, ETags and sizes
+        SDK->>SDK: Resume parts whose number and expected size match
+        loop Each missing or wrong-size part
             SDK->>API: POST A/grants with part number
             API->>API: Sign expiring UploadPart URL with expected Content-Length
             API->>DB: Recheck authorization and state, retain actual grant expiry
             API-->>SDK: Signed URL and required headers
-            SDK->>S3: PUT bytes directly using signed URL
-            S3-->>SDK: Part upload result
+            SDK->>S3: PUT part bytes directly using signed URL
+            alt Successful response received
+                S3-->>SDK: Part upload result
+            else Provider accepted bytes, but response was lost
+                S3--xSDK: Successful response lost in transit
+                SDK->>API: POST A/grants again for the same part number
+                API->>API: Sign a fresh grant for the same expected length
+                API->>DB: Recheck authorization and state, retain grant expiry
+                API-->>SDK: Fresh signed URL and required headers
+                SDK->>S3: Retry the same part number and bytes
+                S3->>S3: Replace that logical part and its ETag
+                S3-->>SDK: Part upload result
+            end
         end
+        Note over SDK,S3: The SDK bounds PUT retries and the upload deadline, retries obtain fresh grants<br/>S3 must expose one latest part per number, SeaweedFS 4.47 needs the pinned single-gateway compatibility build
         SDK->>SDK: Recheck source size and SHA-256
         SDK->>API: POST A/complete
         API->>DB: Authorize and mark completing with mutation token
-        API->>S3: Check object and parts, CompleteMultipartUpload
+        API->>S3: HEAD private attempt key, then ListParts if no completed object
+        S3-->>API: Current logical parts and their ETags
+        API->>API: Require exact count, contiguous unique numbers and expected sizes
+        API->>S3: CompleteMultipartUpload with listed ETags
         S3-->>API: Stored object VersionId
         API->>DB: Commit verifying state and VersionId
         API-->>SDK: 202 with attachment state
     end
 
     Note over SDK,Worker: SDK may retry POST R/{record}/publish, receive 409 attachments_not_verified,<br/>GET the record and sleep while verification is pending
-    Worker->>DB: Select due attempts, acquire database lease
+    Worker->>DB: Select due verification work, recheck category, acquire lease
     Worker->>S3: GET exact object VersionId and stream bytes
     Worker->>Worker: Compare actual size and SHA-256 with declared values
     Worker->>DB: If lease still owned, commit verified binding and event
@@ -56,4 +72,4 @@ sequenceDiagram
     API-->>SDK: Published record
     SDK-->>App: RecordDescriptor
 
-    Note over App,S3: Normal successful path shown, upload retries, failed verification and cleanup are omitted<br/>Large client uploads bypass the API, the worker reads stored bytes to verify them
+    Note over App,S3: A lost successful PUT response is shown, other failures and cleanup use separate recovery paths<br/>Large client uploads bypass the API, exact-version worker verification still checks all stored bytes

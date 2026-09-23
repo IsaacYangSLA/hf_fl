@@ -1,0 +1,53 @@
+sequenceDiagram
+    autonumber
+    actor Client as Record owner
+    participant API as API and service
+    participant Tick as Worker tick
+    participant Verify as Verification pool
+    participant Cleanup as Cleanup pool
+    participant DB as Metadata database
+    participant S3 as Versioned blob storage
+
+    Note over Tick,S3: Independent thread pools reserve verification and cleanup capacity<br/>Storage I/O runs outside database transactions, an acquired attempt is a detached state snapshot
+    Tick->>DB: expire(batch), then work(batch)
+    DB-->>Tick: Due verifying attempt T in verification list
+    Note over Tick,DB: Verification list includes initiating, completing and verifying states<br/>Both lists require next_attempt due and no active lease, cleanup also requires expired grants
+    Tick->>Verify: Submit process(T, cleanup=false)
+
+    Note over Client,Verify: Example race: cancellation commits after selection, before lease acquisition
+    Client->>API: DELETE /v2/spaces/{space}/records/{record}
+    API->>DB: Authorize and lock Space for lifecycle transaction
+    API->>DB: Cancel draft, move attempt T to cleanup<br/>Move byte charge from allocated to reclaiming
+    Note over API,DB: Retain active ownership and delay cleanup until existing grants expire
+    API-->>Client: Record state cancelled
+
+    Verify->>DB: acquire(T, cleanup=false), lock Space, refresh attempt
+    DB-->>Verify: Current state cleanup does not match selected category
+    Verify->>Verify: Return skipped without leasing, mutating or calling storage
+    Verify-->>Tick: skipped
+    Note over Verify,Cleanup: The symmetric check skips verification states dispatched to cleanup<br/>If cancellation happens after acquisition, verification may finish its GET,<br/>but its state-checked commit is rejected, it never switches to cleanup I/O
+    Tick->>Tick: Wait for all submitted futures, then prune history
+    Note over Tick,Cleanup: Pools are independent within a finite batch<br/>A tick waits for both pools before selecting the next batch
+
+    Tick->>DB: Later tick: select T when retry time, lease and grant gates permit
+    DB-->>Tick: T in cleanup list
+    Tick->>Cleanup: Submit process(T, cleanup=true)
+    Cleanup->>DB: acquire(T, cleanup=true), lock Space, refresh attempt<br/>Recheck category and due gates, commit lease token
+    DB-->>Cleanup: Leased cleanup snapshot
+    Note over Cleanup,DB: Heartbeat renews only the matching unexpired lease during provider I/O
+    Cleanup->>S3: ListMultipartUploads at T's private key, abort matching uploads
+    Cleanup->>S3: ListParts must confirm each aborted upload is gone
+    Cleanup->>S3: ListObjectVersions, delete matching versions and delete markers
+    S3-->>Cleanup: Cleanup calls completed
+    Cleanup->>DB: commit(cleaned), lock Space and attempt<br/>Require current token, live lease and matching state
+    alt Lease ownership or current state no longer matches
+        DB-->>Cleanup: Reject stale result without finalizing cleanup
+        Cleanup-->>Tick: skipped
+    else Outstanding storage mutation markers remain
+        DB-->>Cleanup: Retain cleanup and reclaiming charge, schedule retry
+        Cleanup-->>Tick: skipped
+    else Ownership valid and mutations settled
+        DB-->>Cleanup: Commit cleaned and event<br/>Release reclaiming charge when all blob attempts are cleaned
+        Cleanup-->>Tick: cleaned
+    end
+    Note over Cleanup,S3: Provider failures retry cleanup, a database lease cannot cancel outstanding storage mutations<br/>Mutation markers prevent premature cleanup finalization and quota release

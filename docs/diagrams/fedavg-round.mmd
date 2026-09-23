@@ -30,12 +30,30 @@ sequenceDiagram
     S->>X: GET /records/{base_id}
     X-->>S: Published record<br/>Inline round metadata
     S-->>R: fedavg_round.json
-    R->>R: Persist round and acquisition key<br/>under run-state lock
+    R->>R: Read or persist round and key<br/>under run-state lock
     R->>S: acquire_claim(context,<br/>acquisition_key)
-    S->>X: POST /acquisitions<br/>main + expected_token<br/>input_record_ids=[]<br/>Persisted idempotency key
-    X->>D: Transaction: authorize publisher<br/>Check reference generation<br/>Newest eligible update per participant<br/>Require at least 2, freeze IDs<br/>Persist holder, fence and lease
-    D-->>X: Acquisition committed
-    X-->>S: Active acquisition<br/>Frozen input IDs
+    alt Saved or explicitly selected claim ID
+        S->>X: GET /acquisitions/{id}
+        X-->>S: Acquisition state and frozen IDs
+        S->>S: Require matching reference<br/>and active state before renewal
+        S->>X: POST /acquisitions/{id}/renew<br/>fence, proves current ownership
+        X-->>S: Renewed acquisition or error
+        Note over S,X: Inactive renewal triggers another GET<br/>to distinguish a completion race<br/>from confirmed lost ownership.
+    else New acquisition or key-only replay
+        S->>X: POST /acquisitions<br/>main + expected_token<br/>input_record_ids=[]<br/>Persisted idempotency key
+        X->>D: Transaction: authorize publisher<br/>Check reference generation<br/>Newest eligible update per participant<br/>Require at least 2, freeze IDs<br/>Persist holder, fence and lease
+        D-->>X: Acquisition committed or replayed
+        X-->>S: Acquisition state<br/>Frozen input IDs
+    end
+    Note over R,X: Changed round or completed acquisition stops recovery.<br/>Uncertain outcomes retain evidence for reconciliation.<br/>An explicitly selected claim is never replaced.
+    opt Confirmed inactive nonpublication, no explicit claim ID
+        S-->>R: ClaimInactive
+        R->>R: Persist new key<br/>Remove saved claim ownership
+        R->>S: acquire_claim() with new key
+        S->>X: POST /acquisitions<br/>Same round, new idempotency key
+        X->>D: Recheck base and eligibility<br/>Freeze a new acquisition
+        X-->>S: New active acquisition
+    end
     S-->>R: ClaimHandle with frozen input IDs
     R->>R: Persist claim ID, fence and lease<br/>Start ClaimRenewal thread
 
@@ -54,7 +72,7 @@ sequenceDiagram
             X-->>S: Published training.update descriptor
         end
         S-->>R: Frozen candidates
-        Note over R,X: Metadata failures reach the runner with saved ownership.<br/>Confirmed abandon clears run-state, failed abandon retains it.<br/>Without an explicit claim ID, confirmed inactive attempts can restart.<br/>Completed or uncertain publication requires reconciliation.
+        Note over R,X: Metadata failures reach the runner with saved ownership.<br/>Confirmed abandon clears run-state, failed abandon retains it.
         R->>S: Resolve inputs<br/>Download submission manifests
         S-->>R: Immutable IDs<br/>Participant-bound metadata
         R->>R: Validate base, round and participant<br/>Check algorithm, require at least 2
