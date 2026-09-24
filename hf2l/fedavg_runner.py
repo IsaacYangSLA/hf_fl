@@ -10,7 +10,7 @@ import time
 import uuid
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 from hf2l.allowlist import load_allowlist
@@ -221,9 +221,11 @@ class ClaimRenewal:
 class FedAvgRunner:
     """Run one round, returning structured data and retaining explicit claim ownership."""
 
-    def __init__(self, store, *, aggregator: Aggregator | None = None):
+    def __init__(self, store, *, aggregator: Aggregator | None = None,
+                 before_publish: Callable[[RoundContext, Path], None] | None = None):
         self.store = store
         self.aggregator = aggregator
+        self.before_publish = before_publish
         self.context = None
         self.renewal = None
         self.run_state = None
@@ -493,9 +495,15 @@ class FedAvgRunner:
         write_json(aggregate_dir / ROUND_FILE, round_record)
         publication = None
         if config.publish:
+            publication_paths = regular_file_paths(aggregate_dir)
             self._check_lease()
+            # A durable controller can record its intent only after preparation
+            # succeeds, immediately before the first possible publication write.
+            # Callback failure follows the normal prepublication cleanup path.
+            if self.before_publish is not None:
+                self.before_publish(context, aggregate_dir)
             publication = store.publish_aggregate(
-                config.repo_id, aggregate_dir, regular_file_paths(aggregate_dir), expected_base=base_revision,
+                config.repo_id, aggregate_dir, publication_paths, expected_base=base_revision,
                 next_round=next_round, tag=config.tag, reference=base_reference,
                 claim=self.renewal.claim if self.renewal else None,
             )
@@ -507,8 +515,13 @@ class FedAvgRunner:
         return self._finish(config, result)
 
 
-def run_round(store, config: RoundConfig, *, aggregator: Aggregator | None = None) -> RoundResult:
-    """Run a round without owning the caller's store lifetime or writing to stdout/stderr."""
+def run_round(store, config: RoundConfig, *, aggregator: Aggregator | None = None,
+              before_publish: Callable[[RoundContext, Path], None] | None = None) -> RoundResult:
+    """Run a round without owning the store, optionally recording publication intent.
+
+    ``before_publish(context, aggregate_dir)`` runs once, after preparation and
+    evaluation succeed and before publishing. Raising prevents the publication.
+    """
     if not isinstance(config, RoundConfig):
         raise TypeError("run_round requires RoundConfig")
-    return FedAvgRunner(store, aggregator=aggregator).run(config)
+    return FedAvgRunner(store, aggregator=aggregator, before_publish=before_publish).run(config)

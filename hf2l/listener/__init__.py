@@ -1,1 +1,1 @@
-"""Persistent client automation over the backend-neutral model-store interface."""
+"""Shared durable polling with client and owner workflows over model stores."""

@@ -39,7 +39,7 @@ formats; it does not rename them to version 3.
   - [Train with any local code](#2-train-with-any-local-code)
   - [Validate and upload a submission](#3-validate-and-upload-a-submission)
 - [Client option B: trusted training plugin](#client-option-b-trusted-training-plugin)
-- [Client listener: train when a new round is ready](#client-listener-train-when-a-new-round-is-ready)
+- [Client and owner listeners](#client-and-owner-listeners)
 - [Cyclic federated learning without FedAvg](#cyclic-federated-learning-without-fedavg)
 - [FedAvg: validate, average, and publish submissions](#fedavg-validate-average-and-publish-submissions)
   - [Automatically discover the current round](#automatically-discover-the-current-round)
@@ -83,7 +83,7 @@ generic Exchange example for metadata and file exchange without ML dependencies.
 
 | Example | What it demonstrates | Documentation |
 | --- | --- | --- |
-| [Two-client VGG/CIFAR-10 demo](examples/exchange_cifar10/) | Real CIFAR-10 preparation, authenticated Exchange startup, separate client training, weighted owner FedAvg, evaluation, and subsequent rounds. | [Demo walkthrough](examples/exchange_cifar10/README.md) |
+| [Two-client VGG/CIFAR-10 demo](examples/exchange_cifar10/) | Real CIFAR-10 preparation, authenticated Exchange startup, two client listeners and an owner listener that automatically train, aggregate, evaluate, and publish two rounds. | [Listener walkthrough](examples/exchange_cifar10/README.md#5-owner-start-the-fedavg-listener) and [manual alternative](examples/exchange_cifar10/README.md#optional-manual-training-and-aggregation) |
 | [Generic Exchange](examples/generic_exchange.py) | Upload, discover, download, and process a document using generic records, blob transfers, and coordinated publication. | [Generic SDK guide](docs/EXCHANGE_V3.md#generic-sdk-example) |
 | [LeNet model](examples/lenet_model.py) and [MNIST-shaped data](examples/mnist_data.py) | Model and data helpers for the `lenet` plugin, using local NPZ data or synthetic smoke-test data. | [Initialization](#lenet-with-mnist-shaped-data) and [client training](#client-option-b-trusted-training-plugin) |
 | [VGG model](examples/vgg_model.py) and [CIFAR-10 data](examples/cifar10_data.py) | Model and data helpers for the `vgg-cifar10` plugin, using local NPZ data or synthetic smoke-test data. | [Initialization](#vgg-with-cifar-10-data) and [client training](#client-option-b-trusted-training-plugin) |
@@ -435,13 +435,19 @@ def evaluate_model(model_dir, options):
 Each repeated `--plugin-arg KEY=VALUE` is JSON-decoded when possible, so
 numbers, booleans, arrays, and objects retain their types.
 
-## Client listener: train when a new round is ready
+<a id="client-listener-train-when-a-new-round-is-ready"></a>
+
+## Client and owner listeners
 
 `hf2l listen` runs one participant's trusted training plugin whenever a new
 global round is available. It supports every existing backend: Hugging Face,
 JFrog, Exchange, and the local store. The listener polls the global reference,
 pins its immutable revision, validates the checkpoint, trains, and uploads a
-submission through the existing client workflow.
+submission through the existing client workflow. Add `--role owner` to run the
+FedAvg listener: it waits for enough eligible participants on the current
+immutable base, aggregates and optionally evaluates their checkpoints, then
+publishes the next global model. Both roles share durable polling, locking,
+restart tracking, and bounded retry backoff.
 
 ```bash
 .venv/bin/hf2l listen \
@@ -449,17 +455,28 @@ submission through the existing client workflow.
   --participant alice --state-dir work/alice-listener \
   --plugin lenet --plugin-arg dataset_npz=/private/alice-images.npz \
   --plugin-arg epochs=2 --poll-interval 30
+
+# Run separately with owner credentials:
+.venv/bin/hf2l listen --role owner \
+  --backend huggingface --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
+  --state-dir work/owner-listener --minimum-participants 2 \
+  --allowlist /private/approved-participants.json --poll-interval 30
 ```
 
-Give each participant a separate state directory and reuse it on restart.
-The listener processes the current round on its first start, remembers completed
-rounds, and runs until interrupted unless bounded with `--once` or
-`--max-rounds`. It starts training jobs; the owner still runs FedAvg separately.
-This is polling, not a push subscription, and remote authentication and
-permissions remain those of the selected backend.
+Give the owner and each participant separate credentials and state directories;
+reuse the same directories on restart. Clients process the current round on
+their first start. The owner checks submission readiness even while `main`
+stays unchanged. Both run until interrupted unless bounded with `--once` or
+`--max-rounds`. They poll through the existing backend interfaces; no broker or
+webhook is required. Owner publication retains each backend's guarantees:
+Exchange claims and fences, Hugging Face conditional commits, local conditional
+updates, and JFrog's requirement for a single publishing coordinator.
 
-See the [client listener guide](docs/CLIENT_LISTENER.md) for all-backend commands,
-a complete two-client local example, durable recovery, and upload reconciliation.
+See the [listener guide](docs/CLIENT_LISTENER.md) for both roles, all-backend
+commands, a complete local example, durable recovery, and publication reconciliation.
+The [VGG/CIFAR-10 Exchange walkthrough](examples/exchange_cifar10/README.md)
+runs two client listeners and an owner listener through two automatic rounds
+with real data, separate credentials, and owner-controlled aggregation.
 
 ## Cyclic federated learning without FedAvg
 
@@ -731,6 +748,7 @@ creates the unified `hf2l` command and these retained console-command aliases:
 - `hf2l-client-download`
 - `hf2l-client-train`
 - `hf2l-client-upload`
+- `hf2l-client-listen`
 - `hf2l-create-allowlist`
 - `hf2l-owner-fedavg`
 - `hf2l-exchange-service`

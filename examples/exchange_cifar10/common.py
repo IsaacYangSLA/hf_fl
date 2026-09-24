@@ -33,7 +33,12 @@ def write_json_exclusive(path: Path, value: dict) -> None:
 
 
 def run_hf2l(module: str, args: list[str], *, token_file: Path, endpoint: str,
-             allow_local_http: bool, threads: int = 2) -> None:
+             allow_local_http: bool, threads: int = 2, replace_process: bool = False) -> None:
+    """Run an actor with private credentials, optionally replacing this wrapper.
+
+    Long-running listeners replace the wrapper so signals and recovery exit
+    codes reach the listener directly, without leaving an orphan child process.
+    """
     token_file = token_file.resolve(strict=True)
     if not token_file.read_text().strip():
         raise ValueError("Token file is empty")
@@ -44,4 +49,8 @@ def run_hf2l(module: str, args: list[str], *, token_file: Path, endpoint: str,
     environment.update(EXCHANGE_TOKEN_FILE=str(token_file), EXCHANGE_ENDPOINT=endpoint,
                        EXCHANGE_ALLOW_LOCAL_HTTP=str(allow_local_http).lower(),
                        OMP_NUM_THREADS=str(threads), MKL_NUM_THREADS=str(threads))
-    subprocess.run([sys.executable, "-m", module, *args], env=environment, check=True)
+    command = [sys.executable, "-m", module, *args]
+    if replace_process:
+        os.execvpe(sys.executable, command, environment)
+    else:
+        subprocess.run(command, env=environment, check=True)
