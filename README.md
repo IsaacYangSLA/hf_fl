@@ -39,6 +39,7 @@ formats; it does not rename them to version 3.
   - [Train with any local code](#2-train-with-any-local-code)
   - [Validate and upload a submission](#3-validate-and-upload-a-submission)
 - [Client option B: trusted training plugin](#client-option-b-trusted-training-plugin)
+- [Client listener: train when a new round is ready](#client-listener-train-when-a-new-round-is-ready)
 - [Cyclic federated learning without FedAvg](#cyclic-federated-learning-without-fedavg)
 - [FedAvg: validate, average, and publish submissions](#fedavg-validate-average-and-publish-submissions)
   - [Automatically discover the current round](#automatically-discover-the-current-round)
@@ -433,6 +434,32 @@ def evaluate_model(model_dir, options):
 
 Each repeated `--plugin-arg KEY=VALUE` is JSON-decoded when possible, so
 numbers, booleans, arrays, and objects retain their types.
+
+## Client listener: train when a new round is ready
+
+`hf2l listen` runs one participant's trusted training plugin whenever a new
+global round is available. It supports every existing backend: Hugging Face,
+JFrog, Exchange, and the local store. The listener polls the global reference,
+pins its immutable revision, validates the checkpoint, trains, and uploads a
+submission through the existing client workflow.
+
+```bash
+.venv/bin/hf2l listen \
+  --backend huggingface --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
+  --participant alice --state-dir work/alice-listener \
+  --plugin lenet --plugin-arg dataset_npz=/private/alice-images.npz \
+  --plugin-arg epochs=2 --poll-interval 30
+```
+
+Give each participant a separate state directory and reuse it on restart.
+The listener processes the current round on its first start, remembers completed
+rounds, and runs until interrupted unless bounded with `--once` or
+`--max-rounds`. It starts training jobs; the owner still runs FedAvg separately.
+This is polling, not a push subscription, and remote authentication and
+permissions remain those of the selected backend.
+
+See the [client listener guide](docs/CLIENT_LISTENER.md) for all-backend commands,
+a complete two-client local example, durable recovery, and upload reconciliation.
 
 ## Cyclic federated learning without FedAvg
 

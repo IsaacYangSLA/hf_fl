@@ -13,6 +13,7 @@ _COMMANDS = {
     "download": ("hf2l.client_download", "Download an immutable round base"),
     "upload": ("hf2l.client_upload", "Validate and upload a client checkpoint"),
     "train": ("hf2l.client_train", "Run a trusted local training plugin"),
+    "listen": ("hf2l.cli.listen", "Watch global models and run a durable client listener"),
     "round": ("hf2l.owner_fedavg", "Select, aggregate and publish a round"),
     "allowlist": ("hf2l.create_allowlist", "Create participant identity mappings"),
     "exchange": ("hf2l_exchange.cli", "Administer the independent exchange service"),

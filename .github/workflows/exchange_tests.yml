@@ -32,7 +32,8 @@ jobs:
         run: >-
           .venv/bin/python -m unittest
           tests.test_layering tests.test_architecture_v3
-          tests.test_protocol_v3 tests.test_checkpoint_v3 -v
+          tests.test_protocol_v3 tests.test_checkpoint_v3
+          tests.test_listener_workflow tests.test_listener_cli -v
 
   dependency-boundaries:
     runs-on: ubuntu-latest

@@ -7,8 +7,8 @@ maintenance design for this repository, not a third incompatible wire protocol.
 The Exchange HTTP API remains `/v2`; existing HF²L manifest versions, filenames
 and command aliases remain readable. Python 3.10 remains supported.
 
-This document records the accepted design integrated at `60e4bf8` and subsequent
-Exchange fixes in the current implementation.
+This document records the accepted design integrated at `60e4bf8`, subsequent
+Exchange fixes, and the client listener in the current implementation.
 The [current implementation limitations](#current-implementation-limitations)
 track audit findings and distinguish resolved findings from remaining gaps.
 The associated
@@ -103,6 +103,11 @@ does not claim every lower-priority suggestion in every theme was implemented.
 flowchart TB
     Generic[Generic application] --> SDK[Independent Exchange SDK]
     CLI[HF2L commands] --> Runner[Typed FL protocol and round runner]
+    CLI --> Listener[Client listener and durable job state]
+    Listener --> Client[Client download, train and upload stages]
+    Listener --> Port[ModelStore FL facade]
+    Client --> Port
+    Client --> Checkpoints[Checkpoint discovery and array operations]
     Runner --> Checkpoints[Checkpoint discovery and array operations]
     Runner --> Port[ModelStore FL facade]
     Port --> Local[Local immutable artifact store]
@@ -136,6 +141,13 @@ protocol values and the FL store port. Backends implement that port, while the
 runner owns selection, checkpoint validation, averaging and publication. The
 Exchange adapter translates FL operations into generic records and coordination.
 Generic applications do not pass through `ModelStore`.
+
+The [client listener](CLIENT_LISTENER.md) composes the same client operations
+through `hf2l/listener/workflow.py`. Its controller in `hf2l/listener/client.py`
+owns polling, local durable progress and retry decisions; `hf2l/cli/listen.py`
+loads credentials and trusted plugins. It uses the common store port and does
+not add backend-specific event handling to the controller or FL scheduling to
+the generic Exchange service.
 
 The root distribution installs NumPy and SafeTensors. Torch and Hugging Face are
 optional extras loaded at the point of use. NumPy handles supported non-BF16
@@ -273,6 +285,34 @@ Automatic discovery can skip a malformed or deleted candidate; a backend outage
 propagates as a round failure instead of being silently treated as an invalid
 participant submission. HF/JFrog contract tests use deterministic SDK doubles;
 they do not establish live remote-provider behavior.
+
+### Per-client round listener
+
+`hf2l listen` supports Hugging Face, JFrog, Exchange and LocalStore by polling
+`ModelStore.resolve_reference`, normally for `main`. It probes the round metadata
+before downloading a new checkpoint, pins the immutable revision, and uses the
+existing checkpoint validation and trusted `train_model` plugin contract. It
+rechecks the reference before training and upload. Owner-side common-base
+validation still decides whether a racing submission is eligible.
+
+Each participant has a separate durable state directory, protected by a POSIX
+advisory lock. State records pending work and completed revisions/round numbers,
+so a restart or metadata-only commit does not repeat a completed round. Safe
+download and training failures retry with bounded backoff; a possibly accepted upload
+stops for explicit operator reconciliation. Retained checkpoints and training
+metadata support that recovery. These local records do not provide exactly-once
+remote publication or coordinate duplicate listeners using different directories.
+
+Startup and reconnect reconcile the current reference, including an unprocessed
+initial round. Polling can skip rounds published while a client was offline;
+there is no replay queue of obsolete rounds. The listener does not consume the
+Exchange event feed, implement SSE or trigger owner aggregation. The existing HF
+webhook workflow remains a separate owner-side mechanism. All adapters retain
+their existing authentication, immutability and publication guarantees; JFrog
+still requires a single owner writer.
+
+See [the listener guide](CLIENT_LISTENER.md) for commands, state identity,
+bounded execution and uncertain-upload recovery.
 
 ## Current implementation limitations
 
@@ -436,6 +476,7 @@ in [B4](#b4--evaluation-output-can-break-json).
 | Coordination | Competing CAS writers, stale fence refusal, completion replay, subset provenance and process interruption |
 | FL contracts | Typed document round trips, invalid input rejection, legacy versions, common immutable base and participant binding |
 | Backend behavior | Local/HF/JFrog/Exchange capabilities, publication preconditions, confirmed primary plus failed tag |
+| Client listener | All-backend polling, pinned-round validation, stale-job refusal, restart deduplication, state exclusion, retry backoff and uncertain-upload recovery |
 | Numeric behavior | Existing goldens, finite/non-floating rules, NumPy/Torch comparison and bounded shard streaming |
 | Packaging | Fresh minimal root/SDK/server environments, lazy optional imports, both wheels and dependency checks |
 | Integration | Root regression suite plus independent Exchange suite with SQLite/Moto and PostgreSQL/MinIO |

@@ -369,6 +369,24 @@ participant name:
   --work-dir work/alice-round-0 --plugin lenet
 ```
 
+Alternatively, each participant can run the durable polling listener with its
+own token and state directory:
+
+```bash
+.venv/bin/hf2l listen \
+  --backend exchange --repo-id "$EXCHANGE_SPACE_ID" --participant alice \
+  --state-dir work/alice-listener --plugin lenet --poll-interval 30
+```
+
+It processes the current global round on startup and subsequent `main` updates,
+pins their immutable record IDs, and runs the existing training/upload flow.
+An unreferenced `model.global` record is insufficient: the owner must complete
+publication and advance `main`. Reuse the state directory on restart; completed
+rounds are suppressed and uncertain uploads require explicit reconciliation.
+For scheduling, use `--once`; for continuous use, keep the listener running and
+refresh its credentials through `EXCHANGE_TOKEN_FILE`. See the
+[all-backend listener guide](CLIENT_LISTENER.md) for setup and recovery.
+
 The owner validates and publishes through an acquisition:
 
 ```bash
@@ -479,6 +497,11 @@ event retention expires a cursor, reconcile current records/references before re
 at the reported floor. It is not an outbound webhook queue. Idempotency responses
 are also retained for a bounded interval; replay after expiry can create new
 resources.
+
+HF²L's [per-client listener](CLIENT_LISTENER.md) polls the published model
+reference directly, rather than consuming this event feed. It needs no cursor
+or push service, and can skip intermediate rounds while offline. There is no
+SSE subscription or owner aggregation listener in the current implementation.
 
 ### Offline repair of an uncertain provider mutation
 
