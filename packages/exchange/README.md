@@ -61,9 +61,15 @@ retains this HTTP version while generalizing the federated-learning application.
 Read the repository [v3 design](../../docs/ARCHITECTURE_V3.md) and
 [operator guide](../../docs/EXCHANGE_V3.md) before configuring a deployment.
 The [audit findings](../../docs/ARCHITECTURE_V3.md#current-implementation-limitations)
-distinguish resolved Exchange defects from remaining application limitations.
+describe resolved defects and the limits of the implemented workflows.
 The implementation preserves AWS session tokens, recovers interrupted
 HF²L acquisition setup, and prevents cleanup from entering verification slots.
+The current database revision is `0002_event_sequence`: existing `0001_initial`
+installations must stop API/worker processes, back up the database, run
+`hf2l-exchange migrate-db` and `check-db`, then restart. SQLite event IDs retain
+their cursor sequence after history pruning; the frozen initial migration is
+preserved. Readiness probes stay under the configured S3 prefix while retaining
+the bucket-versioning check.
 The operator guide explains credential configuration, recovery safeguards and
 the worker's remaining batch scheduling limitation.
 
@@ -88,5 +94,7 @@ The `sdk` and `server` modes assert that unwanted packages are absent, so run th
 in clean environments matching the relevant installation. Passing integration
 tests does not establish deployment throughput or backup/restore performance,
 or demonstrate that the known implementation limitations are absent. Recorded
-local test results in the operator guide are historical; remote CI execution was
-not part of that validation.
+local test results in the operator guide are historical. The
+[October 8 remediation record](../../docs/validation/2026-10-08-repository-remediation.md)
+reports the latest local source, package, and workflow checks; remote CI execution
+was not part of that validation.

@@ -8,7 +8,8 @@ from typing import Any
 
 from huggingface_hub import CommitOperationAdd, HfApi
 
-from hf2l.common.fs import checked_file_paths
+from hf2l.common.fs import checked_file_paths, read_json
+from hf2l.core.protocol import SUBMISSION_FILE
 from hf2l.core.ports import (BackendCapabilities, ModelStore, PublicationConsistency,
                                   PublicationUncertain, PublishResult, RevisionNotFound, SubmissionCandidate)
 
@@ -105,6 +106,14 @@ class HuggingFaceStore(ModelStore):
             CommitOperationAdd(path_in_repo=path, path_or_fileobj=folder / path)
             for path in checked_file_paths(folder, paths)
         ]
+        if SUBMISSION_FILE in paths and read_json(folder / SUBMISSION_FILE).get("workflow") == "cyclic":
+            # The SDK's create_commit preupload otherwise compares against main.
+            # Preparing against the immutable predecessor prevents it discarding
+            # an update which matches main but differs from this PR's parent.
+            self.api.preupload_lfs_files(
+                repo_id=repo_id, repo_type="model", additions=operations,
+                revision=base_revision, create_pr=True, free_memory=False,
+            )
         result = self.api.create_commit(
             repo_id=repo_id,
             repo_type="model",

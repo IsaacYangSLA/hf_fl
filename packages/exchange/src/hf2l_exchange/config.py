@@ -70,8 +70,31 @@ class AuthSettings:
     jwks_timeout: float = 5
     jwks_cache_seconds: int = 300
     allow_local_http: bool = False
+    workload_issuer: str = ""
+    workload_audience: str = "exchange-workload"
+    workload_public_key: str = ""
+    trusted_backend_secret: str = ""
+    provisioning_principal_ids: tuple[str, ...] = ()
+    download_broker_principal_ids: tuple[str, ...] = ()
+
+    @property
+    def workloads_enabled(self):
+        return bool(self.workload_issuer)
 
     def validate(self):
+        if bool(self.workload_issuer) != bool(self.workload_public_key):
+            raise ValueError("Workload issuer and public key must be supplied together")
+        if self.workloads_enabled:
+            require_tls(self.workload_issuer, self.allow_local_http)
+            if self.workload_issuer == self.issuer or not self.workload_audience:
+                raise ValueError("Workload identity must use a separate fixed issuer and audience")
+            if len(self.trusted_backend_secret.encode()) < 32 or not self.provisioning_principal_ids:
+                raise ValueError("Managed workloads require authenticated backend ingress and provisioning principals")
+        elif self.trusted_backend_secret or self.provisioning_principal_ids or self.download_broker_principal_ids:
+            raise ValueError("Managed principals require workload authentication configuration")
+        for identifier in self.provisioning_principal_ids + self.download_broker_principal_ids:
+            if not isinstance(identifier, str) or len(identifier) != 64 or any(c not in "0123456789abcdef" for c in identifier):
+                raise ValueError("Managed principals must be canonical SHA256 principal IDs")
         if not self.issuer or not self.audience or bool(self.public_key) == bool(self.jwks_url):
             raise ValueError("Authentication requires issuer, audience and exactly one public key or JWKS URL")
         require_tls(self.issuer, self.allow_local_http)
@@ -87,7 +110,13 @@ class AuthSettings:
                    public_key=_env("JWT_PUBLIC_KEY"), jwks_url=_env("JWKS_URL"),
                    admin_subject=_env("ADMIN_SUBJECT"), jwks_timeout=float(_env("JWKS_TIMEOUT", "5")),
                    jwks_cache_seconds=int(_env("JWKS_CACHE_SECONDS", "300")),
-                   allow_local_http=_bool("ALLOW_LOCAL_HTTP")).validate()
+                   allow_local_http=_bool("ALLOW_LOCAL_HTTP"),
+                   workload_issuer=_env("WORKLOAD_ISSUER"),
+                   workload_audience=_env("WORKLOAD_AUDIENCE", "exchange-workload"),
+                   workload_public_key=_env("WORKLOAD_PUBLIC_KEY"),
+                   trusted_backend_secret=_env("TRUSTED_BACKEND_SECRET"),
+                   provisioning_principal_ids=tuple(filter(None, _env("PROVISIONING_PRINCIPAL_IDS").split(","))),
+                   download_broker_principal_ids=tuple(filter(None, _env("DOWNLOAD_BROKER_PRINCIPAL_IDS").split(",")))).validate()
 
 
 @dataclass(frozen=True)

@@ -29,6 +29,7 @@ MAX_METADATA_BYTES = 64 * 1024
 MAX_JSON_DEPTH = 16
 MAX_COLLECTION_ITEMS = 10000
 MAX_INTEGER = 2**63 - 1
+MAX_CYCLIC_PARENTS = 64
 _TEXT_PATTERN = r"^[^\x00-\x20\x7f](?:[^\x00-\x1f\x7f]*[^\x00-\x20\x7f])?$"
 _MUTABLE_REFERENCES = ("main", "master", "latest", "HEAD")
 
@@ -178,6 +179,58 @@ def _paths(value: Any, label: str) -> list[str]:
     return value
 
 
+def _choice(value: Any, label: str, choices: tuple[str, ...]) -> str:
+    if value not in choices or not isinstance(value, str):
+        raise ProtocolError(f"{label} must be one of {', '.join(choices)}")
+    return value
+
+
+def _lineage(value: Any, label: str) -> dict[str, Any]:
+    lineage = _object(value, label, MAX_METADATA_BYTES)
+    if set(lineage) != {"root_revision", "root_round", "parents"}:
+        raise ProtocolError(f"{label} requires root_revision, root_round and parents")
+    root = _revision(lineage["root_revision"], f"{label}.root_revision")
+    _integer(lineage["root_round"], f"{label}.root_round")
+    parents = lineage["parents"]
+    if not isinstance(parents, list) or len(parents) > MAX_CYCLIC_PARENTS:
+        raise ProtocolError(f"{label}.parents must be an array of at most {MAX_CYCLIC_PARENTS} parents")
+    seen = {root}
+    for parent in parents:
+        if not isinstance(parent, dict) or set(parent) != {"revision", "participant"}:
+            raise ProtocolError(f"{label}.parents require revision and participant")
+        revision = _revision(parent["revision"], f"{label}.parents.revision")
+        _text(parent["participant"], f"{label}.parents.participant")
+        if revision in seen:
+            raise ProtocolError(f"{label} contains a cycle or duplicate revision")
+        seen.add(revision)
+    return lineage
+
+
+def _validate_client_workflow(document: dict[str, Any]) -> None:
+    workflow = document.get("workflow", "fedavg")
+    if workflow != "cyclic":
+        if "lineage" in document or document.get("source_kind", "global") != "global" or "source_participant" in document:
+            raise ProtocolError("Submission sources and lineage require the explicit cyclic workflow")
+        return
+    if "lineage" not in document or "source_kind" not in document:
+        raise ProtocolError("The cyclic workflow requires lineage and source_kind")
+    lineage = document["lineage"]
+    parents = lineage["parents"]
+    expected_base = parents[-1]["revision"] if parents else lineage["root_revision"]
+    if base_revision_from(document) != expected_base:
+        raise ProtocolError("Cyclic base_revision disagrees with its immediate lineage parent")
+    if document.get("source_round") != lineage["root_round"]:
+        raise ProtocolError("Cyclic source_round disagrees with the global root round")
+    expected_kind = "submission" if parents else "global"
+    if document["source_kind"] != expected_kind:
+        raise ProtocolError("Cyclic source_kind disagrees with its lineage")
+    if parents:
+        if document.get("source_participant") != parents[-1]["participant"]:
+            raise ProtocolError("Cyclic source_participant disagrees with its immediate lineage parent")
+    elif "source_participant" in document:
+        raise ProtocolError("A global source does not have a source_participant")
+
+
 @dataclass(frozen=True)
 class _Rule:
     validate: Callable[[Any, str], Any]
@@ -194,6 +247,21 @@ _PATH = {"type": "string", "minLength": 1, "maxLength": 4096,
 _HASHES = {"type": "object", "minProperties": 1, "maxProperties": MAX_COLLECTION_ITEMS,
            "propertyNames": _PATH, "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
 _ALGORITHM = {"anyOf": [_TEXT, {"$ref": "#/$defs/AlgorithmSpec"}]}
+_LINEAGE = {"type": "object", "required": ["root_revision", "root_round", "parents"],
+            "properties": {"root_revision": _REFERENCE, "root_round": _COUNT,
+                           "parents": {"type": "array", "maxItems": MAX_CYCLIC_PARENTS,
+                                       "items": {"type": "object", "required": ["revision", "participant"],
+                                                 "properties": {"revision": _REFERENCE, "participant": _TEXT},
+                                                 "additionalProperties": False}}},
+            "additionalProperties": False}
+_CLIENT_WORKFLOW = {
+    "workflow": _Rule(lambda value, label: _choice(value, label, ("fedavg", "cyclic")),
+                      {"type": "string", "enum": ["fedavg", "cyclic"]}),
+    "source_kind": _Rule(lambda value, label: _choice(value, label, ("global", "submission")),
+                         {"type": "string", "enum": ["global", "submission"]}),
+    "source_participant": _Rule(_text, _TEXT),
+    "lineage": _Rule(_lineage, _LINEAGE),
+}
 _COMMON = {
     "schema_version": _Rule(lambda value, label: require_supported_schema({"schema_version": value}, label),
                             {"type": "integer", "enum": sorted(SUPPORTED_SCHEMA_VERSIONS)}, True),
@@ -227,6 +295,8 @@ class _Document:
             raise ProtocolError(f"{cls.__name__}.base_revision is required")
         if "base_revision" in document or "base_commit" in document:
             base_revision_from(document)
+        if "workflow" in cls.rules:
+            _validate_client_workflow(document)
         return document
 
     def to_dict(self) -> dict[str, Any]:
@@ -260,6 +330,7 @@ class SubmissionManifest(_Document):
     requires_base: ClassVar[bool] = True
     rules: ClassVar[dict[str, _Rule]] = {
         **_COMMON,
+        **_CLIENT_WORKFLOW,
         "repo_id": _Rule(_text, _TEXT, True),
         "source_round": _Rule(_integer, _COUNT, True),
         "participant": _Rule(_text, _TEXT, True),
@@ -335,6 +406,7 @@ class ClientContext(_Document):
     requires_base: ClassVar[bool] = True
     rules: ClassVar[dict[str, _Rule]] = {
         **_COMMON,
+        **_CLIENT_WORKFLOW,
         "repo_id": _Rule(_text, _TEXT, True),
         "source_round": _Rule(_integer, _COUNT, True),
         "base_model_dir": _Rule(_path, _PATH),
@@ -360,6 +432,15 @@ def _schema_for(document_type: type) -> dict[str, Any]:
                               "additionalProperties": True}
     if document_type.requires_base:
         schema["anyOf"] = [{"required": ["base_revision"]}, {"required": ["base_commit"]}]
+    if "workflow" in document_type.rules:
+        schema["allOf"] = [
+            {"if": {"required": ["workflow"], "properties": {"workflow": {"const": "cyclic"}}},
+             "then": {"required": ["source_kind", "lineage"]},
+             "else": {"not": {"anyOf": [{"required": ["lineage"]}, {"required": ["source_participant"]},
+                                          {"required": ["source_kind"], "properties": {"source_kind": {"const": "submission"}}}]}}},
+            {"if": {"required": ["source_kind"], "properties": {"source_kind": {"const": "submission"}}},
+             "then": {"required": ["source_participant"]}},
+        ]
     return schema
 
 
@@ -376,6 +457,7 @@ budgets, JSON depth, finite numbers, and equality when both base aliases appear.
                              "json_depth": MAX_JSON_DEPTH, "collection_items": MAX_COLLECTION_ITEMS,
                              "integers": "signed 64-bit; integer fields reject boolean and floating-point values",
                              "base_aliases": "must be equal when both present",
+                             "cyclic_lineage": "at most 64 distinct immutable parents; base, source kind, participant and round must match lineage",
                              "numbers": "finite", "strings": "valid UTF-8"},
         "x-document-files": {"SubmissionManifest": SUBMISSION_FILE, "RoundRecord": ROUND_FILE,
                              "ClientContext": CLIENT_CONTEXT_FILE},

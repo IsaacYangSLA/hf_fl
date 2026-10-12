@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from hf2l.backends import add_store_arguments, make_store
-from hf2l.client_steps import download_client_round
+from hf2l.client_steps import add_handoff_arguments, download_client_round
 from hf2l.hub_helpers import CLIENT_CONTEXT_FILE
 
 
@@ -18,9 +18,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--base-revision",
         required=True,
-        help="Exact immutable base revision supplied by the owner for this round",
+        help="Global model revision, or the predecessor revision for an explicit cyclic handoff",
     )
     parser.add_argument("--work-dir", type=Path, required=True)
+    add_handoff_arguments(parser)
     add_store_arguments(parser)
     return parser.parse_args(argv)
 
@@ -36,6 +37,8 @@ def main(argv: list[str] | None = None) -> int:
             args.repo_id,
             args.base_revision,
             args.work_dir,
+            workflow=args.workflow, source_kind=args.source_kind,
+            source_participant=args.source_participant,
         )
         work_dir = args.work_dir.resolve()
         print(f"backend={context['backend']}")

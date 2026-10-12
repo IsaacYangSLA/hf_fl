@@ -35,6 +35,8 @@ from hf2l.hub_helpers import (
     write_json,
 )
 from hf2l.plugin_loader import load_plugin, parse_plugin_args, require_callable
+from hf2l.common.output import plugin_stdout_to_stderr
+from hf2l.core.json_values import json_values_equal
 from hf2l.core.protocol import RoundRecord, SubmissionManifest
 from hf2l.round.config import RoundConfig
 from hf2l.round.result import RoundResult, SkippedSubmission
@@ -53,6 +55,8 @@ def validate_submission_manifest(
     expected_submission_revision: str | None = None,
 ) -> tuple[str, int]:
     document = SubmissionManifest.from_dict(manifest)
+    if manifest.get("workflow") == "cyclic":
+        raise ValueError(f"{revision} is a cyclic update and cannot participate in synchronous FedAvg")
     if document.repo_id != repo_id:
         raise ValueError(f"{revision} declares a different repository")
     if document.backend != expected_backend:
@@ -401,7 +405,7 @@ class FedAvgRunner:
                     owner_parameters = getattr(aggregator, "server_only_parameters", frozenset())
                     declared_training = {k: v for k, v in declared.params.items() if k not in owner_parameters}
                     expected_training = {k: v for k, v in aggregator.spec.params.items() if k not in owner_parameters}
-                    if declared_training != expected_training:
+                    if not json_values_equal(declared_training, expected_training):
                         raise ValueError(f"{revision} declares different algorithm parameters")
             except (ValueError, FileNotFoundError) as exc:
                 if automatic:
@@ -429,9 +433,14 @@ class FedAvgRunner:
             raise ValueError(f"FedAvg requires at least {threshold} {mode} client submissions; found {len(prepared)}")
         store.download_snapshot(config.repo_id, base_revision, base_dir)
         reference = discover_checkpoint(base_dir)
-        if int(base_round_record.get("schema_version", 1)) >= 2:
+        if (int(base_round_record.get("schema_version", 1)) >= 2
+                or "checkpoint_files_sha256" in base_round_record):
             validate_artifact_hashes(base_dir, reference.artifact_paths,
                                      base_round_record.get("checkpoint_files_sha256"), "main")
+        validate_input = getattr(aggregator, "validate_input", None)
+        if callable(validate_input):
+            validate_input(reference, accumulator_dtype=config.accumulator_dtype,
+                           array_backend=config.array_backend)
         submissions: list[dict[str, Any]] = []
         client_layouts = []
         for index, item in enumerate(prepared, start=1):
@@ -444,9 +453,12 @@ class FedAvgRunner:
                     raise ValueError(f"Manifest changed while downloading {candidate.identifier}")
                 client_layout = discover_checkpoint(client_dir)
                 validate_compatible(reference, client_layout)
-                if int(manifest.get("schema_version", 1)) >= 2:
+                if int(manifest.get("schema_version", 1)) >= 2 or "checkpoint_files_sha256" in manifest:
                     validate_artifact_hashes(client_dir, client_layout.artifact_paths,
                                             manifest.get("checkpoint_files_sha256"), candidate.identifier)
+                if callable(validate_input):
+                    validate_input(client_layout, accumulator_dtype=config.accumulator_dtype,
+                                   array_backend=config.array_backend)
             except (ValueError, FileNotFoundError) as exc:
                 if automatic:
                     self._skip(candidate.identifier, exc)
@@ -470,9 +482,10 @@ class FedAvgRunner:
         self._check_lease()
         evaluation: dict[str, Any] | None = None
         if config.plugin:
-            plugin = load_plugin(config.plugin)
-            evaluate_model = require_callable(plugin, "evaluate_model")
-            evaluation = evaluate_model(aggregate_dir, parse_plugin_args(list(config.plugin_arg)))
+            with plugin_stdout_to_stderr():
+                plugin = load_plugin(config.plugin)
+                evaluate_model = require_callable(plugin, "evaluate_model")
+                evaluation = evaluate_model(aggregate_dir, parse_plugin_args(list(config.plugin_arg)))
             if not isinstance(evaluation, dict):
                 raise ValueError("evaluate_model(...) must return a metadata dictionary")
             json.dumps(evaluation, allow_nan=False)

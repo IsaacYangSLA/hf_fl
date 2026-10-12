@@ -32,7 +32,7 @@ class Cifar10OwnerListenerExampleTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         self.eval_data = self.root / 'evaluation "split".npz'
         self.eval_data.write_bytes(b"Evaluation contents are validated by the plugin")
         self.token_file = self.root / "owner.token"

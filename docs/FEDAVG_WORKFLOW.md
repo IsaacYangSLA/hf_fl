@@ -47,10 +47,10 @@ The model repository must already be initialized with HF2L, and participants
 must upload complete submissions using the client workflow in the README.
 The workflow publishes automatically after checkpoint validation; it does not
 run an evaluation plugin. Add trusted owner evaluation options to the final
-owner command if required for your model. Plugin output is not captured: the
-built-in LeNet evaluator prints to stdout, so adding `--plugin lenet --json`
-would not produce a standalone JSON stream. The workflow reads its readiness
-file and does not depend on parsing evaluation stdout.
+owner command if required for your model. Python stdout from plugin imports
+and evaluation is routed to stderr, so `--plugin lenet --json` keeps the command
+result separate from evaluator diagnostics. The workflow reads its readiness
+file and does not depend on parsing evaluation output.
 
 ## Run the HTTPS relay
 
@@ -120,13 +120,14 @@ two eligible submissions is a successful check with `ready=false`; the
 check so the owner can close superseded PRs.
 
 `fed_avg` discovers and validates the current eligible PRs again, including
-tensor compatibility and checkpoint checksums for schema-2 documents. The
-owner accepts legacy schema-1 documents but skips their hash verification,
-even when hashes are supplied; use the current initialization and client
-commands to produce schema-2 round records and submissions. If more than two qualify,
+tensor compatibility, finite floating values, and required checkpoint checksums
+for schema-2 documents. The owner also verifies supplied schema-1 hash maps;
+schema-1 documents without hashes remain accepted without digest verification.
+Use the current initialization and client commands to produce schema-2 round
+records and submissions. If more than two qualify,
 all are included with example-count weighting. PRs changed or closed between
 jobs can change eligibility; the owner command still requires at least two.
-Malformed, deleted or incompatible automatically discovered candidates are
+Malformed, deleted, incompatible, or non-finite automatically discovered candidates are
 reported and skipped; publication requires at least two fully validated
 participants after those checks. Transport outages fail the run.
 

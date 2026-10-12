@@ -217,16 +217,27 @@ class TransferTests(unittest.TestCase):
         def delayed_start(key):
             old_key.append(key)
             attempt = self.current()
+            self.assertTrue(attempt.mutation_tokens)
             self.service.withdraw_record(self.principal, self.space, self.record["id"])
             self.due(attempt.id)
+            self.assertIsNone(self.transfers.acquire(attempt.id, cleanup=True))
             self.assertEqual(tick(self.transfers)["cleaned"], 0)
+            self.assertEqual(self.storage.cleaned, [])
             with self.service.sessions.begin() as session:
                 self.assertEqual(session.get(Space, self.space).reclaiming, 3)
+                self.assertTrue(session.get(Blob, self.blob).pending_deletion)
         self.storage.on_start = delayed_start
         self.transfers.initiate(*self.args)
         self.assertEqual(self.current().state, "cleanup")
+        self.assertEqual(self.current().mutation_tokens, [])
+        self.assertEqual(self.storage.cleaned, [])
         self.assertEqual(tick(self.transfers)["cleaned"], 1)
-        self.assertEqual(self.storage.cleaned, old_key * 2)
+        # Cleanup was prohibited while start() was still outstanding, so the
+        # only provider cleanup occurs after the known call has settled.
+        self.assertEqual(self.storage.cleaned, old_key)
+        with self.service.sessions.begin() as session:
+            self.assertEqual(session.get(Space, self.space).reclaiming, 0)
+            self.assertFalse(session.get(Blob, self.blob).pending_deletion)
 
     def test_late_completion_after_cleanup_reopens_reclamation_and_quota(self):
         self.transfers.initiate(*self.args)
@@ -296,24 +307,49 @@ class TransferTests(unittest.TestCase):
             attempt = self.current()
             self.service.withdraw_record(self.principal, self.space, self.record["id"])
             self.due(attempt.id)
-            leased = self.transfers.acquire(attempt.id)
-            cleanup(leased.object_key)  # this cleanup snapshot precedes the side effect
-            cleanup_snapshot.append(leased)
-            late_objects.add(leased.object_key)
+            self.assertTrue(self.current().mutation_tokens)
+            self.assertIsNone(self.transfers.acquire(attempt.id, cleanup=True))
+            self.assertEqual(tick(self.transfers)["cleaned"], 0)
+            self.assertEqual(self.storage.cleaned, [])
+            with self.service.sessions.begin() as session:
+                self.assertEqual(session.get(Space, self.space).reclaiming, 3)
+                self.assertTrue(session.get(Blob, self.blob).pending_deletion)
+            late_objects.add(attempt.object_key)
             raise StorageFailure("storage_misconfigured", retryable=True)
         self.storage.on_complete = complete_with_missing_version
         original_settle = self.transfers._settle_mutation
-        def settle_then_old_cleanup(attempt):
+        def settle_then_cleanup_snapshot(attempt):
             original_settle(attempt)
-            self.assertFalse(self.transfers.commit(cleanup_snapshot[0], "cleaned"))
+            self.assertEqual(self.current().mutation_tokens, [])
+            # The known completed provider call now permits a cleanup lease.
+            # Do not perform provider I/O with this snapshot: abandonment below
+            # rearms cleanup and invalidates its database fence.
+            leased = self.transfers.acquire(attempt.id, cleanup=True)
+            self.assertIsNotNone(leased)
+            cleanup_snapshot.append(leased)
+            self.assertEqual(self.storage.cleaned, [])
             with self.assertRaises(ExchangeError):
                 self.service.purge_record(self.principal, self.space, self.record["id"])
             with self.service.sessions.begin() as session:
                 self.assertEqual(session.get(Space, self.space).reclaiming, 3)
-        self.transfers._settle_mutation = settle_then_old_cleanup
+        self.transfers._settle_mutation = settle_then_cleanup_snapshot
         self.transfers.complete(*self.args)
+        self.assertEqual(len(cleanup_snapshot), 1)
+        self.assertFalse(self.transfers.commit(cleanup_snapshot[0], "cleaned"))
+        self.assertIsNone(self.current().token)
+        self.assertIsNone(self.current().lease_until)
+        with self.assertRaises(ExchangeError):
+            self.service.purge_record(self.principal, self.space, self.record["id"])
+        with self.service.sessions.begin() as session:
+            self.assertEqual(session.get(Space, self.space).reclaiming, 3)
+            self.assertTrue(session.get(Blob, self.blob).pending_deletion)
+        self.assertEqual(self.storage.cleaned, [])
         self.assertEqual(tick(self.transfers)["cleaned"], 1)
+        self.assertEqual(self.storage.cleaned, [cleanup_snapshot[0].object_key])
         self.assertEqual(late_objects, set())
+        with self.service.sessions.begin() as session:
+            self.assertEqual(session.get(Space, self.space).reclaiming, 0)
+            self.assertFalse(session.get(Blob, self.blob).pending_deletion)
         self.service.purge_record(self.principal, self.space, self.record["id"])
 
     def test_uncertain_completion_blocks_retries_until_same_handle_repair(self):

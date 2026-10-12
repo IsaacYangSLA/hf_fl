@@ -4,43 +4,49 @@
     {
       "call": "_error",
       "code_expression": "text",
-      "source": "api.py:146",
+      "source": "api.py:166",
       "status_expression": "code"
     },
     {
       "call": "ExchangeError",
       "code_expression": "exc.code",
-      "source": "api.py:260",
+      "source": "api.py:301",
       "status_expression": "503"
     },
     {
       "call": "_error",
       "code_expression": "exc.code",
-      "source": "api.py:271",
+      "source": "api.py:312",
       "status_expression": "exc.status"
     },
     {
       "call": "_error",
       "code_expression": "exc.code",
-      "source": "api.py:275",
+      "source": "api.py:316",
       "status_expression": "503 if exc.retryable else 409"
     },
     {
       "call": "_error",
       "code_expression": "'not_found' if exc.status_code == 404 else 'http_error'",
-      "source": "api.py:286",
+      "source": "api.py:327",
       "status_expression": "exc.status_code"
     },
     {
       "call": "Error",
       "code_expression": "selection.get('minimum_error', 'insufficient_inputs')",
-      "source": "application.py:673",
+      "source": "application.py:911",
       "status_expression": "409"
     },
     {
       "call": "ExchangeError",
       "code_expression": "error.get('code', 'request_failed')",
-      "source": "client.py:82",
+      "source": "client.py:128",
+      "status_expression": "response.status_code"
+    },
+    {
+      "call": "ExchangeError",
+      "code_expression": "error.get('code', 'blob_transfer_failed')",
+      "source": "transfer_client.py:287",
       "status_expression": "response.status_code"
     }
   ],
@@ -48,7 +54,7 @@
     {
       "code": "acquisition_active",
       "sources": [
-        "application.py:605"
+        "application.py:843"
       ],
       "statuses": [
         409
@@ -57,7 +63,7 @@
     {
       "code": "acquisition_busy",
       "sources": [
-        "application.py:648"
+        "application.py:886"
       ],
       "statuses": [
         409
@@ -66,7 +72,7 @@
     {
       "code": "acquisition_expired",
       "sources": [
-        "application.py:698"
+        "application.py:936"
       ],
       "statuses": [
         409
@@ -75,8 +81,8 @@
     {
       "code": "acquisition_holder_required",
       "sources": [
-        "application.py:717",
-        "application.py:746"
+        "application.py:955",
+        "application.py:984"
       ],
       "statuses": [
         403
@@ -85,8 +91,8 @@
     {
       "code": "acquisition_not_active",
       "sources": [
-        "application.py:700",
-        "application.py:721"
+        "application.py:938",
+        "application.py:959"
       ],
       "statuses": [
         409
@@ -95,7 +101,7 @@
     {
       "code": "acquisition_not_found",
       "sources": [
-        "application.py:707"
+        "application.py:945"
       ],
       "statuses": [
         404
@@ -104,7 +110,7 @@
     {
       "code": "ambiguous_precondition",
       "sources": [
-        "api.py:203"
+        "api.py:223"
       ],
       "statuses": [
         400
@@ -113,8 +119,9 @@
     {
       "code": "attachment_not_available",
       "sources": [
-        "transfers.py:161",
-        "transfers.py:169"
+        "managed_transfers.py:66",
+        "transfers.py:260",
+        "transfers.py:268"
       ],
       "statuses": [
         409
@@ -123,7 +130,7 @@
     {
       "code": "attachment_not_found",
       "sources": [
-        "application.py:325"
+        "application.py:563"
       ],
       "statuses": [
         404
@@ -132,7 +139,16 @@
     {
       "code": "attachments_not_verified",
       "sources": [
-        "application.py:482"
+        "application.py:720"
+      ],
+      "statuses": [
+        409
+      ]
+    },
+    {
+      "code": "attempt_already_revoked",
+      "sources": [
+        "application.py:227"
       ],
       "statuses": [
         409
@@ -141,7 +157,7 @@
     {
       "code": "attempt_not_found",
       "sources": [
-        "transfers.py:488"
+        "transfers.py:608"
       ],
       "statuses": [
         404
@@ -150,7 +166,7 @@
     {
       "code": "attempt_not_repairable",
       "sources": [
-        "transfers.py:500"
+        "transfers.py:620"
       ],
       "statuses": [
         409
@@ -159,8 +175,8 @@
     {
       "code": "base_not_published",
       "sources": [
-        "application.py:386",
-        "application.py:478"
+        "application.py:624",
+        "application.py:716"
       ],
       "statuses": [
         409
@@ -169,7 +185,7 @@
     {
       "code": "blob_quota_exceeded",
       "sources": [
-        "application.py:375"
+        "application.py:613"
       ],
       "statuses": [
         409
@@ -178,7 +194,8 @@
     {
       "code": "blob_transfer_failed",
       "sources": [
-        "transfer_client.py:137"
+        "transfer_client.py:138",
+        "transfer_client.py:351"
       ],
       "statuses": [
         503
@@ -187,7 +204,7 @@
     {
       "code": "blob_verification_failed",
       "sources": [
-        "client.py:290"
+        "client.py:366"
       ],
       "statuses": [
         409
@@ -196,7 +213,8 @@
     {
       "code": "bootstrap_admin_required",
       "sources": [
-        "application.py:113"
+        "application.py:344",
+        "application.py:347"
       ],
       "statuses": [
         403
@@ -205,9 +223,9 @@
     {
       "code": "cleanup_pending",
       "sources": [
-        "application.py:548",
-        "application.py:552",
-        "transfers.py:85"
+        "application.py:786",
+        "application.py:790",
+        "transfers.py:99"
       ],
       "statuses": [
         409
@@ -216,7 +234,7 @@
     {
       "code": "completion_conflict",
       "sources": [
-        "application.py:749"
+        "application.py:987"
       ],
       "statuses": [
         409
@@ -225,8 +243,8 @@
     {
       "code": "connection_failed",
       "sources": [
-        "client.py:56",
-        "client.py:86"
+        "client.py:102",
+        "client.py:132"
       ],
       "statuses": [
         503
@@ -244,8 +262,8 @@
     {
       "code": "database_not_initialized",
       "sources": [
-        "migrations.py:76",
-        "migrations.py:99"
+        "migrations.py:118",
+        "migrations.py:97"
       ],
       "statuses": [
         503
@@ -254,8 +272,10 @@
     {
       "code": "database_revision_incompatible",
       "sources": [
-        "migrations.py:101",
-        "migrations.py:79"
+        "migrations.py:100",
+        "migrations.py:120",
+        "migrations.py:199",
+        "migrations.py:228"
       ],
       "statuses": [
         503
@@ -264,8 +284,8 @@
     {
       "code": "database_schema_incomplete",
       "sources": [
-        "migrations.py:125",
-        "migrations.py:82"
+        "migrations.py:232",
+        "migrations.py:91"
       ],
       "statuses": [
         503
@@ -274,8 +294,8 @@
     {
       "code": "database_unavailable",
       "sources": [
-        "api.py:263",
-        "migrations.py:99"
+        "api.py:304",
+        "migrations.py:118"
       ],
       "statuses": [
         503
@@ -284,7 +304,7 @@
     {
       "code": "download_deadline_exceeded",
       "sources": [
-        "transfer_client.py:185"
+        "transfer_client.py:186"
       ],
       "statuses": [
         408
@@ -293,7 +313,9 @@
     {
       "code": "download_descriptor_mismatch",
       "sources": [
-        "transfer_client.py:163"
+        "transfer_client.py:164",
+        "transfer_client.py:380",
+        "transfer_client.py:394"
       ],
       "statuses": [
         409
@@ -302,7 +324,8 @@
     {
       "code": "download_incomplete",
       "sources": [
-        "transfer_client.py:189"
+        "transfer_client.py:190",
+        "transfer_client.py:420"
       ],
       "statuses": [
         503
@@ -311,8 +334,10 @@
     {
       "code": "download_integrity_failed",
       "sources": [
-        "transfer_client.py:182",
-        "transfer_client.py:192"
+        "transfer_client.py:183",
+        "transfer_client.py:193",
+        "transfer_client.py:412",
+        "transfer_client.py:423"
       ],
       "statuses": [
         409
@@ -321,9 +346,9 @@
     {
       "code": "draft_expired",
       "sources": [
-        "application.py:462",
-        "transfers.py:141",
-        "transfers.py:88"
+        "application.py:700",
+        "transfers.py:102",
+        "transfers.py:240"
       ],
       "statuses": [
         409
@@ -332,7 +357,7 @@
     {
       "code": "duplicate_attachment_path",
       "sources": [
-        "application.py:364"
+        "application.py:602"
       ],
       "statuses": [
         422
@@ -341,7 +366,7 @@
     {
       "code": "event_cursor_expired",
       "sources": [
-        "application.py:788"
+        "application.py:1026"
       ],
       "statuses": [
         410
@@ -350,7 +375,7 @@
     {
       "code": "https_required",
       "sources": [
-        "api.py:156"
+        "api.py:176"
       ],
       "statuses": [
         426
@@ -359,7 +384,7 @@
     {
       "code": "idempotency_conflict",
       "sources": [
-        "application.py:89"
+        "application.py:321"
       ],
       "statuses": [
         409
@@ -368,8 +393,8 @@
     {
       "code": "idempotency_key_required",
       "sources": [
-        "application.py:115",
-        "application.py:83"
+        "application.py:315",
+        "application.py:349"
       ],
       "statuses": [
         422
@@ -378,7 +403,7 @@
     {
       "code": "identity_provider_unavailable",
       "sources": [
-        "auth.py:56"
+        "auth.py:97"
       ],
       "statuses": [
         503
@@ -396,8 +421,8 @@
     {
       "code": "input_not_published",
       "sources": [
-        "application.py:676",
-        "application.py:765"
+        "application.py:1003",
+        "application.py:914"
       ],
       "statuses": [
         409
@@ -425,7 +450,7 @@
     {
       "code": "internal_error",
       "sources": [
-        "api.py:293"
+        "api.py:334"
       ],
       "statuses": [
         500
@@ -434,7 +459,7 @@
     {
       "code": "invalid_access_token",
       "sources": [
-        "auth.py:58"
+        "auth.py:99"
       ],
       "statuses": [
         401
@@ -443,7 +468,7 @@
     {
       "code": "invalid_attachment_digest",
       "sources": [
-        "application.py:370"
+        "application.py:608"
       ],
       "statuses": [
         422
@@ -461,7 +486,16 @@
     {
       "code": "invalid_attachment_size",
       "sources": [
-        "application.py:368"
+        "application.py:606"
+      ],
+      "statuses": [
+        422
+      ]
+    },
+    {
+      "code": "invalid_attempt_binding",
+      "sources": [
+        "application.py:265"
       ],
       "statuses": [
         422
@@ -470,17 +504,37 @@
     {
       "code": "invalid_attempt_selection",
       "sources": [
-        "transfers.py:468",
-        "transfers.py:480"
+        "transfers.py:588",
+        "transfers.py:600"
       ],
       "statuses": [
         422
       ]
     },
     {
+      "code": "invalid_backend_assertion",
+      "sources": [
+        "api.py:286",
+        "auth.py:46"
+      ],
+      "statuses": [
+        401
+      ]
+    },
+    {
       "code": "invalid_bindings",
       "sources": [
-        "application.py:199"
+        "application.py:214",
+        "application.py:437"
+      ],
+      "statuses": [
+        422
+      ]
+    },
+    {
+      "code": "invalid_certificate_thumbprint",
+      "sources": [
+        "application.py:208"
       ],
       "statuses": [
         422
@@ -489,8 +543,8 @@
     {
       "code": "invalid_content_length",
       "sources": [
-        "api.py:163",
-        "api.py:166"
+        "api.py:183",
+        "api.py:186"
       ],
       "statuses": [
         400
@@ -499,7 +553,7 @@
     {
       "code": "invalid_cursor",
       "sources": [
-        "application.py:785"
+        "application.py:1023"
       ],
       "statuses": [
         422
@@ -508,16 +562,46 @@
     {
       "code": "invalid_download_range",
       "sources": [
-        "transfer_client.py:178"
+        "transfer_client.py:179",
+        "transfer_client.py:408"
       ],
       "statuses": [
         502
       ]
     },
     {
+      "code": "invalid_gateway_put_receipt",
+      "sources": [
+        "transfers.py:206"
+      ],
+      "statuses": [
+        422
+      ]
+    },
+    {
+      "code": "invalid_grant_expiry",
+      "sources": [
+        "application.py:218",
+        "application.py:233"
+      ],
+      "statuses": [
+        422
+      ]
+    },
+    {
       "code": "invalid_input_records",
       "sources": [
-        "application.py:651"
+        "application.py:889"
+      ],
+      "statuses": [
+        422
+      ]
+    },
+    {
+      "code": "invalid_job_binding",
+      "sources": [
+        "application.py:133",
+        "application.py:178"
       ],
       "statuses": [
         422
@@ -545,7 +629,7 @@
     {
       "code": "invalid_lease_seconds",
       "sources": [
-        "application.py:679"
+        "application.py:917"
       ],
       "statuses": [
         422
@@ -554,7 +638,7 @@
     {
       "code": "invalid_limit",
       "sources": [
-        "application.py:417"
+        "application.py:655"
       ],
       "statuses": [
         422
@@ -563,7 +647,11 @@
     {
       "code": "invalid_part_numbers",
       "sources": [
-        "transfers.py:107"
+        "managed_transfers.py:46",
+        "managed_transfers.py:56",
+        "transfers.py:121",
+        "transfers.py:154",
+        "transfers.py:173"
       ],
       "statuses": [
         422
@@ -581,7 +669,7 @@
     {
       "code": "invalid_parts",
       "sources": [
-        "transfers.py:152"
+        "transfers.py:251"
       ],
       "statuses": [
         409
@@ -590,9 +678,9 @@
     {
       "code": "invalid_precondition",
       "sources": [
-        "api.py:206",
-        "api.py:214",
-        "api.py:372"
+        "api.py:226",
+        "api.py:234",
+        "api.py:441"
       ],
       "statuses": [
         400
@@ -601,7 +689,7 @@
     {
       "code": "invalid_principal_id",
       "sources": [
-        "application.py:190"
+        "application.py:428"
       ],
       "statuses": [
         422
@@ -610,7 +698,7 @@
     {
       "code": "invalid_publish_roles",
       "sources": [
-        "application.py:229"
+        "application.py:467"
       ],
       "statuses": [
         422
@@ -619,8 +707,8 @@
     {
       "code": "invalid_quota",
       "sources": [
-        "application.py:132",
-        "application.py:157"
+        "application.py:366",
+        "application.py:395"
       ],
       "statuses": [
         422
@@ -629,7 +717,7 @@
     {
       "code": "invalid_quota_fields",
       "sources": [
-        "application.py:155"
+        "application.py:393"
       ],
       "statuses": [
         422
@@ -638,7 +726,7 @@
     {
       "code": "invalid_reference_name",
       "sources": [
-        "application.py:577"
+        "application.py:815"
       ],
       "statuses": [
         422
@@ -647,7 +735,7 @@
     {
       "code": "invalid_request",
       "sources": [
-        "api.py:282"
+        "api.py:323"
       ],
       "statuses": [
         422
@@ -669,7 +757,8 @@
     {
       "code": "invalid_roles",
       "sources": [
-        "application.py:197"
+        "application.py:212",
+        "application.py:435"
       ],
       "statuses": [
         422
@@ -715,7 +804,7 @@
     {
       "code": "invalid_space_name",
       "sources": [
-        "application.py:120"
+        "application.py:354"
       ],
       "statuses": [
         422
@@ -724,7 +813,7 @@
     {
       "code": "invalid_subject",
       "sources": [
-        "application.py:193"
+        "application.py:431"
       ],
       "statuses": [
         422
@@ -733,7 +822,12 @@
     {
       "code": "invalid_transfer_descriptor",
       "sources": [
-        "transfer_client.py:108"
+        "transfer_client.py:109",
+        "transfer_client.py:232",
+        "transfer_client.py:250",
+        "transfer_client.py:316",
+        "transfer_client.py:322",
+        "transfer_client.py:337"
       ],
       "statuses": [
         502
@@ -742,7 +836,7 @@
     {
       "code": "invalid_transfer_grant",
       "sources": [
-        "transfer_client.py:125"
+        "transfer_client.py:126"
       ],
       "statuses": [
         502
@@ -751,7 +845,25 @@
     {
       "code": "invalid_visibility",
       "sources": [
-        "application.py:231"
+        "application.py:469"
+      ],
+      "statuses": [
+        422
+      ]
+    },
+    {
+      "code": "invalid_workload_binding",
+      "sources": [
+        "application.py:203"
+      ],
+      "statuses": [
+        422
+      ]
+    },
+    {
+      "code": "invalid_workload_epoch",
+      "sources": [
+        "application.py:205"
       ],
       "statuses": [
         422
@@ -760,7 +872,7 @@
     {
       "code": "last_admin",
       "sources": [
-        "application.py:209"
+        "application.py:447"
       ],
       "statuses": [
         409
@@ -769,11 +881,56 @@
     {
       "code": "legacy_database_not_supported",
       "sources": [
-        "migrations.py:121",
-        "migrations.py:74"
+        "migrations.py:81"
       ],
       "statuses": [
         503
+      ]
+    },
+    {
+      "code": "managed_job_space_conflict",
+      "sources": [
+        "application.py:144"
+      ],
+      "statuses": [
+        409
+      ]
+    },
+    {
+      "code": "managed_space_binding_immutable",
+      "sources": [
+        "application.py:140"
+      ],
+      "statuses": [
+        409
+      ]
+    },
+    {
+      "code": "managed_space_binding_required",
+      "sources": [
+        "application.py:183",
+        "application.py:225"
+      ],
+      "statuses": [
+        409
+      ]
+    },
+    {
+      "code": "managed_space_not_found",
+      "sources": [
+        "application.py:166"
+      ],
+      "statuses": [
+        404
+      ]
+    },
+    {
+      "code": "managed_space_retired",
+      "sources": [
+        "application.py:90"
+      ],
+      "statuses": [
+        409
       ]
     },
     {
@@ -788,8 +945,8 @@
     {
       "code": "metadata_quota_exceeded",
       "sources": [
-        "application.py:373",
-        "application.py:446"
+        "application.py:611",
+        "application.py:684"
       ],
       "statuses": [
         409
@@ -816,7 +973,7 @@
     {
       "code": "metadata_too_large",
       "sources": [
-        "client.py:245",
+        "client.py:321",
         "schemas.py:42"
       ],
       "statuses": [
@@ -826,7 +983,7 @@
     {
       "code": "not_ready",
       "sources": [
-        "api.py:307"
+        "api.py:348"
       ],
       "statuses": [
         503
@@ -889,7 +1046,7 @@
     {
       "code": "policy_reference_conflict",
       "sources": [
-        "application.py:287"
+        "application.py:525"
       ],
       "statuses": [
         409
@@ -898,16 +1055,25 @@
     {
       "code": "precondition_required",
       "sources": [
-        "api.py:209"
+        "api.py:229"
       ],
       "statuses": [
         428
       ]
     },
     {
+      "code": "previous_attempt_not_revoked",
+      "sources": [
+        "application.py:245"
+      ],
+      "statuses": [
+        409
+      ]
+    },
+    {
       "code": "principal_blob_quota_exceeded",
       "sources": [
-        "application.py:380"
+        "application.py:618"
       ],
       "statuses": [
         409
@@ -916,7 +1082,7 @@
     {
       "code": "profile_input_selection_mismatch",
       "sources": [
-        "application.py:670"
+        "application.py:908"
       ],
       "statuses": [
         409
@@ -954,9 +1120,18 @@
       ]
     },
     {
+      "code": "provisioning_principal_required",
+      "sources": [
+        "application.py:115"
+      ],
+      "statuses": [
+        403
+      ]
+    },
+    {
       "code": "quota_below_current_usage",
       "sources": [
-        "application.py:168"
+        "application.py:406"
       ],
       "statuses": [
         409
@@ -965,7 +1140,7 @@
     {
       "code": "record_in_active_acquisition",
       "sources": [
-        "application.py:533"
+        "application.py:771"
       ],
       "statuses": [
         409
@@ -974,9 +1149,9 @@
     {
       "code": "record_not_draft",
       "sources": [
-        "application.py:460",
-        "transfers.py:135",
-        "transfers.py:75"
+        "application.py:698",
+        "transfers.py:234",
+        "transfers.py:89"
       ],
       "statuses": [
         409
@@ -985,10 +1160,10 @@
     {
       "code": "record_not_found",
       "sources": [
-        "application.py:310",
-        "application.py:317",
-        "application.py:521",
-        "application.py:543"
+        "application.py:548",
+        "application.py:555",
+        "application.py:759",
+        "application.py:781"
       ],
       "statuses": [
         404
@@ -997,7 +1172,7 @@
     {
       "code": "record_not_terminal",
       "sources": [
-        "application.py:545"
+        "application.py:783"
       ],
       "statuses": [
         409
@@ -1006,7 +1181,7 @@
     {
       "code": "record_not_uploadable",
       "sources": [
-        "client.py:293"
+        "client.py:369"
       ],
       "statuses": [
         409
@@ -1015,7 +1190,7 @@
     {
       "code": "record_owner_required",
       "sources": [
-        "application.py:314"
+        "application.py:552"
       ],
       "statuses": [
         403
@@ -1024,7 +1199,7 @@
     {
       "code": "record_referenced",
       "sources": [
-        "application.py:528"
+        "application.py:766"
       ],
       "statuses": [
         409
@@ -1033,8 +1208,8 @@
     {
       "code": "record_retained_for_provenance",
       "sources": [
-        "application.py:526",
-        "application.py:557"
+        "application.py:764",
+        "application.py:795"
       ],
       "statuses": [
         409
@@ -1043,7 +1218,7 @@
     {
       "code": "record_version_mismatch",
       "sources": [
-        "application.py:440"
+        "application.py:678"
       ],
       "statuses": [
         412
@@ -1052,8 +1227,8 @@
     {
       "code": "reference_not_found",
       "sources": [
-        "application.py:584",
-        "application.py:643"
+        "application.py:822",
+        "application.py:881"
       ],
       "statuses": [
         404
@@ -1062,8 +1237,8 @@
     {
       "code": "reference_requires_shared_record",
       "sources": [
-        "application.py:600",
-        "application.py:757"
+        "application.py:838",
+        "application.py:995"
       ],
       "statuses": [
         409
@@ -1072,9 +1247,9 @@
     {
       "code": "reference_version_mismatch",
       "sources": [
-        "application.py:603",
-        "application.py:645",
-        "application.py:754"
+        "application.py:841",
+        "application.py:883",
+        "application.py:992"
       ],
       "statuses": [
         412
@@ -1083,8 +1258,8 @@
     {
       "code": "request_deadline_exceeded",
       "sources": [
-        "client.py:47",
-        "client.py:60",
+        "client.py:106",
+        "client.py:137",
         "client.py:91"
       ],
       "statuses": [
@@ -1094,8 +1269,8 @@
     {
       "code": "request_too_large",
       "sources": [
-        "api.py:169",
-        "api.py:180"
+        "api.py:189",
+        "api.py:200"
       ],
       "statuses": [
         413
@@ -1114,7 +1289,7 @@
     {
       "code": "role_required",
       "sources": [
-        "application.py:72"
+        "application.py:304"
       ],
       "statuses": [
         403
@@ -1160,19 +1335,33 @@
     {
       "code": "space_not_found",
       "sources": [
-        "application.py:143",
-        "application.py:63",
-        "application.py:66"
+        "application.py:377",
+        "application.py:64",
+        "application.py:67",
+        "application.py:80",
+        "application.py:88",
+        "application.py:97"
       ],
       "statuses": [
         404
       ]
     },
     {
+      "code": "stale_workload_epoch",
+      "sources": [
+        "application.py:240",
+        "application.py:248"
+      ],
+      "statuses": [
+        409
+      ]
+    },
+    {
       "code": "storage_mutation_uncertain",
       "sources": [
-        "transfers.py:143",
-        "transfers.py:83"
+        "transfers.py:175",
+        "transfers.py:242",
+        "transfers.py:97"
       ],
       "statuses": [
         409
@@ -1181,7 +1370,7 @@
     {
       "code": "storage_quiescence_required",
       "sources": [
-        "transfers.py:484"
+        "transfers.py:604"
       ],
       "statuses": [
         409
@@ -1190,7 +1379,7 @@
     {
       "code": "too_many_attachments",
       "sources": [
-        "application.py:357"
+        "application.py:595"
       ],
       "statuses": [
         422
@@ -1199,7 +1388,7 @@
     {
       "code": "transfer_deadline_exceeded",
       "sources": [
-        "transfer_client.py:67"
+        "transfer_client.py:68"
       ],
       "statuses": [
         408
@@ -1208,8 +1397,8 @@
     {
       "code": "type_not_found",
       "sources": [
-        "application.py:267",
-        "application.py:283"
+        "application.py:505",
+        "application.py:521"
       ],
       "statuses": [
         404
@@ -1218,7 +1407,7 @@
     {
       "code": "type_revision_mismatch",
       "sources": [
-        "application.py:349"
+        "application.py:587"
       ],
       "statuses": [
         422
@@ -1236,7 +1425,7 @@
     {
       "code": "unsupported_database",
       "sources": [
-        "migrations.py:115"
+        "migrations.py:218"
       ],
       "statuses": [
         503
@@ -1254,7 +1443,8 @@
     {
       "code": "unsupported_transfer_protocol",
       "sources": [
-        "transfer_client.py:105"
+        "transfer_client.py:106",
+        "transfer_client.py:305"
       ],
       "statuses": [
         409
@@ -1263,8 +1453,8 @@
     {
       "code": "upload_deadline_exceeded",
       "sources": [
-        "transfer_client.py:121",
-        "transfer_client.py:88"
+        "transfer_client.py:122",
+        "transfer_client.py:89"
       ],
       "statuses": [
         408
@@ -1273,7 +1463,8 @@
     {
       "code": "upload_not_open",
       "sources": [
-        "transfer_client.py:102"
+        "transfer_client.py:103",
+        "transfer_client.py:312"
       ],
       "statuses": [
         409
@@ -1282,9 +1473,14 @@
     {
       "code": "upload_not_ready",
       "sources": [
-        "transfers.py:101",
-        "transfers.py:113",
-        "transfers.py:124"
+        "managed_transfers.py:52",
+        "transfers.py:115",
+        "transfers.py:127",
+        "transfers.py:138",
+        "transfers.py:161",
+        "transfers.py:165",
+        "transfers.py:169",
+        "transfers.py:193"
       ],
       "statuses": [
         409
@@ -1293,7 +1489,9 @@
     {
       "code": "upload_source_changed",
       "sources": [
-        "transfer_client.py:139"
+        "transfer_client.py:140",
+        "transfer_client.py:263",
+        "transfer_client.py:354"
       ],
       "statuses": [
         409
@@ -1302,10 +1500,74 @@
     {
       "code": "verification_deadline_exceeded",
       "sources": [
-        "client.py:284"
+        "client.py:360"
       ],
       "statuses": [
         408
+      ]
+    },
+    {
+      "code": "workload_component_immutable",
+      "sources": [
+        "application.py:237"
+      ],
+      "statuses": [
+        409
+      ]
+    },
+    {
+      "code": "workload_grant_invalid",
+      "sources": [
+        "application.py:107",
+        "application.py:109"
+      ],
+      "statuses": [
+        403
+      ]
+    },
+    {
+      "code": "workload_grant_not_found",
+      "sources": [
+        "application.py:290"
+      ],
+      "statuses": [
+        404
+      ]
+    },
+    {
+      "code": "workload_identity_required",
+      "sources": [
+        "transfers.py:152"
+      ],
+      "statuses": [
+        403
+      ]
+    },
+    {
+      "code": "workload_membership_required",
+      "sources": [
+        "application.py:230"
+      ],
+      "statuses": [
+        403
+      ]
+    },
+    {
+      "code": "workload_required",
+      "sources": [
+        "application.py:295"
+      ],
+      "statuses": [
+        403
+      ]
+    },
+    {
+      "code": "workload_revocation_required",
+      "sources": [
+        "application.py:187"
+      ],
+      "statuses": [
+        409
       ]
     }
   ],
@@ -1314,7 +1576,7 @@
       "call_sites": [
         {
           "retryable": "True",
-          "source": "storage.py:250",
+          "source": "storage.py:254",
           "uncertain": "False"
         }
       ],
@@ -1334,7 +1596,7 @@
       "call_sites": [
         {
           "retryable": "True",
-          "source": "transfers.py:366",
+          "source": "transfers.py:476",
           "uncertain": "False"
         }
       ],
@@ -1354,7 +1616,7 @@
       "call_sites": [
         {
           "retryable": "False",
-          "source": "storage.py:210",
+          "source": "storage.py:214",
           "uncertain": "False"
         },
         {
@@ -1394,7 +1656,7 @@
         },
         {
           "retryable": "False",
-          "source": "transfers.py:48",
+          "source": "transfers.py:62",
           "uncertain": "False"
         }
       ],
@@ -1414,7 +1676,7 @@
       "call_sites": [
         {
           "retryable": "False",
-          "source": "storage.py:226",
+          "source": "storage.py:230",
           "uncertain": "False"
         }
       ],

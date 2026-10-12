@@ -506,11 +506,13 @@ local-development policy as configured endpoints.
 
 Advanced publishers can carry `ResolvedReference(revision, generation)` and a
 claim handle explicitly into `publish_aggregate(reference=..., claim=...)`,
-including across adapter instances. The owner CLI does this automatically.
+including across the retained adapter fixtures. The current owner CLI uses the
+independent `/v2` adapter; see [its publication and recovery guide](EXCHANGE_V3.md#hf²l-application-setup).
 Existing tag names fail before uploading; if a tag races after main publication,
 `PublishResult` still returns the published revision, `tag_created=False`, and a
-warning. The CLI prints that revision and warning rather than hiding a successful
-publication.
+warning. Current `/v2` commands print the confirmed revision and warning rather
+than hiding a successful publication. The retained v1 fixtures are not current
+CLI entry points.
 
 The `Exchange service tests` GitHub workflow runs required dependency checks,
 SQLite/Moto on Python 3.10/3.12, and PostgreSQL/MinIO for real concurrency,

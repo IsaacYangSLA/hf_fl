@@ -22,7 +22,7 @@ class ListenerCLI(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.plugin_path = self.root / "plugin.py"
         self.plugin_path.write_text("def train_model(base_dir, output_dir, options):\n    return {'num_examples': 1}\n")
         self.argv = ["--repo-id", "team/model", "--participant", "client-1", "--state-dir",

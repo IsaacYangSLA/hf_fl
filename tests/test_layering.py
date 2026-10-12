@@ -149,12 +149,16 @@ LAYERS: tuple[Layer, ...] = (
     Layer("exchange transfer orchestration", ("hf2l_exchange.transfers",),
           ("hf2l_exchange.domain", "hf2l_exchange.models", "hf2l_exchange.storage",
            "hf2l_exchange.vocabulary"), frozenset({"sqlalchemy"})),
+    # Managed descriptors are generic transfer policy. Keep this adapter apart
+    # from manager lifecycle, job plugins, and the transactional application.
+    Layer("exchange managed transfer descriptors", ("hf2l_exchange.managed_transfers",),
+          ("hf2l_exchange.domain", "hf2l_exchange.models", "hf2l_exchange.storage"), STDLIB_ONLY),
     Layer("exchange worker", ("hf2l_exchange.worker",),
           ("hf2l_exchange.models", "hf2l_exchange.vocabulary"), frozenset({"sqlalchemy"})),
     Layer("exchange HTTP composition", ("hf2l_exchange.api",),
           ("hf2l_exchange.application", "hf2l_exchange.auth", "hf2l_exchange.config",
            "hf2l_exchange.domain", "hf2l_exchange.migrations", "hf2l_exchange.storage",
-           "hf2l_exchange.transfers", "hf2l_exchange.vocabulary")),
+           "hf2l_exchange.transfers", "hf2l_exchange.managed_transfers", "hf2l_exchange.vocabulary")),
     Layer("exchange CLI composition", ("hf2l_exchange.cli",), ("hf2l_exchange",)),
     Layer("exchange contract export", ("hf2l_exchange.contracts",),
           ("hf2l_exchange.api", "hf2l_exchange.config", "hf2l_exchange.vocabulary")),
@@ -655,6 +659,22 @@ class GateSelfTests(unittest.TestCase):
         module = Module.from_path("packages/exchange/src/hf2l_exchange/client.py")
         self.assertEqual(module.name, "hf2l_exchange.client")
         self.assertEqual(str(module.path), "packages/exchange/src/hf2l_exchange/client.py")
+
+    def test_managed_transfer_adapter_has_a_narrow_generic_layer(self) -> None:
+        source = self._source("hf2l_exchange.managed_transfers",
+                              "from hf2l_exchange.domain import ExchangeError\n"
+                              "from hf2l_exchange.models import database_time\n"
+                              "from hf2l_exchange.storage import part_size_for\n")
+        self.assertEqual([], edge_violations(source))
+        self.assertEqual([], third_party_violations(source))
+        forbidden = self._source("hf2l_exchange.managed_transfers",
+                                 "from hf2l_exchange.application import Service\n"
+                                 "import hf2l_jobs\n")
+        self.assertEqual(1, len(edge_violations(forbidden)))
+        self.assertEqual(1, len(third_party_violations(forbidden)))
+        api = self._source("hf2l_exchange.api",
+                           "from hf2l_exchange.managed_transfers import ManagedTransferService\n")
+        self.assertEqual([], edge_violations(api))
 
     def test_registry_imports_providers_only_when_called(self) -> None:
         eager = self._source("hf2l.backends.factory", "import hf2l.backends.huggingface\n")

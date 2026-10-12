@@ -11,6 +11,7 @@ import textwrap
 from pathlib import Path
 
 from hf2l.backends import add_store_arguments, make_store
+from hf2l.common.output import plugin_stdout_to_stderr
 from hf2l.core.protocol import AlgorithmSpec, RoundRecord
 from hf2l.hub_helpers import (
     ROUND_FILE,
@@ -42,16 +43,19 @@ def generic_model_card(repo_id: str) -> str:
 
         Repository: `{repo_id}`
 
-        This repository is managed by the `fed_avg_on_hf` sample workflow.
-        Model weights are stored as SafeTensors.
+        This repository is managed by the `hf2l` repository, client, and owner
+        workflow using the configured storage backend. Model weights are stored
+        as SafeTensors.
 
-        Each client must train from the exact same immutable base revision for
-        a round. Clients publish isolated submissions. The owner computes
-        dataset-size-weighted FedAvg and publishes a new `main` revision. A
-        client submission contains one local model, not the aggregate.
+        For a FedAvg round, each client trains from the same immutable base
+        revision and publishes an isolated submission. The owner computes
+        dataset-size-weighted FedAvg and publishes a new `main` revision. Manual
+        cyclic mode instead trains from immutable predecessor submissions and
+        records their lineage. A client submission contains one local model.
 
-        This is an educational proof of concept (POC). It does not implement
-        secure aggregation, differential privacy, client authentication, or
+        Authentication and authorization depend on the configured backend and
+        its deployment settings. This is an educational proof of concept (POC).
+        It does not implement secure aggregation, differential privacy, or
         poisoning defenses.
         """
     )
@@ -107,7 +111,8 @@ def main(argv: list[str] | None = None) -> int:
                 initialize_model = require_callable(plugin, "initialize_model")
                 options = parse_plugin_args(args.plugin_arg)
                 options["repo_id"] = args.repo_id
-                result_metadata = initialize_model(staging, options)
+                with plugin_stdout_to_stderr():
+                    result_metadata = initialize_model(staging, options)
                 if result_metadata is None:
                     result_metadata = {}
                 if not isinstance(result_metadata, dict):

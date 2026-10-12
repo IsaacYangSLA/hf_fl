@@ -55,12 +55,18 @@ def initialize_model(output_dir: Path, options: dict[str, Any]) -> dict[str, Any
             # LeNet FedAvg proof of concept (POC)
 
             This is the example LeNet checkpoint for `{repo_id}`. It classifies
-            `[N, 1, 28, 28]` grayscale images into ten classes. The repository is
-            updated by validated FedAvg revisions; client submissions are not
-            published to `main` directly.
+            `[N, 1, 28, 28]` grayscale images into ten classes. For a FedAvg round,
+            each `hf2l` client trains from the same immutable base revision and
+            publishes an isolated submission through the configured storage
+            backend. The owner validates submissions, computes
+            dataset-size-weighted FedAvg, and publishes the aggregate as a new
+            `main` revision. Manual cyclic mode trains from immutable predecessor
+            submissions and records their lineage.
 
+            Authentication and authorization depend on the configured backend
+            and its deployment settings.
             This educational workflow does not provide secure aggregation,
-            differential privacy, authentication, or poisoning defenses.
+            differential privacy, or poisoning defenses.
             """
         ),
         encoding="utf-8",

@@ -1,4 +1,6 @@
 """Transport- and persistence-independent exchange values and failures."""
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Mapping, Protocol, runtime_checkable
 
@@ -17,11 +19,29 @@ class ExchangeError(Exception):
 Error = ExchangeError
 
 
+def principal_id(issuer: str, subject: str) -> str:
+    """Stable generic identity shared by transport auth and domain commands."""
+    return hashlib.sha256(json.dumps([issuer, subject], separators=(",", ":")).encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class WorkloadIdentity:
+    grant_id: str
+    space_id: str
+    job_id: str
+    attempt_id: str
+    component_id: str
+    epoch: int
+    certificate_thumbprint: str
+    expires_at: float
+
+
 @dataclass(frozen=True)
 class Principal:
     id: str
     subject: str
     bootstrap_admin: bool = False
+    workload: WorkloadIdentity | None = None
 
 
 @dataclass(frozen=True)

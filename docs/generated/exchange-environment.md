@@ -16,6 +16,7 @@ configuration is separate; this table covers the Exchange server and worker sett
 | `EXCHANGE_COORDINATION_SECONDS` | `300` | `Settings.coordination_seconds` |  |
 | `EXCHANGE_DATABASE_URL` | `"sqlite:///exchange-v2.db"` | `DatabaseSettings.url` |  |
 | `EXCHANGE_DOCS_ENABLED` | `false` | `Settings.docs_enabled` |  |
+| `EXCHANGE_DOWNLOAD_BROKER_PRINCIPAL_IDS` | `[]` | `AuthSettings.download_broker_principal_ids` | Comma-separated canonical principal IDs. |
 | `EXCHANGE_DRAFT_SECONDS` | `86400` | `Settings.draft_seconds` |  |
 | `EXCHANGE_EVENT_RETENTION_SECONDS` | `2592000` | `WorkerSettings.event_retention_seconds` | Overrides `EXCHANGE_WORKER_EVENT_RETENTION_SECONDS` when set. |
 | `EXCHANGE_GRANT_SECONDS` | `300` | `StorageSettings.grant_seconds` |  |
@@ -31,6 +32,7 @@ configuration is separate; this table covers the Exchange server and worker sett
 | `EXCHANGE_POOL_RECYCLE` | `1800` | `DatabaseSettings.pool_recycle` |  |
 | `EXCHANGE_POOL_SIZE` | `5` | `DatabaseSettings.pool_size` |  |
 | `EXCHANGE_POOL_TIMEOUT` | `30` | `DatabaseSettings.pool_timeout` |  |
+| `EXCHANGE_PROVISIONING_PRINCIPAL_IDS` | `[]` | `AuthSettings.provisioning_principal_ids` | Comma-separated canonical principal IDs. |
 | `EXCHANGE_S3_ACCESS_KEY` | `""` | `StorageSettings.access_key` |  |
 | `EXCHANGE_S3_BUCKET` | `""` | `StorageSettings.bucket` |  |
 | `EXCHANGE_S3_ENDPOINT` | `""` | `StorageSettings.endpoint` |  |
@@ -39,6 +41,7 @@ configuration is separate; this table covers the Exchange server and worker sett
 | `EXCHANGE_S3_REGION` | `"us-east-1"` | `StorageSettings.region` |  |
 | `EXCHANGE_S3_SECRET_KEY` | `""` | `StorageSettings.secret_key` |  |
 | `EXCHANGE_S3_SESSION_TOKEN` | `""` | `StorageSettings.session_token` |  |
+| `EXCHANGE_TRUSTED_BACKEND_SECRET` | `""` | `AuthSettings.trusted_backend_secret` |  |
 | `EXCHANGE_WORKER_BATCH_SIZE` | `32` | `WorkerSettings.batch_size` |  |
 | `EXCHANGE_WORKER_CLEANUP_CONCURRENCY` | `2` | `WorkerSettings.cleanup_concurrency` |  |
 | `EXCHANGE_WORKER_EVENT_RETENTION_SECONDS` | `2592000` | `WorkerSettings.event_retention_seconds` |  |
@@ -48,3 +51,6 @@ configuration is separate; this table covers the Exchange server and worker sett
 | `EXCHANGE_WORKER_POLL_SECONDS` | `1` | `WorkerSettings.poll_seconds` |  |
 | `EXCHANGE_WORKER_RECOVER_AFTER` | `30` | `WorkerSettings.recover_after` |  |
 | `EXCHANGE_WORKER_VERIFY_CONCURRENCY` | `2` | `WorkerSettings.verify_concurrency` |  |
+| `EXCHANGE_WORKLOAD_AUDIENCE` | `"exchange-workload"` | `AuthSettings.workload_audience` |  |
+| `EXCHANGE_WORKLOAD_ISSUER` | `""` | `AuthSettings.workload_issuer` |  |
+| `EXCHANGE_WORKLOAD_PUBLIC_KEY` | `""` | `AuthSettings.workload_public_key` |  |

@@ -165,7 +165,11 @@ class S3BlobStore:
         if self.client.get_bucket_versioning(Bucket=self.bucket).get("Status") != "Enabled":
             raise StorageFailure("storage_misconfigured", retryable=True)
         # A missing-object HEAD probes permission to distinguish absence from denial.
-        self._recover_object("readiness/" + uuid.uuid4().hex)
+        # Use the same prefix normalization as upload attempt keys so credentials
+        # scoped to that prefix can also pass readiness.
+        prefix = getattr(self.settings, "prefix", "").strip("/")
+        key = "/".join(x for x in (prefix, "readiness", uuid.uuid4().hex) if x)
+        self._recover_object(key)
 
     @_provider_operation
     def start(self, key: str) -> UploadHandle:

@@ -132,6 +132,8 @@ class SpaceDescriptor(Descriptor):
     record_count: int = 0
     metadata_bytes: int = 0
     generation: int = 0
+    managed: bool = False
+    job_id: str | None = None
 
     @classmethod
     def from_dict(cls, value):
@@ -167,3 +169,47 @@ class EventDescriptor(Descriptor):
     def from_dict(cls, value):
         return cls(value["id"], value.get("type", value.get("kind", "")),
                    value.get("resource_id", value.get("record_id")), value.get("payload", value.get("data", {})), value.get("created_at"))
+
+
+@dataclass(frozen=True)
+class WorkloadGrantDescriptor(Descriptor):
+    """Current certificate-bound service grant; never includes token material."""
+
+    grant_id: str
+    principal_id: str
+    subject: str
+    space_id: str
+    job_id: str
+    attempt_id: str
+    component_id: str
+    epoch: int
+    expires_at: float
+    certificate_thumbprint: str
+    roles: tuple[str, ...]
+    bindings: Mapping[str, Any] = field(default_factory=dict)
+    enabled: bool = True
+    created_at: float | None = None
+    revoked_at: float | None = None
+    effective_roles: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(cls, value):
+        fields = {key: value[key] for key in cls.__dataclass_fields__ if key in value}
+        fields["roles"] = tuple(value.get("roles", ()))
+        fields["effective_roles"] = tuple(value.get("effective_roles", ()))
+        return cls(**fields)
+
+
+@dataclass(frozen=True)
+class ManagedSpaceDescriptor(Descriptor):
+    space_id: str
+    job_id: str
+    managed: bool = True
+    status: str = "active"
+    retired_at: float | None = None
+    cleanup_pending: bool = False
+    provenance_retained: bool = True
+
+    @classmethod
+    def from_dict(cls, value):
+        return cls(**{key: value[key] for key in cls.__dataclass_fields__ if key in value})

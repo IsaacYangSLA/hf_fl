@@ -58,6 +58,30 @@ def average(reference: Any, candidates: list[Any], coefficients: list[float], *,
     return result
 
 
+def validate_finite_checkpoint(layout: CheckpointLayout, *, ops: ArrayOps | None = None,
+                               accumulator_dtype: Any = "float32") -> None:
+    """Validate individual inputs before deciding which clients to aggregate.
+
+    Read one shard at a time, using the same input and accumulator rules as
+    ``average``. Intermediate and output checks remain in the reducer.
+    """
+    dtype = accumulator_name(accumulator_dtype)
+    ops = get_ops(layout) if ops is None else ops
+    for filename in layout.weight_files:
+        with ops.open_shard(layout.root / filename) as shard:
+            for key, spec in layout.tensors.items():
+                if spec.filename != filename:
+                    continue
+                value = shard.get_tensor(key)
+                if not ops.is_floating(value):
+                    continue
+                if not ops.all_finite(value):
+                    raise ValueError(f"Input tensor contains NaN or infinity: {key}")
+                working_dtype = "float64" if ops.dtype_name(value) == "F64" else dtype
+                if not ops.all_finite(ops.astype(value, working_dtype)):
+                    raise ValueError(f"Input tensor overflows accumulator dtype: {key}")
+
+
 def _copy_non_checkpoint_files(reference: CheckpointLayout, output_dir: Path, exclude: Iterable[str]) -> None:
     excluded = {Path(value).as_posix().rstrip("/") for value in (*reference.artifact_paths, *exclude)}
     for source in reference.root.rglob("*"):

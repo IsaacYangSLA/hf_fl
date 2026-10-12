@@ -22,7 +22,7 @@ class OwnerListenerCLI(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         self.argv = ["--role", "owner", "--repo-id", "team/model", "--state-dir", str(self.root / "owner")]
 
     def test_role_specific_arguments_and_defaults(self):

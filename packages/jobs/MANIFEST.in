@@ -1,0 +1,3 @@
+include README.md
+recursive-include src/hf2l_jobs/static *
+recursive-include src/hf2l_jobs/templates *

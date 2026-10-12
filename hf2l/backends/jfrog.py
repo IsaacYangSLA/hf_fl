@@ -26,6 +26,7 @@ from hf2l.core.ports import (BackendCapabilities, ModelStore, PublicationConsist
 
 _ENDPOINT_MARKER = "/api/huggingfaceml/"
 _PLACEHOLDER_COMMIT_URLS = {"commitUrl", "hf://commitUrl"}
+_RESERVED_MUTABLE_REVISIONS = frozenset({"main", "master", "head", "latest", "default"})
 _COMMIT_INFO_LOCK = RLock()
 
 
@@ -48,6 +49,18 @@ def _validate_revision(value: str) -> str:
         raise ValueError(
             "JFrog revision identifiers may contain only letters, numbers, "
             "hyphens, and periods"
+        )
+    return value
+
+
+def _validate_detached_revision(value: str, *, kind: str) -> str:
+    """Keep submission and tag uploads away from global reference aliases."""
+
+    value = _validate_revision(value)
+    if value.casefold() in _RESERVED_MUTABLE_REVISIONS:
+        raise ValueError(
+            f"JFrog {kind} cannot target reserved mutable revision {value!r}; "
+            "use a unique named revision"
         )
     return value
 
@@ -215,7 +228,7 @@ class JFrogStore(ModelStore):
         del participant, source_round, base_revision
         if not submission_revision:
             raise ValueError("JFrog submissions require a unique named revision")
-        submission_revision = _validate_revision(submission_revision)
+        submission_revision = _validate_detached_revision(submission_revision, kind="submission")
         with _selected_folder(folder, paths) as staging:
             self._upload_folder(repo_id, staging, submission_revision)
         resolved = self.resolve_revision(repo_id, submission_revision)
@@ -333,7 +346,7 @@ class JFrogStore(ModelStore):
             raise ValueError("Publication reference differs from the expected base")
         del next_round
         if tag:
-            tag = _validate_revision(tag)
+            tag = _validate_detached_revision(tag, kind="tag")
         current = self.resolve_revision(repo_id, "main")
         if current != expected_base:
             raise RuntimeError(

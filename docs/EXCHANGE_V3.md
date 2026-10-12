@@ -13,7 +13,7 @@ boundaries. This is an unreleased development implementation, not a provisioned
 service or a published package.
 
 This guide describes the implementation integrated at `60e4bf8` and subsequent
-Exchange fixes in the current implementation. The
+application and Exchange fixes in the current implementation. The
 [implementation limitations](ARCHITECTURE_V3.md#current-implementation-limitations)
 track resolved and remaining audit findings; historical validation results are
 labeled separately below.
@@ -95,8 +95,23 @@ worker as separate processes:
 
 Database commands require database settings only. The storage check requires
 storage settings only. The worker does not need JWT verification configuration.
-`migrate-db` applies the v2 revision ledger; it is not a v1 importer. Stop services
-and back up data before future schema upgrades.
+`migrate-db` applies the v2 revision ledger; it is not a v1 importer. The current
+revision is `0002_event_sequence`. New `init-db` databases receive that revision;
+existing `0001_initial` databases need an explicit upgrade. Stop all API and
+worker processes and back up the database before running:
+
+```bash
+.venv/bin/hf2l-exchange migrate-db
+.venv/bin/hf2l-exchange check-db
+```
+
+Restart the API and worker after both commands succeed. `init-db`, readiness,
+and normal requests refuse an older revision instead of upgrading it implicitly.
+The SQLite upgrade preserves events and indexes and gives event IDs a persistent
+sequence above existing events and retained cursor floors, preventing ID reuse
+after pruning. PostgreSQL retains its existing sequence while advancing the
+ledger. There is no downgrade command; restoring the backup is required before
+returning to a binary that accepts only `0001_initial`.
 
 Expose the API through HTTPS. The ASGI application requires the HTTPS request
 scheme, so configure trusted proxy forwarding when TLS terminates upstream.
@@ -120,7 +135,12 @@ not a replacement for access control.
 The bucket must be private, have versioning enabled, and prevent end-client
 listing, arbitrary writes and deletion. Service identities need multipart
 initiation/listing/completion/abort, exact-version reads and signing rights;
-cleanup also needs deletion of owned object versions. Do not configure a bucket
+cleanup also needs deletion of owned object versions. Storage readiness checks
+bucket versioning and probes `readiness/<UUID>` under the normalized
+`EXCHANGE_S3_PREFIX`, so object permissions may be limited to that prefix.
+Trailing slashes are removed before appending the probe path; an empty prefix
+uses the bucket root. Bucket-level versioning access remains required; object
+access denials and suspended versioning still fail readiness. Do not configure a bucket
 lifecycle rule that removes versions referenced by live records. Configure
 encryption, TLS, IAM, backup/restore and central log retention for the deployment.
 
@@ -425,6 +445,30 @@ writer; the owner rejects it when the stronger guarantee is requested. A confirm
 primary publication remains a successful result even if a later tag creation
 fails; the CLI reports the revision and separate warning.
 
+### Cyclic handoffs
+
+The application supports explicit manual handoffs using `--workflow cyclic`
+and `--source-kind submission`; see the
+[local recipe and lineage contract](../README.md#cyclic-federated-learning-without-fedavg).
+The receiving participant must read the predecessor, every ancestor checkpoint,
+and the immutable global root. Exchange defaults `training.update` to private,
+so peer participants cannot consume each other's updates until a space
+administrator deliberately changes that policy:
+
+```python
+with ExchangeClient(os.environ["EXCHANGE_ENDPOINT"], os.environ["EXCHANGE_TOKEN"]) as admin:
+    admin.set_policy(space_id, "training.update",
+                     publish_roles=["contributor"], visibility="shared")
+```
+
+This changes visibility for existing and future training updates in that space.
+Use a space whose members are intended to read those checkpoints. Participant
+bindings and contributor publication permissions still apply. Clients use their
+own tokens, the predecessor's immutable record ID, and `--source-participant`
+to pin the expected author. Cyclic submissions leave `main` unchanged and are
+excluded from synchronous FedAvg selection. The caller schedules each hop;
+Exchange does not enforce participant order or a single successor.
+
 ## Capacity, lifecycle and recovery
 
 Space creation defaults to 10 GiB blob capacity, a 10 GiB per-principal physical
@@ -498,10 +542,11 @@ at the reported floor. It is not an outbound webhook queue. Idempotency response
 are also retained for a bounded interval; replay after expiry can create new
 resources.
 
-HF²L's [per-client listener](CLIENT_LISTENER.md) polls the published model
-reference directly, rather than consuming this event feed. It needs no cursor
-or push service, and can skip intermediate rounds while offline. There is no
-SSE subscription or owner aggregation listener in the current implementation.
+HF²L's [client and owner listeners](CLIENT_LISTENER.md) poll model references and
+submission metadata directly, rather than consuming this event feed. Clients
+can skip intermediate rounds while offline; owners aggregate when enough
+eligible submissions share the current immutable base. Neither role needs an
+event cursor or push service. SSE subscriptions are not implemented.
 
 ### Offline repair of an uncertain provider mutation
 
@@ -578,6 +623,11 @@ for dependency failures, verification backlogs, expired acquisitions and unrecla
 bytes. Per-request logs avoid bodies, bearer tokens and signed URL query strings.
 
 ## Validation status and deployment limits
+
+The [October 8, 2026 remediation record](validation/2026-10-08-repository-remediation.md)
+reports the latest local suites, the actual manual cyclic CLI recipe, generated
+contract checks, package verification, and the configurations that were not
+exercised. The September 22 results below are preserved as historical evidence.
 
 Run the independent service tests and the legacy/application regression suite
 from the development environment:

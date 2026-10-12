@@ -25,6 +25,69 @@
     },
     "ClientContext": {
       "additionalProperties": true,
+      "allOf": [
+        {
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "lineage"
+                  ]
+                },
+                {
+                  "required": [
+                    "source_participant"
+                  ]
+                },
+                {
+                  "properties": {
+                    "source_kind": {
+                      "const": "submission"
+                    }
+                  },
+                  "required": [
+                    "source_kind"
+                  ]
+                }
+              ]
+            }
+          },
+          "if": {
+            "properties": {
+              "workflow": {
+                "const": "cyclic"
+              }
+            },
+            "required": [
+              "workflow"
+            ]
+          },
+          "then": {
+            "required": [
+              "source_kind",
+              "lineage"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source_kind": {
+                "const": "submission"
+              }
+            },
+            "required": [
+              "source_kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "source_participant"
+            ]
+          }
+        }
+      ],
       "anyOf": [
         {
           "required": [
@@ -139,6 +202,88 @@
           },
           "type": "object"
         },
+        "lineage": {
+          "additionalProperties": false,
+          "properties": {
+            "parents": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "participant": {
+                    "maxLength": 4096,
+                    "minLength": 1,
+                    "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+                    "type": "string"
+                  },
+                  "revision": {
+                    "allOf": [
+                      {
+                        "not": {
+                          "enum": [
+                            "main",
+                            "master",
+                            "latest",
+                            "HEAD"
+                          ]
+                        }
+                      },
+                      {
+                        "not": {
+                          "pattern": "^refs/(heads|tags)/"
+                        }
+                      }
+                    ],
+                    "maxLength": 4096,
+                    "minLength": 1,
+                    "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "revision",
+                  "participant"
+                ],
+                "type": "object"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "root_revision": {
+              "allOf": [
+                {
+                  "not": {
+                    "enum": [
+                      "main",
+                      "master",
+                      "latest",
+                      "HEAD"
+                    ]
+                  }
+                },
+                {
+                  "not": {
+                    "pattern": "^refs/(heads|tags)/"
+                  }
+                }
+              ],
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+              "type": "string"
+            },
+            "root_round": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "root_revision",
+            "root_round",
+            "parents"
+          ],
+          "type": "object"
+        },
         "repo_id": {
           "maxLength": 4096,
           "minLength": 1,
@@ -158,10 +303,30 @@
           ],
           "type": "integer"
         },
+        "source_kind": {
+          "enum": [
+            "global",
+            "submission"
+          ],
+          "type": "string"
+        },
+        "source_participant": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
         "source_round": {
           "maximum": 9223372036854775807,
           "minimum": 0,
           "type": "integer"
+        },
+        "workflow": {
+          "enum": [
+            "fedavg",
+            "cyclic"
+          ],
+          "type": "string"
         }
       },
       "required": [
@@ -339,6 +504,69 @@
     },
     "SubmissionManifest": {
       "additionalProperties": true,
+      "allOf": [
+        {
+          "else": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "lineage"
+                  ]
+                },
+                {
+                  "required": [
+                    "source_participant"
+                  ]
+                },
+                {
+                  "properties": {
+                    "source_kind": {
+                      "const": "submission"
+                    }
+                  },
+                  "required": [
+                    "source_kind"
+                  ]
+                }
+              ]
+            }
+          },
+          "if": {
+            "properties": {
+              "workflow": {
+                "const": "cyclic"
+              }
+            },
+            "required": [
+              "workflow"
+            ]
+          },
+          "then": {
+            "required": [
+              "source_kind",
+              "lineage"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "source_kind": {
+                "const": "submission"
+              }
+            },
+            "required": [
+              "source_kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "source_participant"
+            ]
+          }
+        }
+      ],
       "anyOf": [
         {
           "required": [
@@ -447,6 +675,88 @@
           },
           "type": "object"
         },
+        "lineage": {
+          "additionalProperties": false,
+          "properties": {
+            "parents": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "participant": {
+                    "maxLength": 4096,
+                    "minLength": 1,
+                    "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+                    "type": "string"
+                  },
+                  "revision": {
+                    "allOf": [
+                      {
+                        "not": {
+                          "enum": [
+                            "main",
+                            "master",
+                            "latest",
+                            "HEAD"
+                          ]
+                        }
+                      },
+                      {
+                        "not": {
+                          "pattern": "^refs/(heads|tags)/"
+                        }
+                      }
+                    ],
+                    "maxLength": 4096,
+                    "minLength": 1,
+                    "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "revision",
+                  "participant"
+                ],
+                "type": "object"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "root_revision": {
+              "allOf": [
+                {
+                  "not": {
+                    "enum": [
+                      "main",
+                      "master",
+                      "latest",
+                      "HEAD"
+                    ]
+                  }
+                },
+                {
+                  "not": {
+                    "pattern": "^refs/(heads|tags)/"
+                  }
+                }
+              ],
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+              "type": "string"
+            },
+            "root_round": {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "root_revision",
+            "root_round",
+            "parents"
+          ],
+          "type": "object"
+        },
         "num_examples": {
           "maximum": 9223372036854775807,
           "minimum": 1,
@@ -471,6 +781,19 @@
           ],
           "type": "integer"
         },
+        "source_kind": {
+          "enum": [
+            "global",
+            "submission"
+          ],
+          "type": "string"
+        },
+        "source_participant": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x20\\x7f](?:[^\\x00-\\x1f\\x7f]*[^\\x00-\\x20\\x7f])?$",
+          "type": "string"
+        },
         "source_round": {
           "maximum": 9223372036854775807,
           "minimum": 0,
@@ -491,6 +814,13 @@
         },
         "training": {
           "type": "object"
+        },
+        "workflow": {
+          "enum": [
+            "fedavg",
+            "cyclic"
+          ],
+          "type": "string"
         }
       },
       "required": [
@@ -514,6 +844,7 @@
   "x-runtime-limits": {
     "base_aliases": "must be equal when both present",
     "collection_items": 10000,
+    "cyclic_lineage": "at most 64 distinct immutable parents; base, source kind, participant and round must match lineage",
     "document_bytes": 1048576,
     "integers": "signed 64-bit; integer fields reject boolean and floating-point values",
     "json_depth": 16,

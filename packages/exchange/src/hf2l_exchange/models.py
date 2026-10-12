@@ -37,6 +37,45 @@ class Space(Base):
     event_floor: Mapped[int] = mapped_column(BigInteger, default=0)
 
 
+class ManagedSpace(Base):
+    __tablename__ = "v2_managed_spaces"
+    space_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    job_id: Mapped[str] = mapped_column(String(128), unique=True)
+    created_at: Mapped[float] = mapped_column(default=time.time)
+    retired_at: Mapped[float | None] = mapped_column(nullable=True)
+    __table_args__ = (ForeignKeyConstraint(["space_id"], ["v2_spaces.id"]),)
+
+
+class WorkloadRevocation(Base):
+    __tablename__ = "v2_workload_revocations"
+    space_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    attempt_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    revoked_at: Mapped[float] = mapped_column()
+    __table_args__ = (ForeignKeyConstraint(["space_id"], ["v2_spaces.id"]),)
+
+
+class WorkloadGrant(Base):
+    __tablename__ = "v2_workload_grants"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    space_id: Mapped[str] = mapped_column(String(64))
+    principal_id: Mapped[str] = mapped_column(String(64))
+    subject: Mapped[str] = mapped_column(String(256))
+    job_id: Mapped[str] = mapped_column(String(128))
+    attempt_id: Mapped[str] = mapped_column(String(128))
+    component_id: Mapped[str] = mapped_column(String(128))
+    epoch: Mapped[int] = mapped_column(BigInteger)
+    roles: Mapped[list] = mapped_column(JSON_VALUE)
+    bindings: Mapped[dict] = mapped_column(JSON_VALUE)
+    certificate_thumbprint: Mapped[str] = mapped_column(String(43))
+    expires_at: Mapped[float] = mapped_column()
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[float] = mapped_column(default=time.time)
+    revoked_at: Mapped[float | None] = mapped_column(nullable=True)
+    __table_args__ = (ForeignKeyConstraint(["space_id", "principal_id"], ["v2_members.space_id", "v2_members.principal_id"]),
+                     Index("ix_v2_workload_grants_attempt", "space_id", "attempt_id", "enabled"),
+                     Index("ix_v2_workload_grants_principal", "space_id", "principal_id", "epoch"))
+
+
 class Member(Base):
     __tablename__ = "v2_members"
     space_id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -201,7 +240,8 @@ class Event(Base):
     created_at: Mapped[float] = mapped_column(default=time.time)
     __table_args__ = (ForeignKeyConstraint(["space_id"], ["v2_spaces.id"]),
         Index("ix_v2_events_space_cursor", "space_id", "id"),
-        Index("ix_v2_events_retention", "created_at", "id"))
+        Index("ix_v2_events_retention", "created_at", "id"),
+        {"sqlite_autoincrement": True})
 
 
 class Operation(Base):

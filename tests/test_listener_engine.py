@@ -53,7 +53,7 @@ class ListenerEngineTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name) / "listener"
+        self.root = Path(self.temporary.name).resolve() / "listener"
 
     def test_other_workflow_counts_success_and_deduplicates_on_restart(self):
         index = Mock()

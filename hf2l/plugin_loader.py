@@ -8,6 +8,7 @@ import importlib.util
 import json
 import re
 import sys
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Callable
@@ -51,7 +52,8 @@ def load_local_plugin(path: Path) -> ModuleType:
     if plugin_directory not in sys.path:
         sys.path.insert(0, plugin_directory)
     try:
-        spec.loader.exec_module(module)
+        with redirect_stdout(sys.stderr):
+            spec.loader.exec_module(module)
     except Exception:
         sys.modules.pop(module_name, None)
         raise
@@ -63,7 +65,8 @@ def load_plugin(reference: str | Path) -> ModuleType:
     value = str(reference)
     module_name = BUILTIN_PLUGINS.get(value)
     if module_name is not None:
-        return importlib.import_module(module_name)
+        with redirect_stdout(sys.stderr):
+            return importlib.import_module(module_name)
     return load_local_plugin(Path(value))
 
 

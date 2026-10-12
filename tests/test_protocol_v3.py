@@ -197,11 +197,16 @@ class CommonFileTests(unittest.TestCase):
             (root / "MODEL").write_text("b")
             (root / "Folder").mkdir()
             (root / "Folder/child").write_text("c")
-            (root / "folder").write_text("d")
             (root / "link").symlink_to(root / "model")
             self.assertEqual(checked_file_paths(root, ["model"]), ["model"])
-            for paths in [["../model"], ["missing"], ["link"], ["model", "MODEL"], ["model", "model"], ["folder", "Folder/child"]]:
+            for paths in [["../model"], ["missing"], ["link"]]:
                 with self.subTest(paths=paths), self.assertRaises(ValueError):
+                    checked_file_paths(root, paths)
+            # Validate collisions before inspecting the second path. A file and
+            # a directory with case-folding names cannot coexist on every OS.
+            for paths in [["model", "MODEL"], ["model", "model"],
+                          ["Folder/child", "folder"], ["model", "MODEL/child"]]:
+                with self.subTest(paths=paths), self.assertRaisesRegex(ValueError, "collision"):
                     checked_file_paths(root, paths)
             (root / "directory_link").symlink_to(root, target_is_directory=True)
             with self.assertRaises(ValueError):

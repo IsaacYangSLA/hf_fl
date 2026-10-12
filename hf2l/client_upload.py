@@ -56,7 +56,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"resolved_revision={result.resolved_revision}")
         if result.url:
             print(f"submission_url={result.url}")
-        print("Send submission_revision to the repository owner.")
+        if submission.get("workflow") == "cyclic":
+            print("Send resolved_revision to the next participant for a cyclic handoff.")
+        else:
+            print("Send submission_revision to the repository owner.")
         return 0
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)

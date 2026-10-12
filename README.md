@@ -20,12 +20,13 @@ formats; it does not rename them to version 3.
 |:---|:---|
 | **1. Pluggable models and client training** | Model-specific initialization, training, and evaluation can live in local plugins. Alice, Bob, and other clients may use different reviewed training implementations, frameworks, hyperparameters, and private datasets as long as they produce the same checkpoint schema. The included LeNet/MNIST and VGG/CIFAR-10 plugins demonstrate switching models by joining a differently initialized model repository without changing transport or FedAvg code. |
 | **2. Two client integration approaches** | Use three independent steps—download, train with arbitrary local code, and upload—or use the plugin-style `python -m hf2l.client_train` command to run all three around a trusted local training plugin. |
-| **3. Federated rounds with a shared base** | Synchronous **FedAvg** is implemented by `python -m hf2l.owner_fedavg`: participants train from one immutable global base and the owner validates, averages, and publishes their updates. Cyclic submission handoffs and swarm coordination are not implemented by the current client workflow. |
+| **3. Federated rounds and manual handoffs** | Synchronous **FedAvg** is implemented by `python -m hf2l.owner_fedavg`: participants train from one immutable global base and the owner validates, averages, and publishes their updates. Explicit cyclic mode can pass one participant's immutable submission to the next with validated lineage. The caller chooses participant order; automated swarm coordination is not implemented. |
 
 ## Contents
 
 - [Three design pillars](#three-design-pillars)
 - [Design overview](#design-overview)
+- [Managed jobs and dashboard](#managed-jobs-and-dashboard)
 - [Examples](#examples)
 - [Install and authenticate](#install-and-authenticate)
   - [Local store](#local-store)
@@ -70,9 +71,44 @@ boundaries, accepted review concepts and invariants. The independent
 PostgreSQL persistence and authorized private S3 transfers. Its optional FedAvg
 profile supplies the FL rules; generic spaces need no model vocabulary.
 
+The independent [job manager](docs/JOB_MANAGER.md) provides job creation,
+resource queues, lifecycle management, and a web dashboard for current and
+historical jobs. Its [multi-job design](docs/MULTI_JOB_DESIGN.md) defines the
+isolation and recovery contracts.
+
 The [historical slides](docs/history/DESIGN_SLIDES.md) and
 [legacy v1 service guide](docs/EXCHANGE_SERVICE.md) describe earlier interfaces.
 New `--backend exchange` usage targets the independent service's `/v2` API.
+
+## Managed jobs and dashboard
+
+Install the separate control-plane package for a deployment that schedules
+multiple FedAvg jobs:
+
+```bash
+python -m pip install -e 'packages/jobs[server]'
+hf2l-jobs --help
+```
+
+The API and packaged dashboard share OIDC authentication and job-specific
+permissions. PostgreSQL stores specifications, attempts, reservations, queues,
+access rules, and history. The scheduler reserves every managed component before
+starting a job and keeps uncertain executions quarantined until their stop is
+confirmed.
+
+Each job receives a pinned source snapshot, a private Exchange space, separate
+state and artifacts, and scoped execution credentials held by its trusted
+proxy. Training runs inside the qualified `runsc-cpu-v1` sandbox; the manager
+package has no ML dependencies. Participant datasets remain on their machines.
+The worker image separately installs the application and its required training
+dependencies.
+
+Use the [operator guide](docs/JOB_MANAGER.md) and
+[deployment guide](deploy/jobs/README.md) for approvals, capacity, service
+configuration, workload authentication, and artifact retention. The
+[implementation validation report](docs/validation/2026-10-09-multi-job-implementation.md)
+records executed gates and their limits. The initial managed workflow is CPU
+FedAvg; GPU execution and Kubernetes require separate qualification.
 
 ## Examples
 
@@ -201,10 +237,10 @@ reference](https://docs.jfrog.com/artifactory/docs/use-hugging-face-with-jfrog-c
 Never place a token in source control or share the owner's token. Disable
 overwrite permission for participant uploads so a named submission revision
 cannot be replaced, and restrict writes to `main` to the designated owner.
-The JFrog adapter's public `publish_submission` method currently accepts `main`
-as a caller-supplied revision. Generated client-command names avoid `main`, but
-direct library callers must enforce that restriction themselves; the adapter
-does not enforce it.
+The JFrog adapter rejects the reserved mutable aliases `main`, `master`, `HEAD`,
+`latest`, and `default`, ignoring case, for submission revisions and aggregate
+tags before provider operations. Generated client-command names use detached
+revisions. Server permissions must still enforce immutability and owner access.
 
 ## Owner: initialize a repository
 
@@ -480,24 +516,74 @@ with real data, separate credentials, and owner-controlled aggregation.
 
 ## Cyclic federated learning without FedAvg
 
-Cyclic weight transfer would pass each participant's trained checkpoint to the
-next participant without averaging. **Submission-to-submission handoffs are not
-supported by the current client commands**, including on Hugging Face and
-JFrog. Linear swarm handoffs and automated swarm coordination are also not
-implemented.
+Cyclic mode passes one participant's trained checkpoint to the next without
+averaging. Start from an immutable global model with `--workflow cyclic`. For
+later hops, also select `--source-kind submission` and pin the expected
+predecessor using `--source-participant`. These options work with both
+`hf2l download` and `hf2l train`; `hf2l upload` reads the workflow from the saved
+context. Standard commands default to `--workflow fedavg --source-kind global`.
 
-Client download requires `fedavg_round.json` and validates its checkpoint
-hashes. Client upload writes checkpoint artifacts and `fedavg_submission.json`,
-without updating the global round record. A changed HF PR snapshot can inherit
-the old round record and fail checksum validation; a detached submission can
-lack that record altogether. Passing a predecessor's submission revision as
-`--base-revision` therefore does not provide a working cyclic workflow.
+The following local example uses synthetic LeNet data. Install `.[examples]`,
+initialize the model, and copy its printed `initial_main_revision`:
 
-Supporting this design would require submission-aware download validation of
-the predecessor's manifest, hashes, and lineage, plus explicit backend rules
-for using submissions as bases and a coordinator that enforces participant
-order and one successor. The implemented workflow below uses a common global
-base and owner-controlled FedAvg publication.
+```bash
+.venv/bin/hf2l init \
+  --backend local --endpoint work/cyclic-store --local-principal owner \
+  --repo-id local/cyclic-demo --plugin lenet --plugin-arg seed=7
+
+GLOBAL_REVISION=REPLACE_WITH_INITIAL_MAIN_REVISION
+.venv/bin/hf2l train \
+  --backend local --endpoint work/cyclic-store --local-principal alice \
+  --repo-id local/cyclic-demo --participant alice \
+  --base-revision "$GLOBAL_REVISION" --workflow cyclic \
+  --work-dir work/cyclic-alice --plugin lenet \
+  --plugin-arg synthetic_examples=64 --plugin-arg epochs=1
+```
+
+Copy Alice's immutable `resolved_revision` (or her local `submission_revision`)
+and give it to Bob:
+
+```bash
+ALICE_REVISION=REPLACE_WITH_ALICES_IMMUTABLE_REVISION
+.venv/bin/hf2l train \
+  --backend local --endpoint work/cyclic-store --local-principal bob \
+  --repo-id local/cyclic-demo --participant bob \
+  --base-revision "$ALICE_REVISION" --workflow cyclic \
+  --source-kind submission --source-participant alice \
+  --work-dir work/cyclic-bob --plugin lenet \
+  --plugin-arg synthetic_examples=96 --plugin-arg epochs=1
+```
+
+Repeat with the next participant, the preceding immutable revision, and a fresh
+work directory. For your own trainer, use `hf2l download` with the same cyclic
+options, train against `base_model`, then run the existing upload step. An
+existing ordinary FedAvg submission can be the first predecessor of a cyclic
+chain. Use immutable resolved revisions for remote handoffs rather than mutable
+PR or revision names.
+
+Each download validates the source manifest, repository/backend, expected
+participant, and ordered ancestry back to its global root. Every predecessor
+submission needs a complete checkpoint digest map, including legacy schema-1
+predecessors; legacy global roots without hashes retain their compatibility
+behavior. Contexts and submissions carry `workflow="cyclic"`, `source_kind`,
+and `lineage` with `root_revision`, `root_round`, and ordered predecessor
+`parents`. The immediate predecessor is the new submission's `base_revision`;
+the lineage excludes that new output itself. A chain may contain at most 64
+predecessor submissions. The global root and all ancestor snapshots must remain
+available and readable by the next participant. Lineage validation downloads
+those checkpoints on download and again before upload, so longer chains cost
+additional transfer, disk, and verification work. Cyclic mode validates the predecessor submission's
+checkpoint contract, so an inherited global round file cannot impose stale
+global hashes on its changed weights.
+
+The caller schedules hops and controls participant order; there is no server
+guarantee that a predecessor has only one successor. Handoffs leave `main`
+unchanged and create detached submissions; they do not publish a new global
+FedAvg round. FedAvg selection rejects cyclic-marked submissions. Polling
+listeners continue to process global FedAvg rounds and do not schedule cyclic
+or swarm work. Backend access rules still apply: Exchange peer handoffs need
+an administrator to make `training.update` shared, as described in the
+[Exchange guide](docs/EXCHANGE_V3.md#cyclic-handoffs).
 
 ## FedAvg: validate, average, and publish submissions
 
@@ -554,20 +640,21 @@ For each run, automatic discovery:
 4. Downloads only `fedavg_submission.json` and verifies its repository, base
    revision, source round, backend, participant ID, and example count.
 5. Downloads full checkpoints only for eligible submissions, then validates
-   tensors and shard layouts before aggregation. SHA-256 verification applies
-   to schema-2 base round records and submission manifests.
+   tensors, shard layouts, and finite floating values before aggregation.
+   SHA-256 verification applies to schema-2 documents and any supplied hash map
+   in schema-1 base round records or submission manifests.
 
-Legacy schema-1 documents remain readable, but the owner currently skips their
-checkpoint hash verification even if they supply a hash map. Client download
-does verify a supplied schema-1 base hash map. Use schema-2 records produced by
-the current initialization and client commands for owner-side checksum checks.
+Legacy schema-1 documents without hash maps remain readable without digest
+verification. A supplied schema-1 map is verified by both client download and
+owner aggregation; a mismatch fails validation. Current initialization and
+client commands produce schema-2 documents with required checksum maps.
 
 In discovery mode, unauthorized, stale, or invalid records are reported as
 `skipped_submission=...`. Automatic discovery and claimed rounds also skip
-malformed, deleted or incompatible checkpoints, and publish only when at least
+malformed, deleted, incompatible, or non-finite checkpoints, and publish only when at least
 the required number of fully validated participants remain (two by default).
-Explicitly selected invalid submissions fail the run. A transport outage remains
-a failure. Duplicate eligible participant IDs fail unless the backend's selection
+Explicitly selected invalid submissions fail the run. A non-finite global base,
+intermediate reduction overflow, or transport outage fails the run. Duplicate eligible participant IDs fail unless the backend's selection
 policy already chose one submission per participant, as the Exchange profile
 does; otherwise withdraw a superseded submission or select revisions explicitly.
 
@@ -615,9 +702,9 @@ alias for `--submission`.
 For either selection mode, the owner verifies that current `main` is the
 clients' declared base, repository identities and participant IDs satisfy the
 optional allowlist, participant IDs are distinct, example counts are positive,
-and checkpoint schemas match. It verifies hashes for schema-2 base and
-submission documents; the schema-1 limitation described above applies to both
-selection modes. On Hub it also checks that every PR descends from the base. It computes
+and checkpoint schemas match. It verifies required schema-2 hashes and any
+supplied schema-1 hashes in both selection modes. On Hub it also checks that
+every PR descends from the base. It computes
 dataset-size-weighted FedAvg:
 
 ```text
@@ -645,12 +732,13 @@ OWNER_OR_ORG/vgg-cifar10-fedavg-poc` and `--plugin vgg-cifar10`. Aggregation its
 model-agnostic; only
 optional evaluation needs the model-specific plugin.
 
-`--json` controls the owner's result rendering; it does not capture output from
-evaluation plugins. The built-in LeNet evaluator's model loader prints to
-stdout, so a run with `--plugin lenet --json` does not produce a standalone JSON
-stream. Other trusted plugins can also print. For machine-readable stdout,
-omit evaluation or use a plugin whose entire evaluation path is quiet. The
-library runner likewise does not suppress plugin output.
+`--json` renders the owner's result on standard output. Trusted plugin imports
+and initialization, training, and evaluation calls route Python stdout to
+standard error, keeping their progress messages separate from command results
+and listener JSON events. The library runner uses the same evaluation routing.
+This redirects Python's process-wide stream during each plugin call; library
+integrations should avoid concurrent unrelated stdout writers. Direct writes
+to file descriptors or subprocess output are outside that routing.
 
 After inspecting the aggregate, rerun into a new directory and publish:
 
@@ -673,8 +761,8 @@ owner processes require an external lock.
 On Hub, the accepted conditional commit's immutable OID identifies the published
 result; the adapter does not re-read `main` to establish success. JFrog reads
 `main` back after its upload. Hub client PRs remain unmerged; the JFrog client
-commands use separate named submission revisions, subject to the direct-library
-and server-permission restrictions above. `fedavg_round.json` records
+commands use separate named submission revisions, subject to the reserved-name
+checks and server-permission restrictions above. `fedavg_round.json` records
 the backend, selection mode, base and resolved input revisions, uploader
 identities, checksums, example counts, and aggregation coefficients.
 
@@ -759,16 +847,31 @@ service command; the independent package installs `hf2l-exchange` for `/v2`.
 
 ## Local validation
 
-No live HF account is needed for the local suites. Install both editable
+No live HF account is needed for the local suites. Install the three editable
 distributions and their testing/training extras first:
 
 ```bash
 .venv/bin/python -m pip install -e './packages/exchange[server,test]' \
+  -e './packages/jobs[server,test]' \
   -e '.[torch,hf,examples,exchange,service,exchange-test]'
 .venv/bin/python -m unittest discover -s tests -v
 EXCHANGE_REQUIRE_TESTS=1 .venv/bin/python -m unittest discover -s packages/exchange/tests -v
+.venv/bin/python -m unittest discover -s packages/jobs/tests -v
 ```
 
 Provider and process-recovery checks also run against PostgreSQL/MinIO when
-configured. See the [current validation record](docs/EXCHANGE_V3.md#validation-status-and-deployment-limits)
-for completed checks and limits; historical counts are not combined-tree evidence.
+configured. The dated standalone [Colossus test plan](docs/validation/2026-10-08-colossus-test-plan.md)
+and [results](docs/validation/2026-10-08-colossus-results.md) cover the then-current Linux
+suites on Python 3.10–3.14, a 615-test PostgreSQL/MinIO run with no skips,
+wheel and contract checks, the cyclic CLI recipe, and combined 89.82% line /
+77.19% branch coverage. MinIO was built from official source because the
+pinned registry image was unavailable; the report records its exact identity.
+
+The [multi-job implementation report](docs/validation/2026-10-09-multi-job-implementation.md)
+records the newer manager, isolation, training, cleanup, and Python 3.10–3.14
+wheel gates. Fresh `hf2l_jobs` coverage is **82.00% statements / 68.46% branches**;
+that package scope is separate from the dated coverage figures above.
+
+The earlier [macOS remediation verification](docs/validation/2026-10-08-repository-remediation.md)
+is retained as dated evidence. The [Exchange validation guide](docs/EXCHANGE_V3.md#validation-status-and-deployment-limits)
+describes deployment limits and retains earlier dated results.

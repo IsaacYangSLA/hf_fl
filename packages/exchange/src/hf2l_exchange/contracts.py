@@ -140,6 +140,11 @@ def environment_contract():
                     # owns the public value's type. Make divergence visible.
                     field = defaults[keyword.arg]
                     typed = field.type(value) if field.type in {int, float} else value
+                    if isinstance(field.default, tuple):
+                        # Canonical comma-separated identity allowlists use an
+                        # empty textual environment default and a tuple in code.
+                        typed = tuple(filter(None, value.split(",")))
+                        notes = "Comma-separated canonical principal IDs."
                     if typed != field.default:
                         raise ValueError(f"Loader and dataclass defaults disagree for {cls.__name__}.{field.name}")
                     result.append({"variable": variable, "default": field.default,

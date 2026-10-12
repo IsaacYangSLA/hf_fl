@@ -9,7 +9,8 @@ from sqlalchemy import inspect, text
 from sqlalchemy.exc import DBAPIError
 from .domain import Error
 
-SCHEMA_REVISION = "0001_initial"
+BASELINE_REVISION = "0001_initial"
+SCHEMA_REVISION = "0003_workload_grants"
 REVISION = SCHEMA_REVISION
 LEDGER = "v2_schema_ledger"
 
@@ -67,19 +68,37 @@ POSTGRESQL_BASELINE = (
 
 EXPECTED_COLUMNS = {'v2_operations': ('space_id', 'principal_id', 'scope', 'key', 'request_hash', 'response', 'created_at'), 'v2_spaces': ('id', 'name', 'profile', 'generation', 'quota_bytes', 'principal_quota_bytes', 'allocated', 'reclaiming', 'quota_records', 'record_count', 'quota_metadata_bytes', 'metadata_bytes', 'event_floor'), 'v2_events': ('id', 'space_id', 'record_id', 'type', 'principal_id', 'payload', 'created_at'), 'v2_kind_policies': ('space_id', 'kind', 'publish_roles', 'visibility', 'generation'), 'v2_members': ('space_id', 'principal_id', 'subject', 'roles', 'bindings'), 'v2_schema_revisions': ('id', 'space_id', 'kind', 'revision', 'schema', 'profile_version', 'dialect', 'digest', 'created_at'), 'v2_records': ('id', 'space_id', 'kind', 'schema_revision_id', 'creator', 'creator_bindings', 'base_record_id', 'metadata_json', 'state', 'shared', 'generation', 'declared_bytes', 'metadata_bytes', 'created_at', 'published_at', 'expires_at'), 'v2_blobs': ('id', 'space_id', 'record_id', 'path', 'size', 'sha256', 'media_type', 'state', 'object_key', 'object_version', 'verified_size', 'verified_sha256', 'part_size', 'grant_expires_at', 'pending_deletion', 'expires_at'), 'v2_references': ('space_id', 'name', 'record_id', 'generation', 'fence'), 'v2_coordinations': ('id', 'space_id', 'reference_name', 'expected_generation', 'holder', 'fence', 'state', 'lease_until', 'result_record_id', 'created_at'), 'v2_transfer_attempts': ('id', 'blob_id', 'operation', 'object_key', 'state', 'token', 'lease_until', 'retry_count', 'next_attempt', 'last_error', 'upload_handle', 'mutation_tokens', 'grant_expires_at', 'created_at', 'updated_at'), 'v2_coordination_inputs': ('attempt_id', 'record_id', 'space_id')}
 
-def _check_connection(connection):
-    inspector = inspect(connection)
-    tables = set(inspector.get_table_names())
+EXPECTED_COLUMNS.update({
+    "v2_managed_spaces": ("space_id", "job_id", "created_at", "retired_at"),
+    "v2_workload_revocations": ("space_id", "attempt_id", "revoked_at"),
+    "v2_workload_grants": ("id", "space_id", "principal_id", "subject", "job_id", "attempt_id", "component_id", "epoch", "roles", "bindings", "certificate_thumbprint", "expires_at", "enabled", "created_at", "revoked_at"),
+})
+
+
+def _namespace_tables(connection):
+    tables = set(inspect(connection).get_table_names())
     if any(name.startswith("exchange_") for name in tables):
         raise Error(503, "legacy_database_not_supported", "Deploy v2 into a fresh database and storage prefix")
+    return tables
+
+
+def _check_tables(connection, tables, revision=SCHEMA_REVISION):
+    inspector = inspect(connection)
+    for table, columns in EXPECTED_COLUMNS.items():
+        if revision != SCHEMA_REVISION and table in {"v2_managed_spaces", "v2_workload_grants", "v2_workload_revocations"}:
+            continue
+        if table not in tables or not set(columns).issubset({col["name"] for col in inspector.get_columns(table)}):
+            raise Error(503, "database_schema_incomplete")
+
+
+def _check_connection(connection):
+    tables = _namespace_tables(connection)
     if LEDGER not in tables:
         raise Error(503, "database_not_initialized")
     versions = tuple(connection.execute(text("SELECT revision FROM " + LEDGER)).scalars())
     if versions != (SCHEMA_REVISION,):
         raise Error(503, "database_revision_incompatible")
-    for table, columns in EXPECTED_COLUMNS.items():
-        if table not in tables or not set(columns).issubset({col["name"] for col in inspector.get_columns(table)}):
-            raise Error(503, "database_schema_incomplete")
+    _check_tables(connection, tables)
     return SCHEMA_REVISION
 
 
@@ -108,29 +127,118 @@ def check(engine):
         return _check_connection(connection)
 
 
-def initialize(engine):
-    """Create the frozen baseline only in an empty v2 namespace."""
+def _event_sequence(connection):
+    """0002: retain SQLite cursor identity across deletion of the highest row.
+
+    PostgreSQL's baseline BIGSERIAL already retains its sequence. SQLite needs a
+    rebuilt AUTOINCREMENT table and a sequence covering retained cursors as well
+    as remaining events: retention may already have removed the highest IDs.
+    The DDL here is frozen independently of the current ORM mappings.
+    """
+    if connection.dialect.name != "sqlite":
+        return
+    high_water = max(
+        connection.exec_driver_sql("SELECT COALESCE(MAX(id), 0) FROM v2_events").scalar_one(),
+        connection.exec_driver_sql("SELECT COALESCE(MAX(event_floor), 0) FROM v2_spaces").scalar_one(),
+    )
+    connection.exec_driver_sql("""CREATE TABLE v2_events_0002 (
+        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        space_id VARCHAR(64) NOT NULL,
+        record_id VARCHAR(64),
+        type VARCHAR(64) NOT NULL,
+        principal_id VARCHAR(64) NOT NULL,
+        payload JSON NOT NULL,
+        created_at FLOAT NOT NULL,
+        FOREIGN KEY(space_id) REFERENCES v2_spaces (id)
+    )""")
+    connection.exec_driver_sql("""INSERT INTO v2_events_0002
+        (id, space_id, record_id, type, principal_id, payload, created_at)
+        SELECT id, space_id, record_id, type, principal_id, payload, created_at
+        FROM v2_events""")
+    connection.exec_driver_sql("DROP TABLE v2_events")
+    connection.exec_driver_sql("ALTER TABLE v2_events_0002 RENAME TO v2_events")
+    connection.exec_driver_sql("CREATE INDEX ix_v2_events_retention ON v2_events (created_at, id)")
+    connection.exec_driver_sql("CREATE INDEX ix_v2_events_space_cursor ON v2_events (space_id, id)")
+    result = connection.execute(text("UPDATE sqlite_sequence SET seq = :high_water WHERE name = 'v2_events'"),
+                                {"high_water": high_water})
+    if not result.rowcount:
+        connection.execute(text("INSERT INTO sqlite_sequence (name, seq) VALUES ('v2_events', :high_water)"),
+                           {"high_water": high_water})
+
+
+def _workload_grants(connection):
+    """0003: additive managed-space binding and generic certificate-bound grants."""
+    json_type = "JSONB" if connection.dialect.name == "postgresql" else "JSON"
+    connection.exec_driver_sql("""CREATE TABLE v2_managed_spaces (
+        space_id VARCHAR(64) NOT NULL PRIMARY KEY,
+        job_id VARCHAR(128) NOT NULL UNIQUE,
+        created_at FLOAT NOT NULL, retired_at FLOAT,
+        FOREIGN KEY(space_id) REFERENCES v2_spaces(id))""")
+    connection.exec_driver_sql("""CREATE TABLE v2_workload_grants (
+        id VARCHAR(64) NOT NULL PRIMARY KEY,
+        space_id VARCHAR(64) NOT NULL, principal_id VARCHAR(64) NOT NULL,
+        subject VARCHAR(256) NOT NULL, job_id VARCHAR(128) NOT NULL,
+        attempt_id VARCHAR(128) NOT NULL, component_id VARCHAR(128) NOT NULL,
+        epoch BIGINT NOT NULL, roles {json_type} NOT NULL, bindings {json_type} NOT NULL,
+        certificate_thumbprint VARCHAR(43) NOT NULL, expires_at FLOAT NOT NULL,
+        enabled BOOLEAN NOT NULL, created_at FLOAT NOT NULL, revoked_at FLOAT,
+        FOREIGN KEY(space_id, principal_id) REFERENCES v2_members(space_id, principal_id))""".format(json_type=json_type))
+    connection.exec_driver_sql("""CREATE TABLE v2_workload_revocations (
+        space_id VARCHAR(64) NOT NULL, attempt_id VARCHAR(128) NOT NULL, revoked_at FLOAT NOT NULL,
+        PRIMARY KEY(space_id, attempt_id), FOREIGN KEY(space_id) REFERENCES v2_spaces(id))""")
+    connection.exec_driver_sql("CREATE INDEX ix_v2_workload_grants_attempt ON v2_workload_grants(space_id, attempt_id, enabled)")
+    connection.exec_driver_sql("CREATE INDEX ix_v2_workload_grants_principal ON v2_workload_grants(space_id, principal_id, epoch)")
+
+
+MIGRATIONS = (("0002_event_sequence", _event_sequence), ("0003_workload_grants", _workload_grants))
+
+
+def _upgrade(connection, revision):
+    revisions = (BASELINE_REVISION,) + tuple(name for name, _ in MIGRATIONS)
+    if revision not in revisions:
+        raise Error(503, "database_revision_incompatible")
+    for name, apply in MIGRATIONS[revisions.index(revision):]:
+        apply(connection)
+        connection.execute(text("UPDATE " + LEDGER + " SET revision = :revision"), {"revision": name})
+    return _check_connection(connection)
+
+
+def _create_baseline(connection):
+    statements = SQLITE_BASELINE if connection.dialect.name == "sqlite" else POSTGRESQL_BASELINE
+    for statement in statements:
+        connection.exec_driver_sql(statement)
+    connection.exec_driver_sql("CREATE TABLE " + LEDGER + " (revision VARCHAR(64) PRIMARY KEY)")
+    connection.execute(text("INSERT INTO " + LEDGER + " (revision) VALUES (:revision)"),
+                       {"revision": BASELINE_REVISION})
+
+
+def _write_schema(engine, *, upgrade):
     dialect = engine.dialect.name
     if dialect not in {"sqlite", "postgresql"}:
         raise Error(503, "unsupported_database")
     with engine.begin() as connection:
         if dialect == "postgresql":
             connection.execute(text("SELECT pg_advisory_xact_lock(734802341)"))
-        tables = set(inspect(connection).get_table_names())
-        if any(name.startswith("exchange_") for name in tables):
-            raise Error(503, "legacy_database_not_supported", "Deploy v2 into a fresh database and storage prefix")
+        tables = _namespace_tables(connection)
         if LEDGER in tables:
-            return _check_connection(connection)
+            if not upgrade:
+                return _check_connection(connection)
+            versions = tuple(connection.execute(text("SELECT revision FROM " + LEDGER)).scalars())
+            if len(versions) != 1:
+                raise Error(503, "database_revision_incompatible")
+            _check_tables(connection, tables, versions[0])
+            return _upgrade(connection, versions[0])
         if any(name.startswith("v2_") for name in tables):
             raise Error(503, "database_schema_incomplete", "A partial unversioned schema cannot be initialized")
-        statements = SQLITE_BASELINE if dialect == "sqlite" else POSTGRESQL_BASELINE
-        for statement in statements:
-            connection.exec_driver_sql(statement)
-        connection.exec_driver_sql("CREATE TABLE " + LEDGER + " (revision VARCHAR(64) PRIMARY KEY)")
-        connection.execute(text("INSERT INTO " + LEDGER + " (revision) VALUES (:revision)"), {"revision": SCHEMA_REVISION})
-        return _check_connection(connection)
+        _create_baseline(connection)
+        return _upgrade(connection, BASELINE_REVISION)
+
+
+def initialize(engine):
+    """Create the baseline and ordered upgrades only in an empty v2 namespace."""
+    return _write_schema(engine, upgrade=False)
 
 
 def migrate(engine):
-    """Apply known ordered revisions; this initial release supports only its baseline."""
-    return initialize(engine)
+    """Apply known ordered revisions atomically; reject v1 or unknown histories."""
+    return _write_schema(engine, upgrade=True)

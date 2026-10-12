@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import sys
 
 import torch
 from torch import nn
@@ -79,7 +80,7 @@ def train(
             loss_sum += float(loss.detach()) * labels.numel()
             sample_count += labels.numel()
         final_loss = loss_sum / sample_count
-        print(f"epoch={epoch}/{epochs} loss={final_loss:.6f}", flush=True)
+        print(f"epoch={epoch}/{epochs} loss={final_loss:.6f}", file=sys.stderr, flush=True)
 
     accuracy = evaluate(model, dataset, batch_size, device)
     return TrainMetrics(final_loss=final_loss, accuracy=accuracy)

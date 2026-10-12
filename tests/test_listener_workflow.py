@@ -25,7 +25,7 @@ class ListenerWorkflowTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         self.work = self.root / "round"
         self.store = SimpleNamespace(
             name="local",

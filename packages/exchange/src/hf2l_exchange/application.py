@@ -8,15 +8,16 @@ from __future__ import annotations
 from contextlib import contextmanager
 import hashlib
 import math
+import re
 import uuid
 
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.orm import sessionmaker
 
-from .domain import Error
+from .domain import Error, principal_id as bound_principal_id
 from .models import (Blob, Coordination, CoordinationInput, Event, KindPolicy, Member,
                      Operation, Record, Reference, SchemaRevision, Space,
-                     TransferAttempt, database, database_time)
+                     TransferAttempt, ManagedSpace, WorkloadGrant, WorkloadRevocation, database, database_time)
 from .profiles import get_profile
 from .schemas import (MAX_ATTACHMENTS, canonical_bytes, metadata_size, validate_kind, validate_metadata, validate_path,
                       validate_schema)
@@ -51,7 +52,7 @@ class Service:
         self.read_sessions = sessionmaker(read_engine, expire_on_commit=False)
 
     @contextmanager
-    def transaction(self, space_id, principal, write=True):
+    def transaction(self, space_id, principal, write=True, *, allow_retired=False):
         """Current membership and space state share the command's transaction."""
         factory = self.sessions if write else self.read_sessions
         with factory.begin() as session:
@@ -64,7 +65,238 @@ class Service:
             member = session.get(Member, (space_id, principal_id(principal)))
             if member is None or not member.roles:
                 raise Error(404, 'space_not_found')
+            managed = session.get(ManagedSpace, space_id)
+            workload = getattr(principal, "workload", None)
+            if workload is not None:
+                grant = self._matching_grant(session, space, member, principal, managed)
+                # Construct an untracked authorization view: never mutate persisted
+                # membership while applying a grant role ceiling.
+                member = Member(space_id=member.space_id, principal_id=member.principal_id,
+                                subject=member.subject, roles=sorted(set(member.roles).intersection(grant.roles)),
+                                bindings=dict(member.bindings))
+            elif managed is not None:
+                permitted = self.settings.auth.provisioning_principal_ids + self.settings.auth.download_broker_principal_ids
+                if principal_id(principal) not in permitted:
+                    raise Error(404, "space_not_found")
+                if principal_id(principal) not in self.settings.auth.provisioning_principal_ids:
+                    # Download brokers never gain mutation authority through an
+                    # accidental privileged membership.
+                    member = Member(space_id=member.space_id, principal_id=member.principal_id,
+                                    subject=member.subject, roles=sorted(set(member.roles).intersection({"reader"})),
+                                    bindings=dict(member.bindings))
+                    if not member.roles:
+                        raise Error(404, "space_not_found")
+            if managed is not None and managed.retired_at is not None and write and not allow_retired:
+                raise Error(409, "managed_space_retired")
             yield session, space, member
+
+    def _matching_grant(self, session, space, member, principal, managed):
+        identity = principal.workload
+        if (not self.settings.auth.workloads_enabled or managed is None or managed.retired_at is not None
+                or identity.space_id != space.id):
+            raise Error(404, "space_not_found")
+        grant = session.get(WorkloadGrant, identity.grant_id)
+        now = database_time(session)
+        if (grant is None or not grant.enabled or grant.expires_at <= now or identity.expires_at <= now
+                or grant.space_id != space.id or grant.principal_id != principal_id(principal)
+                or grant.subject != principal.subject or grant.job_id != managed.job_id
+                or grant.job_id != identity.job_id or grant.attempt_id != identity.attempt_id
+                or grant.component_id != identity.component_id or grant.epoch != identity.epoch
+                or grant.certificate_thumbprint != identity.certificate_thumbprint
+                or grant.bindings != member.bindings):
+            raise Error(403, "workload_grant_invalid")
+        if not set(member.roles).intersection(grant.roles):
+            raise Error(403, "workload_grant_invalid")
+        return grant
+
+    def _require_provisioner(self, principal):
+        if (not self.settings.auth.workloads_enabled or getattr(principal, "workload", None) is not None
+                or principal_id(principal) not in self.settings.auth.provisioning_principal_ids):
+            raise Error(403, "provisioning_principal_required")
+
+    def is_managed_space(self, space_id):
+        with self.read_sessions.begin() as session:
+            return session.get(ManagedSpace, space_id) is not None
+
+    @staticmethod
+    def grant_dict(grant):
+        result = {name: getattr(grant, name) for name in (
+            "principal_id", "space_id", "subject", "job_id", "attempt_id", "component_id", "epoch",
+            "roles", "bindings", "certificate_thumbprint", "expires_at", "enabled", "created_at", "revoked_at")}
+        result["grant_id"] = grant.id
+        return result
+
+    def enable_managed_space(self, principal, space_id, body, key):
+        self._require_provisioner(principal)
+        job_id = body.get("job_id")
+        if not isinstance(job_id, str) or not 1 <= len(job_id) <= 128:
+            raise Error(422, "invalid_job_binding")
+        with self.transaction(space_id, principal) as (session, space, member):
+            self.require(member, "admin")
+            def enable():
+                existing = session.get(ManagedSpace, space_id)
+                if existing is not None:
+                    if existing.job_id != job_id:
+                        raise Error(409, "managed_space_binding_immutable")
+                else:
+                    foreign = session.scalar(select(ManagedSpace).where(ManagedSpace.job_id == job_id))
+                    if foreign is not None:
+                        raise Error(409, "managed_job_space_conflict")
+                    session.add(ManagedSpace(space_id=space_id, job_id=job_id, created_at=database_time(session)))
+                    self.emit(session, space, "space.managed_enabled", principal, data={"job_id": job_id})
+                return {"space_id": space_id, "job_id": job_id, "managed": True}
+            return self.once(session, space, principal, "space.managed", key, body, enable)
+
+    @staticmethod
+    def _managed_state(session, managed):
+        blobs = session.scalars(select(Blob).where(Blob.space_id == managed.space_id)).all()
+        attempts = session.scalars(select(TransferAttempt).where(
+            TransferAttempt.blob_id.in_([blob.id for blob in blobs]))).all()
+        pending = any(blob.state != "cleaned" for blob in blobs) or any(attempt.mutation_tokens for attempt in attempts)
+        return {"space_id": managed.space_id, "job_id": managed.job_id, "managed": True,
+                "status": "retired" if managed.retired_at is not None else "active",
+                "retired_at": managed.retired_at, "cleanup_pending": bool(pending and managed.retired_at is not None),
+                "provenance_retained": True}
+
+    def get_managed_space(self, principal, space_id):
+        with self.transaction(space_id, principal, False) as (session, _, member):
+            self.require(member, "reader", "admin")
+            managed = session.get(ManagedSpace, space_id)
+            if managed is None:
+                raise Error(404, "managed_space_not_found")
+            return self._managed_state(session, managed)
+
+    def retire_managed_space(self, principal, space_id, body, key):
+        """Retire owned data through existing worker cleanup, retaining history.
+
+        No namespace, provenance, membership, or revocation ledger is deleted.
+        Callers separately confirm runtime termination before resource retirement.
+        """
+        self._require_provisioner(principal)
+        job_id = body.get("job_id")
+        if not isinstance(job_id, str) or not 1 <= len(job_id) <= 128:
+            raise Error(422, "invalid_job_binding")
+        with self.transaction(space_id, principal, allow_retired=True) as (session, space, caller):
+            self.require(caller, "admin")
+            managed = session.get(ManagedSpace, space_id)
+            if managed is None or managed.job_id != job_id:
+                raise Error(409, "managed_space_binding_required")
+            def retire():
+                if session.scalar(select(WorkloadGrant.id).where(WorkloadGrant.space_id == space_id,
+                                   WorkloadGrant.enabled.is_(True)).limit(1)):
+                    raise Error(409, "workload_revocation_required")
+                if managed.retired_at is None:
+                    managed.retired_at = database_time(session)
+                    records = session.scalars(select(Record).where(Record.space_id == space_id)).all()
+                    for record in records:
+                        self.release(session, space, record,
+                                     "withdrawn" if record.state == "published" else "cancelled")
+                    self.emit(session, space, "space.managed_retired", principal, data={"job_id": job_id})
+                    session.flush()
+                return self._managed_state(session, managed)
+            return self.once(session, space, principal, "space.managed.retire", key, body, retire)
+
+    def create_workload_grant(self, principal, space_id, body, key):
+        self._require_provisioner(principal)
+        for field, limit in (("subject", 256), ("job_id", 128), ("attempt_id", 128), ("component_id", 128)):
+            if not isinstance(body.get(field), str) or not 1 <= len(body[field]) <= limit:
+                raise Error(422, "invalid_workload_binding")
+        if type(body.get("epoch")) is not int or not 1 <= body["epoch"] <= 2**63 - 1:
+            raise Error(422, "invalid_workload_epoch")
+        thumbprint = body.get("certificate_thumbprint")
+        if not isinstance(thumbprint, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", thumbprint):
+            raise Error(422, "invalid_certificate_thumbprint")
+        roles = body.get("roles")
+        bindings = body.get("bindings", {})
+        if not isinstance(roles, list) or not roles or any(role not in ROLES for role in roles):
+            raise Error(422, "invalid_roles")
+        if not isinstance(bindings, dict):
+            raise Error(422, "invalid_bindings")
+        metadata_size(bindings)
+        expiry = body.get("expires_at")
+        if type(expiry) not in {int, float} or not math.isfinite(expiry):
+            raise Error(422, "invalid_grant_expiry")
+        pid = bound_principal_id(self.settings.auth.workload_issuer, body["subject"])
+        with self.transaction(space_id, principal) as (session, space, caller):
+            self.require(caller, "admin")
+            def create():
+                managed = session.get(ManagedSpace, space_id)
+                if managed is None or managed.job_id != body["job_id"]:
+                    raise Error(409, "managed_space_binding_required")
+                if session.get(WorkloadRevocation, (space_id, body["attempt_id"])) is not None:
+                    raise Error(409, "attempt_already_revoked")
+                member = session.get(Member, (space_id, pid))
+                if member is None or not set(roles).issubset(member.roles) or member.bindings != bindings:
+                    raise Error(403, "workload_membership_required")
+                now = database_time(session)
+                if not now < expiry <= now + 30 * 86400:
+                    raise Error(422, "invalid_grant_expiry")
+                previous = session.scalars(select(WorkloadGrant).where(
+                    WorkloadGrant.space_id == space_id, WorkloadGrant.principal_id == pid)).all()
+                if any(grant.component_id != body["component_id"] for grant in previous):
+                    raise Error(409, "workload_component_immutable")
+                highest = max((grant.epoch for grant in previous), default=0)
+                if body["epoch"] < highest:
+                    raise Error(409, "stale_workload_epoch")
+                # Expiry is not a takeover barrier. An old execution must be
+                # explicitly revoked even after its last token/grant expires.
+                if any(grant.enabled and (grant.attempt_id != body["attempt_id"] or grant.epoch != body["epoch"])
+                       for grant in previous):
+                    raise Error(409, "previous_attempt_not_revoked")
+                if any(grant.attempt_id != body["attempt_id"] and grant.epoch >= body["epoch"]
+                       for grant in previous):
+                    raise Error(409, "stale_workload_epoch")
+                gid = hashlib.sha256(canonical([space_id, principal_id(principal), key])).hexdigest()
+                grant = WorkloadGrant(id=gid, space_id=space_id, principal_id=pid, subject=body["subject"],
+                    job_id=body["job_id"], attempt_id=body["attempt_id"], component_id=body["component_id"],
+                    epoch=body["epoch"], roles=sorted(set(roles)), bindings=dict(bindings),
+                    certificate_thumbprint=thumbprint, expires_at=float(expiry), enabled=True, created_at=now)
+                session.add(grant)
+                session.flush()
+                self.emit(session, space, "workload.granted", principal,
+                          data={"grant_id": gid, "principal_id": pid, "attempt_id": grant.attempt_id, "epoch": grant.epoch})
+                return self.grant_dict(grant)
+            return self.once(session, space, principal, "workload.grant", key, body, create)
+
+    def revoke_workload_grants(self, principal, space_id, body, key):
+        self._require_provisioner(principal)
+        attempt_id = body.get("attempt_id")
+        if not isinstance(attempt_id, str) or not 1 <= len(attempt_id) <= 128:
+            raise Error(422, "invalid_attempt_binding")
+        with self.transaction(space_id, principal, allow_retired=True) as (session, space, caller):
+            self.require(caller, "admin")
+            def revoke():
+                now = database_time(session)
+                tombstone = session.get(WorkloadRevocation, (space_id, attempt_id))
+                if tombstone is None:
+                    session.add(WorkloadRevocation(space_id=space_id, attempt_id=attempt_id, revoked_at=now))
+                else:
+                    now = tombstone.revoked_at
+                grants = session.scalars(select(WorkloadGrant).where(WorkloadGrant.space_id == space_id,
+                                       WorkloadGrant.attempt_id == attempt_id, WorkloadGrant.enabled.is_(True))).all()
+                for grant in grants:
+                    grant.enabled, grant.revoked_at = False, now
+                self.emit(session, space, "workload.revoked", principal,
+                          data={"attempt_id": attempt_id, "revoked": len(grants)})
+                return {"attempt_id": attempt_id, "revoked": len(grants), "revoked_at": now}
+            return self.once(session, space, principal, "workload.revoke", key, body, revoke)
+
+    def get_workload_grant(self, principal, space_id, grant_id):
+        self._require_provisioner(principal)
+        with self.transaction(space_id, principal, False) as (session, _, member):
+            self.require(member, "admin")
+            grant = session.get(WorkloadGrant, grant_id)
+            if grant is None or grant.space_id != space_id:
+                raise Error(404, "workload_grant_not_found")
+            return self.grant_dict(grant)
+
+    def verify_workload_grant(self, principal, space_id):
+        if getattr(principal, "workload", None) is None:
+            raise Error(403, "workload_required")
+        with self.transaction(space_id, principal, False) as (session, _, member):
+            result = self.grant_dict(session.get(WorkloadGrant, principal.workload.grant_id))
+            result["effective_roles"] = list(member.roles)
+            return result
 
     @staticmethod
     def require(member, *roles):
@@ -108,6 +340,8 @@ class Service:
                 ('principal_id', 'subject', 'roles', 'bindings')}
 
     def create_space(self, principal, body, key):
+        if getattr(principal, "workload", None) is not None:
+            raise Error(403, "bootstrap_admin_required")
         if not getattr(principal, 'bootstrap_admin', False):
             if not self.settings.auth.admin_subject or getattr(principal, 'subject', None) != self.settings.auth.admin_subject:
                 raise Error(403, 'bootstrap_admin_required')
@@ -145,8 +379,12 @@ class Service:
                              lambda: self.space_dict(space))
 
     def get_space(self, principal, space_id):
-        with self.transaction(space_id, principal, False) as (_, space, _):
-            return self.space_dict(space)
+        with self.transaction(space_id, principal, False) as (session, space, _):
+            result = self.space_dict(space)
+            managed = session.get(ManagedSpace, space_id)
+            if managed is not None:
+                result.update({"managed": True, "job_id": managed.job_id, "retired_at": managed.retired_at})
+            return result
 
     def update_space_limits(self, principal, space_id, body):
         """Change admission limits without discarding retained provenance or data."""

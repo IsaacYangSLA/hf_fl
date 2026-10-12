@@ -24,7 +24,7 @@ class OwnerListenerTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="hf2l-owner-listener-")
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         self.store = LocalStore(self.root / "store", "owner")
         self.addCleanup(self.store.close)
         initial = initialize_model(self.root / "initial", "local")

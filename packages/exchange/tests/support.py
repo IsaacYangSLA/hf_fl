@@ -55,7 +55,7 @@ class ResourceTestCase(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="exchange-v2-test-")
         self.addCleanup(self.temp.cleanup)
-        self.directory = Path(self.temp.name)
+        self.directory = Path(self.temp.name).resolve()
         self.database_url = "sqlite:///" + str(self.directory / "exchange.db")
         live_database = os.environ.get("EXCHANGE_TEST_DATABASE_URL")
         if live_database:

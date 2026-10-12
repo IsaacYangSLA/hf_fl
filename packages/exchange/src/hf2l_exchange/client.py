@@ -3,29 +3,72 @@ from email.utils import parsedate_to_datetime
 import json
 from pathlib import Path
 import time
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 import uuid
 
 import httpx
 
 from .client_state import StateRepository
 from .client_types import (AttachmentDescriptor, CoordinationHandle, EventDescriptor, ExchangeError,
-                           MemberDescriptor, RecordDescriptor, ReferenceSnapshot, SpaceDescriptor, TypeRevision)
-from .transfer_client import TransferManager, require_tls, safe_destination, sha256
+                           ManagedSpaceDescriptor, MemberDescriptor, RecordDescriptor, ReferenceSnapshot,
+                           SpaceDescriptor, TypeRevision, WorkloadGrantDescriptor)
+from .transfer_client import ManagedTransferManager, TransferManager, require_tls, safe_destination, sha256
 
 
 class ExchangeClient:
     def __init__(self, endpoint, token, *, http=None, transfer=None, retries=3,
-                 allow_local_http=False, sleep=time.sleep):
+                 allow_local_http=False, sleep=time.sleep, managed_proxy_uds=None, managed_space=None):
         if retries < 1:
             raise ValueError("retries must be positive")
         self.endpoint = endpoint.rstrip("/")
-        require_tls(self.endpoint, allow_local_http=allow_local_http)
+        self.managed_space = managed_space
+        self.managed_proxy_uds = managed_proxy_uds
+        if managed_proxy_uds is not None:
+            socket = Path(managed_proxy_uds)
+            if not socket.is_absolute() or socket.is_symlink():
+                raise ValueError("Managed proxy socket must be an absolute, non-symlink path")
+            if self.endpoint != "http://proxy" or token is not None or not managed_space:
+                raise ValueError("Managed execution requires its fixed proxy, bound space, and no caller credentials")
+            ManagedTransferManager.validate_identifier(managed_space)
+            if http is not None:
+                ManagedTransferManager.check_control_client(http)
+            if transfer is not None:
+                ManagedTransferManager.check_control_client(transfer)
+            self.http = http or httpx.Client(transport=httpx.HTTPTransport(uds=str(socket)),
+                                            timeout=60, follow_redirects=False, trust_env=False)
+            data_http = transfer or httpx.Client(transport=httpx.HTTPTransport(uds=str(socket)),
+                                                 timeout=300, follow_redirects=False, trust_env=False)
+            self.transfers = ManagedTransferManager(self.request, self.path, http=data_http,
+                endpoint=self.endpoint, space=managed_space, retries=retries, sleep=sleep)
+            self.transfers.check_control_client(self.http)
+        else:
+            if managed_space is not None or token is None:
+                raise ValueError("A token is required outside explicit managed proxy mode")
+            require_tls(self.endpoint, allow_local_http=allow_local_http)
+            self.http = http or httpx.Client(timeout=60, follow_redirects=False)
+            self.transfers = TransferManager(self.request, self.path, http=transfer,
+                allow_local_http=allow_local_http, retries=retries, sleep=sleep)
         self.token, self.retries, self.sleep = token, retries, sleep
-        self.http = http or httpx.Client(timeout=60, follow_redirects=False)
-        self.transfers = TransferManager(self.request, self.path, http=transfer,
-                                         allow_local_http=allow_local_http, retries=retries, sleep=sleep)
         self._own_http, self._own_transfer = http is None, transfer is None
+
+    @classmethod
+    def for_execution(cls, proxy_socket, *, space, http=None, transfer=None, retries=3, sleep=time.sleep):
+        """Use a compartment-owned Unix socket; upstream credentials stay in its proxy."""
+        return cls("http://proxy", None, managed_proxy_uds=proxy_socket, managed_space=space,
+                   http=http, transfer=transfer, retries=retries, sleep=sleep)
+
+    def _check_managed_request(self, path, headers):
+        if self.managed_proxy_uds is None:
+            return
+        self.transfers.check_control_client(self.http)
+        if any(name.lower() in ("authorization", "proxy-authorization", "cookie") for name in (headers or {})):
+            raise ValueError("Managed proxy requests cannot contain caller credentials")
+        decoded = unquote(path)
+        prefix = self.path(self.managed_space)
+        if (not (path == prefix or path.startswith(prefix + "/")) or
+                any(char in decoded for char in "\\?#") or
+                any(part in (".", "..") for part in decoded.split("/"))):
+            raise ValueError("Managed client requests must address its assigned space")
 
     def close(self):
         if self._own_http:
@@ -42,11 +85,14 @@ class ExchangeClient:
     def request(self, method, path, *, body=None, headers=None, params=None, deadline=None):
         """Internal JSON transport. Public methods return SDK descriptor values."""
         for attempt in range(self.retries):
+            self._check_managed_request(path, headers)
             remaining = deadline - time.monotonic() if deadline is not None else 60
             if remaining <= 0:
                 raise ExchangeError(408, "request_deadline_exceeded")
             token = self.token() if callable(self.token) else self.token
-            request_headers = {**(headers or {}), "Authorization": "Bearer " + token}
+            request_headers = dict(headers or {})
+            if self.managed_proxy_uds is None:
+                request_headers["Authorization"] = "Bearer " + token
             try:
                 response = self.http.request(method, self.endpoint + path, json=body,
                                              headers=request_headers, params=params, follow_redirects=False,
@@ -112,6 +158,36 @@ class ExchangeClient:
 
     def update_space_limits(self, space, **limits):
         return SpaceDescriptor.from_dict(self.request("PATCH", self.path(space), body=limits))
+
+    def manage_space(self, space, *, job_id, idempotency_key=None):
+        return ManagedSpaceDescriptor.from_dict(self.request("PUT", self.path(space, "/managed"),
+            body={"job_id": job_id}, headers=self._key(idempotency_key)))
+
+    def get_managed_space(self, space):
+        return ManagedSpaceDescriptor.from_dict(self.request("GET", self.path(space, "/managed")))
+
+    def retire_managed_space(self, space, *, job_id, idempotency_key=None):
+        return ManagedSpaceDescriptor.from_dict(self.request("POST", self.path(space, "/managed/retire"),
+            body={"job_id": job_id}, headers=self._key(idempotency_key)))
+
+    def create_workload_grant(self, space, *, subject, job_id, attempt_id, component_id, epoch,
+                              expires_at, certificate_thumbprint, roles, bindings=None, idempotency_key=None):
+        return WorkloadGrantDescriptor.from_dict(self.request("POST", self.path(space, "/workload-grants"),
+            body={"subject": subject, "job_id": job_id, "attempt_id": attempt_id, "component_id": component_id,
+                  "epoch": epoch, "expires_at": expires_at, "certificate_thumbprint": certificate_thumbprint,
+                  "roles": list(roles), "bindings": bindings or {}}, headers=self._key(idempotency_key)))
+
+    def get_workload_grant(self, space, grant_id):
+        return WorkloadGrantDescriptor.from_dict(self.request("GET", self.path(space,
+            "/workload-grants/" + quote(grant_id, safe=""))))
+
+    def verify_workload_grant(self, space):
+        return WorkloadGrantDescriptor.from_dict(self.request("POST", self.path(space,
+            "/workload-grants/verify"), body={}))
+
+    def revoke_workload_grants(self, space, *, attempt_id, idempotency_key=None):
+        return self.request("POST", self.path(space, "/workload-grants/revoke"),
+                            body={"attempt_id": attempt_id}, headers=self._key(idempotency_key))
 
     def register_type(self, space, kind, schema, *, publish_roles=None, visibility=None, idempotency_key=None):
         # Policy defaults belong to the space profile. Explicit values, including

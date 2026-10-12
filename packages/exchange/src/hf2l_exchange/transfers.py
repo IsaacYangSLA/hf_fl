@@ -6,7 +6,7 @@ happens outside those transactions. Every attempt owns a unique storage key.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 import logging
 import threading
 from types import SimpleNamespace
@@ -21,6 +21,20 @@ from .storage import StorageFailure, StoredObject, UploadHandle, part_size_for
 log = logging.getLogger("hf2l_exchange.transfers")
 TERMINAL = ("cancelled", "expired", "withdrawn", "failed")
 WORKER = SimpleNamespace(id="worker", subject="worker")
+
+
+@dataclass(frozen=True)
+class GatewayPutHandle:
+    """Private receipt for exactly one gateway provider operation; never an API token."""
+    space_id: str
+    record_id: str
+    attachment_id: str
+    attempt_id: str
+    object_key: str
+    upload_id: str
+    part_number: int
+    token: str
+
 
 
 class TransferService:
@@ -128,6 +142,91 @@ class TransferService:
         return {"grants": [dict(asdict(grant), number=n, size=size)
                            for grant, n, size in zip(grants, numbers, sizes)]}
 
+    def begin_gateway_put(self, principal, space_id, record_id, attachment_id, part_number):
+        """Persist a fence before producing the exact private origin PUT grant.
+
+        Only the trusted gateway consumes this receipt. A raised exception leaves
+        the marker held conservatively; expiry never proves provider quiescence.
+        """
+        if getattr(principal, "workload", None) is None:
+            raise ExchangeError(403, "workload_identity_required")
+        if type(part_number) is not int or not 1 <= part_number <= 10000:
+            raise ExchangeError(422, "invalid_part_numbers")
+        with self.service.transaction(space_id, principal) as (session, _, member):
+            record, blob = self._attachment(session, space_id, record_id, attachment_id, member, principal, True)
+            attempt = self._active(session, blob)
+            now = database_time(session)
+            if (record.state != "draft" or record.expires_at <= now or blob.pending_deletion
+                    or attempt is None or attempt.state != "uploading"):
+                raise ExchangeError(409, "upload_not_ready")
+            try:
+                upload = self._upload(attempt)
+            except StorageFailure:
+                raise ExchangeError(409, "upload_not_ready") from None
+            suffix = "/".join((space_id, blob.id, attempt.id))
+            if (attempt.upload_handle.get("key") != attempt.object_key
+                    or not (attempt.object_key == suffix or attempt.object_key.endswith("/" + suffix))):
+                raise ExchangeError(409, "upload_not_ready")
+            try:
+                size = part_size_for(part_number, blob.size, blob.part_size)
+            except StorageFailure:
+                raise ExchangeError(422, "invalid_part_numbers") from None
+            if len(attempt.mutation_tokens or []) >= 100:
+                raise ExchangeError(409, "storage_mutation_uncertain")
+            handle = GatewayPutHandle(space_id, record_id, attachment_id, attempt.id,
+                attempt.object_key, upload.id, part_number, "gateway-put-" + str(part_number) + "-" + uuid.uuid4().hex)
+            attempt.mutation_tokens = [*(attempt.mutation_tokens or []), handle.token]
+            attempt.updated_at = now
+            seconds = max(1, min(self.settings.storage.grant_seconds, int(record.expires_at - now)))
+        # Signing cannot redirect the gateway to a successor's key. Its handle
+        # was captured atomically with the durable fence above.
+        grant = self.storage.upload_grant(upload, part_number, size, now + seconds, seconds)
+        with self.service.transaction(space_id, principal) as (session, _, member):
+            record, blob = self._attachment(session, space_id, record_id, attachment_id, member, principal, True)
+            current = session.get(TransferAttempt, handle.attempt_id)
+            if (record.state != "draft" or record.expires_at <= database_time(session)
+                    or current is None or current.state != "uploading"
+                    or current.blob_id != attachment_id or current.object_key != handle.object_key
+                    or current.upload_handle.get("id") != handle.upload_id
+                    or current.upload_handle.get("key") != handle.object_key
+                    or handle.token not in (current.mutation_tokens or [])):
+                raise ExchangeError(409, "upload_not_ready")
+            current.grant_expires_at = max(current.grant_expires_at, grant.expires_at)
+            blob.grant_expires_at = max(blob.grant_expires_at, grant.expires_at)
+        return handle, dict(asdict(grant), number=part_number, size=size)
+
+    def finish_gateway_put(self, handle):
+        """Settle only a known completed PUT whose upstream response is closed.
+
+        Fresh workload authority is intentionally unnecessary: an exact receipt
+        must settle the old operation even after grant revocation or retirement.
+        Timeout, disconnect, ambiguous HTTP outcome and lease age are not proof.
+        """
+        if not isinstance(handle, GatewayPutHandle):
+            raise ExchangeError(422, "invalid_gateway_put_receipt")
+        if (type(handle.part_number) is not int or not 1 <= handle.part_number <= 10000
+                or not isinstance(handle.token, str)
+                or not handle.token.startswith("gateway-put-" + str(handle.part_number) + "-")):
+            return False
+        with self.sessions.begin() as session:
+            space = session.scalar(select(Space).where(Space.id == handle.space_id).with_for_update())
+            if space is None:
+                return False
+            blob = session.get(Blob, handle.attachment_id)
+            current = session.scalar(select(TransferAttempt).where(
+                TransferAttempt.id == handle.attempt_id).with_for_update())
+            if (blob is None or blob.space_id != handle.space_id or blob.record_id != handle.record_id
+                    or current is None or current.blob_id != handle.attachment_id
+                    or current.object_key != handle.object_key
+                    or current.upload_handle.get("id") != handle.upload_id
+                    or current.upload_handle.get("key") != handle.object_key
+                    or handle.token not in (current.mutation_tokens or [])):
+                return False
+            current.mutation_tokens = [token for token in current.mutation_tokens if token != handle.token]
+            current.updated_at = database_time(session)
+            self._rearm_cleanup(session, space, blob, current)
+            return True
+
     def complete(self, space_id, record_id, attachment_id, principal):
         with self.service.transaction(space_id, principal) as (session, _, member):
             record, blob = self._attachment(session, space_id, record_id, attachment_id, member, principal, True)
@@ -189,6 +288,10 @@ class TransferService:
             if cleanup is not None and (attempt.state == "cleanup") != cleanup:
                 return None
             if attempt.next_attempt > now or (attempt.lease_until or 0) > now:
+                return None
+            if attempt.state == "cleanup" and attempt.mutation_tokens:
+                attempt.last_error = "storage_mutation_uncertain"
+                attempt.next_attempt = now + self.settings.worker.recover_after
                 return None
             if attempt.state == "cleanup" and attempt.grant_expires_at > now:
                 return None
@@ -334,6 +437,13 @@ class TransferService:
                 if attempt.state != "cleanup" and now - attempt.updated_at > self.settings.worker.failure_seconds:
                     return "failed" if self.commit(attempt, "failed", "transfer_deadline_exceeded") else "skipped"
                 if attempt.state == "cleanup":
+                    with self.sessions.begin() as session:
+                        space_id = session.get(Blob, attempt.blob_id).space_id
+                        session.scalar(select(Space).where(Space.id == space_id).with_for_update())
+                        current = session.get(TransferAttempt, attempt.id)
+                        if (current is None or current.state != "cleanup" or current.mutation_tokens
+                                or not self._owned(current, attempt, database_time(session))):
+                            return "skipped"
                     self.storage.cleanup(attempt.object_key)
                     state, result, outcome = "cleaned", None, "cleaned"
                 elif attempt.state == "initiating":
@@ -442,6 +552,15 @@ class TransferService:
         return count
 
 
+def _repairable(attempt, record, now):
+    gateway_pending = (attempt.state == "uploading" and record.state == "draft"
+        and bool(attempt.mutation_tokens) and all(
+            isinstance(token, str) and token.startswith("gateway-put-") for token in attempt.mutation_tokens))
+    return ((attempt.state in ("cleanup", "initiating", "completing")
+             or record.state in TERMINAL or gateway_pending)
+            and not (attempt.lease_until or 0) > now)
+
+
 def _repair_inventory(session, ids=None):
     query = select(TransferAttempt).order_by(TransferAttempt.id)
     if ids:
@@ -454,9 +573,10 @@ def _repair_inventory(session, ids=None):
     for attempt in rows[:100]:
         blob = session.get(Blob, attempt.blob_id)
         record = session.get(Record, blob.record_id)
-        eligible = (attempt.state in ("cleanup", "initiating", "completing") or record.state in TERMINAL) and not (attempt.lease_until or 0) > now
+        eligible = _repairable(attempt, record, now)
         action = "recover_completion" if record.state == "draft" and attempt.state == "completing" else "schedule_cleanup"
-        items.append({"attempt_id": attempt.id, "state": attempt.state,
+        items.append({"attempt_id": attempt.id, "space_id": blob.space_id,
+                      "record_id": blob.record_id, "attachment_id": blob.id, "state": attempt.state,
                       "mutation_count": len(attempt.mutation_tokens or []),
                       "repairable": eligible, "action": action if eligible else "ineligible"})
     return {"attempts": items, "truncated": len(rows) > 100}
@@ -496,7 +616,7 @@ def repair_mutations(service, ids, execute=False, writers_stopped=False, provide
             blob = blobs[attempt.blob_id]
             session.refresh(blob)
             record = session.get(Record, blob.record_id)
-            if (attempt.lease_until or 0) > now or (attempt.state not in ("cleanup", "initiating", "completing") and record.state not in TERMINAL):
+            if not _repairable(attempt, record, now):
                 raise ExchangeError(409, "attempt_not_repairable")
             recover = record.state == "draft" and attempt.state == "completing"
             attempt.mutation_tokens = []

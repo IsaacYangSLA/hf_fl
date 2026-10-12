@@ -9,7 +9,8 @@ import sys
 from pathlib import Path
 
 from hf2l.backends import add_store_arguments, make_store
-from hf2l.client_steps import download_client_round, upload_client_update
+from hf2l.client_steps import add_handoff_arguments, download_client_round, upload_client_update
+from hf2l.common.output import plugin_stdout_to_stderr
 from hf2l.plugin_loader import load_plugin, parse_plugin_args, require_callable
 
 
@@ -21,7 +22,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--base-revision",
         required=True,
-        help="Exact immutable base revision provided by the owner for this round",
+        help="Global model revision, or the predecessor revision for an explicit cyclic handoff",
     )
     parser.add_argument(
         "--plugin",
@@ -31,6 +32,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "file defining train_model(base_dir, output_dir, options)"
         ),
     )
+    add_handoff_arguments(parser)
     parser.add_argument(
         "--plugin-arg",
         action="append",
@@ -54,11 +56,14 @@ def main(argv: list[str] | None = None) -> int:
         options_store = {"principal": args.local_principal} if getattr(args, "local_principal", None) else {}
         store = make_store(args.backend, args.token, args.endpoint, **options_store)
         context = download_client_round(
-            store, args.repo_id, args.base_revision, args.work_dir
+            store, args.repo_id, args.base_revision, args.work_dir,
+            workflow=args.workflow, source_kind=args.source_kind,
+            source_participant=args.source_participant,
         )
         work_dir = args.work_dir.resolve()
         trained_dir = work_dir / "trained_model"
-        result_metadata = train_model(work_dir / "base_model", trained_dir, options)
+        with plugin_stdout_to_stderr():
+            result_metadata = train_model(work_dir / "base_model", trained_dir, options)
         if not isinstance(result_metadata, dict):
             raise ValueError("train_model(...) must return a metadata dictionary")
         try:
@@ -88,7 +93,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"resolved_revision={result.resolved_revision}")
         if result.url:
             print(f"submission_url={result.url}")
-        print("Send submission_revision to the repository owner.")
+        if submission.get("workflow") == "cyclic":
+            print("Send resolved_revision to the next participant for a cyclic handoff.")
+        else:
+            print("Send submission_revision to the repository owner.")
         return 0
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)

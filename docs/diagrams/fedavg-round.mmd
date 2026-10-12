@@ -76,7 +76,7 @@ sequenceDiagram
         R->>S: Resolve inputs<br/>Download submission manifests
         S-->>R: Immutable IDs<br/>Participant-bound metadata
         R->>R: Validate base, round and participant<br/>Check algorithm, require at least 2
-        Note over R,X: Download base and candidate attachments.<br/>Check checkpoint compatibility and schema-2 hashes.<br/>Owner ignores schema-1 supplied hashes.<br/>Require at least 2 valid checkpoints after filtering.
+        Note over R,X: Download base and candidate attachments.<br/>Check compatibility and supplied checksum maps.<br/>Check finite inputs before reduction.<br/>Require at least 2 valid checkpoints after filtering.
         R->>R: Compute coefficients, reduce shards<br/>Optionally evaluate<br/>Write round manifest + hashes
         R->>S: publish_aggregate(reference,<br/>claim, used input IDs)
         Note over S,X: _publish(kind=model.global)<br/>uses the upload lifecycle.<br/>Published record precedes main update.

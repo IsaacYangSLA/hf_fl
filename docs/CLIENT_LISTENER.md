@@ -102,6 +102,8 @@ A successful `--once` cycle exits `0`, including idle, skipped, and not-ready
 cycles. A retryable failure in that mode exits `1`; an uncertain remote operation
 exits `2` and requires reconciliation. An interrupted listener exits `130`.
 Operational events are JSON lines on standard output; errors go to standard error.
+Python stdout from plugin imports, training, and evaluation is routed to standard
+error as well, keeping model-loader and epoch progress out of the event stream.
 
 ## Backend commands and permissions
 
@@ -243,6 +245,10 @@ publication. The runner revalidates identities, manifests, ancestry, checkpoint
 hashes, compatibility, and participant counts before reduction. Readiness checks
 download metadata only; checkpoint downloads and evaluation happen during an
 aggregation attempt. After publication, the owner watches the new global round.
+The default FedAvg implementation also rejects NaN, infinity, and values that
+overflow the selected accumulator in each downloaded candidate before reduction.
+Automatically discovered invalid candidates are skipped if enough valid clients
+remain. An invalid global base or reduction overflow fails the attempt.
 
 Polling reads current state rather than replaying historical events. An offline
 client can skip intervening global rounds and join the current one. Processes

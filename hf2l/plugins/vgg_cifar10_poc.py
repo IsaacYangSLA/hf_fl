@@ -70,12 +70,18 @@ def initialize_model(output_dir: Path, options: dict[str, Any]) -> dict[str, Any
 
             This VGG-11-style checkpoint for `{repo_id}` classifies
             `[N, 3, 32, 32]` RGB images into the ten CIFAR-10 classes. Its width
-            multiplier is `{width_multiplier}`. The generic client and owner
-            scripts transport, validate, and aggregate it without model-specific
-            changes.
+            multiplier is `{width_multiplier}`. For a FedAvg round, each `hf2l`
+            client trains from the same immutable base revision and publishes an
+            isolated submission through the configured storage backend. The
+            owner validates submissions, computes dataset-size-weighted FedAvg,
+            and publishes the aggregate as a new `main` revision. Manual cyclic
+            mode trains from immutable predecessor submissions and records their
+            lineage.
 
+            Authentication and authorization depend on the configured backend
+            and its deployment settings.
             This educational workflow does not provide secure aggregation,
-            differential privacy, authentication, or poisoning defenses.
+            differential privacy, or poisoning defenses.
             """
         ),
         encoding="utf-8",

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Mapping, Protocol, Sequence
 
-from hf2l.checkpoint.aggregate import aggregate_shards
+from hf2l.checkpoint.aggregate import aggregate_shards, validate_finite_checkpoint
 from hf2l.checkpoint.format import get_ops
 from hf2l.checkpoint.layout import CheckpointLayout
 from hf2l.core.protocol import AlgorithmSpec, ROUND_FILE, SUBMISSION_FILE
@@ -17,6 +17,9 @@ class Aggregator(Protocol):
 
     Optional ``server_only_parameters`` names owner-side choices that need not
     match a client's algorithm descriptor. Every other parameter must match.
+    Optional ``validate_input`` checks a checkpoint before accepting a client;
+    an invalid base fails the round, while automatic selection skips invalid
+    clients. Strategies without that hook validate their inputs during reduction.
     """
 
     spec: AlgorithmSpec
@@ -54,6 +57,11 @@ class FedAvg:
             raise ValueError("num_examples must be positive integers")
         total = sum(counts)
         return tuple(n / total for n in counts)
+
+    def validate_input(self, layout: CheckpointLayout, *, accumulator_dtype: str,
+                       array_backend: str) -> None:
+        validate_finite_checkpoint(layout, accumulator_dtype=accumulator_dtype,
+                                   ops=get_ops(layout, prefer=array_backend))
 
     def reduce(self, reference: CheckpointLayout, clients: Sequence[CheckpointLayout],
                coefficients: Sequence[float], output_dir: Path, *,

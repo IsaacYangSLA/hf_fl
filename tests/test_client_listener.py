@@ -29,7 +29,7 @@ class ListenerFixture:
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.state_dir = self.root / "listener"
         self.training_calls = []
         self.store = self.make_store()

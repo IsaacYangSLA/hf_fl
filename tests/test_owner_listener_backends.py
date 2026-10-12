@@ -66,7 +66,7 @@ class OwnerBackendContract:
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="hf2l-owner-adapter-")
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        self.root = Path(temporary.name).resolve()
         self.hub = AuthoredHub()
         self.store = self.make_store()
         self.addCleanup(self.store.close)

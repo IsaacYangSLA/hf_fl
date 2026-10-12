@@ -48,7 +48,7 @@ class LocalListenerIntegrationTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="hf2l-listener-integration-")
         self.addCleanup(temporary.cleanup)
-        self.directory = Path(temporary.name)
+        self.directory = Path(temporary.name).resolve()
         self.root = self.directory / "store"
         self.repo = "listened-model"
         self.owner = LocalStore(self.root, "owner")

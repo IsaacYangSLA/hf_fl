@@ -22,6 +22,7 @@ from pathlib import Path
 from hf2l.common.fs import checked_file_paths, safe_relative_path
 from hf2l.core.ports import (BackendCapabilities, ModelStore, PublicationConsistency,
                               PublicationUncertain, PublishResult, ResolvedReference, RevisionNotFound, SubmissionCandidate)
+from hf2l.core.protocol import ROUND_FILE, SUBMISSION_FILE, RoundRecord, SubmissionManifest
 
 _REFERENCE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _REVISION = re.compile(r"[a-f0-9]{32}\Z")
@@ -234,6 +235,46 @@ class LocalStore(ModelStore):
     def new_submission_revision(self, participant, source_round):
         return f"submission-{uuid.uuid4().hex}"
 
+    def _cyclic_submission(self, repo, folder, paths, repo_id, participant, source_round, base_revision, name):
+        """Check sequential identities against immutable storage while holding its lock."""
+        if SUBMISSION_FILE not in paths:
+            raise ValueError("Cyclic submissions must include their submission manifest")
+        manifest = SubmissionManifest.from_dict(self._read(_inside(Path(folder), SUBMISSION_FILE)))
+        document = manifest.to_dict()
+        if document.get("workflow") != "cyclic":
+            raise ValueError("Submission bases require the explicit cyclic workflow")
+        if (manifest.repo_id != repo_id or manifest.backend != self.name or manifest.participant != participant
+                or manifest.source_round != source_round or manifest.base_revision != base_revision
+                or manifest.submission_revision != name):
+            raise ValueError("Cyclic submission manifest differs from its publication identity")
+        lineage = document["lineage"]
+        root_revision, root_round, parents = lineage["root_revision"], lineage["root_round"], lineage["parents"]
+        root = self._snapshot_path(repo, root_revision)
+        if self._read(root / "record.json")["kind"] != "global":
+            raise ValueError("Cyclic lineage root must be a global snapshot")
+        root_manifest = RoundRecord.from_dict(self._read(_inside(root / "files", ROUND_FILE)))
+        if root_manifest.round != root_round:
+            raise ValueError("Cyclic global root round differs from its lineage")
+        for index, parent in enumerate(parents):
+            snapshot = self._snapshot_path(repo, parent["revision"])
+            record = self._read(snapshot / "record.json")
+            expected_base = parents[index - 1]["revision"] if index else root_revision
+            if (record["kind"] != "submission" or record["participant"] != parent["participant"]
+                    or record["base_revision"] != expected_base or record["source_round"] != root_round):
+                raise ValueError("Cyclic lineage disagrees with immutable local predecessor identity")
+            ancestor = SubmissionManifest.from_dict(self._read(_inside(snapshot / "files", SUBMISSION_FILE)))
+            if (ancestor.repo_id != repo_id or ancestor.backend != self.name
+                    or ancestor.participant != parent["participant"] or ancestor.base_revision != expected_base
+                    or ancestor.source_round != root_round):
+                raise ValueError("Cyclic predecessor manifest differs from its immutable local identity")
+            ancestor_document = ancestor.to_dict()
+            if ancestor_document.get("workflow") == "cyclic":
+                expected = {"root_revision": root_revision, "root_round": root_round, "parents": parents[:index]}
+                if ancestor_document["lineage"] != expected:
+                    raise ValueError("Cyclic predecessor lineage disagrees with its immutable local ancestry")
+            elif index:
+                raise ValueError("Only the first cyclic predecessor may be an ordinary FedAvg submission")
+
     def publish_submission(self, repo_id, folder, paths, *, participant, source_round,
                            base_revision, submission_revision):
         if participant != self.principal:
@@ -241,6 +282,7 @@ class LocalStore(ModelStore):
         name = _reference(submission_revision or self.new_submission_revision(participant, source_round))
         if name == "main":
             raise ValueError("A submission cannot replace main")
+        paths = checked_file_paths(folder, paths)
         with self._lock(repo_id) as repo:
             refs = self._refs(repo)
             if "main" not in refs:
@@ -248,8 +290,9 @@ class LocalStore(ModelStore):
             if name in refs:
                 raise ValueError("Submission reference already exists")
             base = self._read(self._snapshot_path(repo, base_revision) / "record.json")
-            if base["kind"] != "global":
-                raise ValueError("Submission base must be a global snapshot")
+            manifest = self._read(_inside(Path(folder), SUBMISSION_FILE)) if SUBMISSION_FILE in paths else {}
+            if base["kind"] != "global" or manifest.get("workflow") == "cyclic":
+                self._cyclic_submission(repo, folder, paths, repo_id, participant, source_round, base_revision, name)
             revision = self._snapshot(repo, Path(folder), paths, kind="submission", participant=participant,
                                       base_revision=base_revision, source_round=source_round, submission_revision=name)
             refs[name] = {"revision": revision, "generation": 1}

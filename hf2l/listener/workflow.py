@@ -13,6 +13,7 @@ from hf2l.checkpoint.format import discover
 from hf2l.checkpoint.layout import CheckpointLayout, validate_compatible
 from hf2l.client_steps import download_client_round, upload_client_update
 from hf2l.common.fs import artifact_hashes, read_json, validate_artifact_hashes, write_json
+from hf2l.common.output import plugin_stdout_to_stderr
 from hf2l.core.ports import ModelStore
 from hf2l.core.protocol import (
     CLIENT_CONTEXT_FILE, ROUND_FILE, AlgorithmSpec, ClientContext, RoundRecord,
@@ -138,7 +139,8 @@ def train_round(
     context, reference, base_hashes = _validate_base(work_dir)
     training_options = copy.deepcopy(options)
     training_options["participant"] = participant.strip()
-    metadata = _json_metadata(train_model(base_dir, trained_dir, training_options))
+    with plugin_stdout_to_stderr():
+        metadata = _json_metadata(train_model(base_dir, trained_dir, training_options))
     saved_context, _, saved_hashes = _validate_base(work_dir)
     if saved_context.to_dict() != context.to_dict() or saved_hashes != base_hashes:
         raise ValueError("Training modified the saved base model or client context")

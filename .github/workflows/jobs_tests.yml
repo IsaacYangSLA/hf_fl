@@ -1,0 +1,247 @@
+name: Multi-job manager tests and distribution boundaries
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manager-wheel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        installation: [manager, server]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Build the independent manager distribution
+        run: |
+          python -m pip install build twine
+          python -m build --outdir dist packages/jobs
+          python -m twine check dist/*
+      - name: Install the wheel in a clean environment without training dependencies
+        env:
+          INSTALLATION: ${{ matrix.installation }}
+        run: |
+          python -m venv .venv
+          .venv/bin/python - <<'PYTHON'
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          wheel = next(Path("dist").glob("hf2l_jobs-*.whl"))
+          extra = "[server]" if os.environ["INSTALLATION"] == "server" else ""
+          subprocess.run([sys.executable, "-m", "pip", "install", str(wheel) + extra], check=True)
+          PYTHON
+          .venv/bin/python -m pip check
+          .venv/bin/python scripts/check_jobs_dependencies.py --mode "$INSTALLATION"
+      - name: Verify installed operational commands and dashboard package resources
+        run: |
+          .venv/bin/hf2l-jobs --help
+          for command in init-db migrate-db serve controller node-agent managed-node participant-agent node-api exchange-edge gateway proxy runtime; do
+            .venv/bin/hf2l-jobs "$command" --help
+          done
+          .venv/bin/python -m hf2l_jobs --help
+          .venv/bin/hf2l-jobs admin project-update --help
+          .venv/bin/hf2l-jobs admin storage-pool-set --help
+          .venv/bin/hf2l-jobs admin object-store-pool-set --help
+
+  distribution-sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build all three source and wheel distributions
+        run: |
+          python -m pip install build twine
+          python -m build --outdir dist
+          python -m build --outdir dist packages/exchange
+          python -m build --outdir dist packages/jobs
+          python -m twine check dist/*
+      - name: Verify source archives contain the implementation, dashboard, and deployment sources
+        run: |
+          python - <<'PYTHON'
+          from pathlib import Path
+          import tarfile
+          import zipfile
+          root = Path.cwd()
+          def package_sources(base):
+              return [path for path in (base / "src").rglob("*") if path.is_file() and
+                      (path.suffix == ".py" or "/static/" in path.as_posix() or "/templates/" in path.as_posix())]
+          for artifact in Path("dist").glob("*.tar.gz"):
+              if artifact.name.startswith("hf2l_jobs-"):
+                  base = root / "packages/jobs"
+                  files = [base / name for name in ("README.md", "pyproject.toml", "MANIFEST.in")]
+                  files += package_sources(base)
+              elif artifact.name.startswith("hf2l_exchange-"):
+                  base = root / "packages/exchange"
+                  files = [base / name for name in ("README.md", "pyproject.toml")]
+                  files += package_sources(base)
+              else:
+                  base = root
+                  files = [base / name for name in ("README.md", "pyproject.toml", "MANIFEST.in")]
+                  files += list((root / "hf2l").rglob("*.py"))
+                  files += [root / "packages/jobs" / name for name in ("README.md", "pyproject.toml", "MANIFEST.in")]
+                  files += package_sources(root / "packages/jobs") + package_sources(root / "packages/exchange")
+                  files += [path for path in (root / "deploy/jobs").rglob("*") if path.is_file() and
+                            (path.suffix in {".py", ".md"} or path.name == "Dockerfile")]
+              with tarfile.open(artifact, "r:gz") as archive:
+                  members = {entry.name.partition("/")[2]: entry for entry in archive.getmembers() if entry.isfile()}
+                  for path in files:
+                      relative = path.relative_to(base).as_posix()
+                      assert relative in members, f"{artifact.name} missing {relative}"
+                      assert archive.extractfile(members[relative]).read() == path.read_bytes(), f"{artifact.name} differs at {relative}"
+              print(f"{artifact.name}: verified {len(files)} source files")
+          for artifact in Path("dist").glob("*.whl"):
+              if artifact.name.startswith("hf2l_jobs-"):
+                  packages = {"hf2l_jobs": root / "packages/jobs/src/hf2l_jobs"}
+              elif artifact.name.startswith("hf2l_exchange-"):
+                  packages = {"hf2l_exchange": root / "packages/exchange/src/hf2l_exchange"}
+              else:
+                  packages = {"hf2l": root / "hf2l", "examples": root / "examples"}
+              with zipfile.ZipFile(artifact) as archive:
+                  count = 0
+                  for name, base in packages.items():
+                      for path in base.rglob("*"):
+                          if path.is_file() and (path.suffix == ".py" or name == "hf2l_jobs" and
+                                                 ("/static/" in path.as_posix() or "/templates/" in path.as_posix())):
+                              member = name + "/" + path.relative_to(base).as_posix()
+                              assert member in archive.namelist(), f"{artifact.name} missing {member}"
+                              assert archive.read(member) == path.read_bytes(), f"{artifact.name} differs at {member}"
+                              count += 1
+              print(f"{artifact.name}: verified {count} modules/assets")
+          PYTHON
+
+  jobs-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12', '3.14']
+    env:
+      EXCHANGE_REQUIRE_TESTS: '1'
+      OMP_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install manager and generic Exchange tests without ML dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e './packages/jobs[server,test]' -e './packages/exchange[server,test]'
+          .venv/bin/python -m pip check
+          .venv/bin/python scripts/check_jobs_dependencies.py
+          .venv/bin/python scripts/check_exchange_dependencies.py
+      - name: Run multi-job control-plane, authorization, resource, and isolation specification tests
+        run: .venv/bin/python -m unittest discover -s packages/jobs/tests -v
+      - name: Run Exchange regressions including managed workload authorization
+        run: .venv/bin/python -m unittest discover -s packages/exchange/tests -v
+
+  postgres-concurrency:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
+        env:
+          POSTGRES_USER: hf2l_jobs_test
+          POSTGRES_PASSWORD: local-test-only
+          POSTGRES_DB: hf2l_jobs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hf2l_jobs_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      JOBS_TEST_DATABASE_URL: postgresql+psycopg://hf2l_jobs_test:local-test-only@127.0.0.1:5432/hf2l_jobs_test
+      EXCHANGE_REQUIRE_TESTS: '1'
+      EXCHANGE_TEST_DATABASE_URL: postgresql+psycopg://hf2l_jobs_test:local-test-only@127.0.0.1:5432/hf2l_jobs_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PostgreSQL-enabled manager and generic Exchange suites
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e './packages/jobs[server,test]' -e './packages/exchange[server,test]'
+          .venv/bin/python -m pip check
+      - name: Run actual database lock, concurrent admission, gang reservation, and recovery tests
+        run: .venv/bin/python -m unittest discover -s packages/jobs/tests -v
+      - name: Run generic Exchange PostgreSQL compatibility tests
+        run: .venv/bin/python -m unittest discover -s packages/exchange/tests -v
+
+  sandbox-worker-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12', '3.14']
+    env:
+      JOBS_REQUIRE_RUNTIME_TESTS: '1'
+      EXCHANGE_REQUIRE_TESTS: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      TOKENIZERS_PARALLELISM: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install the separately composed CPU training runtime and manager tests
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          .venv/bin/python -m pip install -e './packages/jobs[server,test]' -e './packages/exchange[server,test]' -e '.[torch,hf,examples,exchange,service,exchange-test]' 'build==1.6.1' 'wheel==0.48.0'
+          .venv/bin/python -m pip check
+      - name: Exercise actual LeNet rounds, private build products, and recovery
+        run: |
+          .venv/bin/python -m unittest discover -s packages/jobs/tests -p 'test_runtime*.py' -v
+          .venv/bin/python -m unittest discover -s packages/jobs/tests -p 'test_build*.py' -v
+      - name: Preserve submission recovery, client listener, and cyclic compatibility
+        run: .venv/bin/python -m unittest tests.test_submission_intent tests.test_client_listener tests.test_cyclic_handoffs -v
+
+  dashboard-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      JOBS_REQUIRE_BROWSER_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dashboard browser validation tooling
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e './packages/jobs[server,test]' playwright
+          .venv/bin/python -m playwright install --with-deps chromium
+          .venv/bin/python -c 'from playwright.async_api import async_playwright'
+      - name: Exercise creation, queue and history views, permissions, safe rendering, and session expiry
+        run: .venv/bin/python -m unittest discover -s packages/jobs/tests -p 'test_dashboard*browser.py' -v

@@ -45,6 +45,26 @@ class SpaceLimitsBody(Body):
     quota_metadata_bytes: int | None = Field(default=None, ge=1, le=2**63 - 1)
 
 
+class ManagedSpaceBody(Body):
+    job_id: str = Field(min_length=1, max_length=128)
+
+
+class WorkloadGrantBody(Body):
+    subject: str = Field(min_length=1, max_length=256)
+    job_id: str = Field(min_length=1, max_length=128)
+    attempt_id: str = Field(min_length=1, max_length=128)
+    component_id: str = Field(min_length=1, max_length=128)
+    epoch: int = Field(ge=1, le=2**63 - 1)
+    expires_at: float = Field(gt=0)
+    certificate_thumbprint: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    roles: list[Role] = Field(min_length=1, max_length=4)
+    bindings: dict[str, Any] = Field(default_factory=dict)
+
+
+class RevokeWorkloadBody(Body):
+    attempt_id: str = Field(min_length=1, max_length=128)
+
+
 class MemberBody(Body):
     roles: list[Role] = Field(max_length=4)
     subject: str | None = Field(default=None, max_length=256)
@@ -220,7 +240,7 @@ def _etag(response: Response, result: dict, field: str) -> dict:
     return result
 
 
-def create_app(settings=None, service=None, transfers=None, authenticator=None) -> FastAPI:
+def create_app(settings=None, service=None, transfers=None, authenticator=None, *, managed_ingress=False) -> FastAPI:
     """Compose without contacting dependencies; readiness performs live checks.
 
     Explicit collaborators make HTTP contract tests independent of database,
@@ -240,6 +260,16 @@ def create_app(settings=None, service=None, transfers=None, authenticator=None) 
         from .auth import Authenticator
         authenticator = Authenticator(settings.auth)
 
+    from .application import Service as ExchangeService
+    if (isinstance(service, ExchangeService)
+            or getattr(getattr(settings, "auth", None), "workloads_enabled", False)) and hasattr(transfers, "service"):
+        from .managed_transfers import ManagedTransferService
+        if not isinstance(transfers, ManagedTransferService):
+            transfers = ManagedTransferService(transfers)
+
+    if managed_ingress and not getattr(getattr(settings, "auth", None), "workloads_enabled", False):
+        raise ValueError("Managed ingress requires workload identity configuration")
+
     app = FastAPI(title="Exchange", version="2", docs_url="/docs" if settings.docs_enabled else None,
                   redoc_url=None, openapi_url="/openapi.json" if settings.docs_enabled else None)
     app.state.service, app.state.transfers = service, transfers
@@ -248,7 +278,18 @@ def create_app(settings=None, service=None, transfers=None, authenticator=None) 
                        allow_local_http=settings.allow_local_http)
 
     def principal(request: Request, authorization: str = Header(default="")):
-        value = authenticator.authenticate(authorization)
+        if managed_ingress:
+            from .auth import verified_backend_thumbprint
+            names = [name.lower() for name, _ in request.scope.get("headers", [])]
+            assertion_names = (b"x-hf2l-backend-timestamp", b"x-hf2l-tls-thumbprint", b"x-hf2l-backend-signature")
+            if any(names.count(name) > 1 for name in assertion_names):
+                raise ExchangeError(401, "invalid_backend_assertion")
+            target = request.url.path + ("?" + request.url.query if request.url.query else "")
+            thumbprint = verified_backend_thumbprint(settings.auth, request.method, target, authorization,
+                                                     request.headers)
+            value = authenticator.authenticate(authorization, managed=True, certificate_thumbprint=thumbprint)
+        else:
+            value = authenticator.authenticate(authorization)
         request.state.principal_id = value.id
         # Startup stays available for health probes during dependency outages,
         # while every authenticated operation rejects an incompatible database.
@@ -312,6 +353,34 @@ def create_app(settings=None, service=None, transfers=None, authenticator=None) 
     @app.post(base, status_code=201)
     def create_space(body: SpaceBody, p=Depends(principal), key=Depends(operation_key)):
         return service.create_space(p, payload(body), key)
+
+    @app.put(base + "/{space}/managed")
+    def enable_managed_space(space: str, body: ManagedSpaceBody, p=Depends(principal), key=Depends(operation_key)):
+        return service.enable_managed_space(p, space, payload(body), key)
+
+    @app.get(base + "/{space}/managed")
+    def get_managed_space(space: str, p=Depends(principal)):
+        return service.get_managed_space(p, space)
+
+    @app.post(base + "/{space}/managed/retire")
+    def retire_managed_space(space: str, body: ManagedSpaceBody, p=Depends(principal), key=Depends(operation_key)):
+        return service.retire_managed_space(p, space, payload(body), key)
+
+    @app.post(base + "/{space}/workload-grants", status_code=201)
+    def create_workload_grant(space: str, body: WorkloadGrantBody, p=Depends(principal), key=Depends(operation_key)):
+        return service.create_workload_grant(p, space, payload(body), key)
+
+    @app.post(base + "/{space}/workload-grants/revoke")
+    def revoke_workload_grants(space: str, body: RevokeWorkloadBody, p=Depends(principal), key=Depends(operation_key)):
+        return service.revoke_workload_grants(p, space, payload(body), key)
+
+    @app.post(base + "/{space}/workload-grants/verify")
+    def verify_workload_grant(space: str, body: Body, p=Depends(principal)):
+        return service.verify_workload_grant(p, space)
+
+    @app.get(base + "/{space}/workload-grants/{grant}")
+    def get_workload_grant(space: str, grant: str, p=Depends(principal)):
+        return service.get_workload_grant(p, space, grant)
 
     @app.get(base + "/{space}")
     def get_space(space: str, p=Depends(principal)):
@@ -444,3 +513,12 @@ def create_app(settings=None, service=None, transfers=None, authenticator=None) 
         return transfers.download(space, record, attachment, p)
 
     return app
+
+
+def create_managed_app():
+    """Private authenticated-backend factory for the managed mTLS ingress.
+
+    Deploy behind a trusted TLS terminator, using a separate listener from the
+    ordinary public create_app. Never expose the backend secret to jobs.
+    """
+    return create_app(managed_ingress=True)

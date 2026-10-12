@@ -34,7 +34,7 @@ class Cifar10ListenerExampleTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.dataset = self.root / 'client "one" dataset.npz'
         self.dataset.write_bytes(b"NPZ contents are validated by the training plugin")
         self.token_file = self.root / "client1.token"
@@ -194,7 +194,7 @@ class ExampleProcessHandoffTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.token_file = Path(self.temporary.name) / "client.token"
+        self.token_file = Path(self.temporary.name).resolve() / "client.token"
         self.token_file.write_text("participant-secret\n")
 
     def invoke(self, **extra):
