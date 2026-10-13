@@ -82,6 +82,57 @@ class ManagedRuntimeTests(unittest.TestCase):
         with redirect_stdout(StringIO()):
             return run_worker(config, store=store, once=True)
 
+    def test_large_source_manifest_has_bounded_stable_complete_listener_identity(self):
+        from types import SimpleNamespace
+        from hf2l_jobs.domain import canonical_json
+        manifest = {f"package/module_{index:04d}.py": hashlib.sha256(str(index).encode()).hexdigest()
+                    for index in range(395)}
+        plugin = SimpleNamespace(train_model=lambda *args, **kwargs: None)
+        for role, participant in (("owner", None), ("client", "alice")):
+            with self.subTest(role=role):
+                payload = self.config(role=role, participant=participant).to_dict()
+                payload["source_manifest"] = manifest
+                config = RuntimeConfig.model_validate(payload)
+                self.assertGreater(len(canonical_json(config.durable_binding)), 4096)
+                self.assertEqual(dict(config.source_manifest), manifest)
+                self.assertEqual(config.durable_binding["source_manifest"], manifest)
+                self.assertLess(len(config.source_identity), 4096)
+                payload["source_manifest"] = dict(reversed(list(manifest.items())))
+                reordered = RuntimeConfig.model_validate(payload)
+                self.assertEqual(config.source_identity, reordered.source_identity)
+                changed = dict(manifest)
+                changed["package/module_0000.py"] = "e" * 64
+                payload["source_manifest"] = changed
+                self.assertNotEqual(config.source_identity, RuntimeConfig.model_validate(payload).source_identity)
+                store = self.store(participant or "owner")
+                with make_listener(store, config, plugin=plugin) as listener:
+                    self.assertEqual(listener.state["identity"], listener.identity)
+                with make_listener(store, reordered, plugin=plugin):
+                    pass
+
+    def test_legacy_raw_json_listener_identity_refused_without_mutating_state(self):
+        from types import SimpleNamespace
+        from hf2l.common.fs import write_json
+        from hf2l.listener.engine import ListenerStateError
+        from hf2l_jobs.domain import canonical_json
+        plugin = SimpleNamespace(train_model=lambda *args, **kwargs: None)
+        for role, participant in (("owner", None), ("client", "alice")):
+            with self.subTest(role=role):
+                config = self.config(role=role, participant=participant)
+                store = self.store(participant or "owner")
+                with make_listener(store, config, plugin=plugin):
+                    pass
+                path = Path(config.state_dir) / "listener/state.json"
+                legacy = read_json(path)
+                legacy["identity"]["source_hash"] = hashlib.sha256(
+                    canonical_json(config.durable_binding).encode("utf-8")).hexdigest()
+                write_json(path, legacy)
+                before = path.read_bytes()
+                with self.assertRaisesRegex(ListenerStateError, "different role, source"):
+                    with make_listener(store, config, plugin=plugin):
+                        self.fail("legacy listener identity must require explicit recovery")
+                self.assertEqual(path.read_bytes(), before)
+
     def test_two_real_jobs_do_not_share_models_state_or_completion(self):
         owners = {job: self.config(job, target=2, seed=seed) for job, seed in (("job-a", 7), ("job-b", 9))}
         owner_store = self.store()

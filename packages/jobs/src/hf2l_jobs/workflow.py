@@ -253,7 +253,12 @@ class RuntimeConfig(FrozenInput):
 
     @property
     def source_identity(self):
-        return canonical_json(self.durable_binding)
+        # Listener identifiers are bounded text. Bind every durable input through
+        # canonical bytes while retaining the complete manifest for verification.
+        # The versioned prefix deliberately differs from the previous raw JSON
+        # identity, so existing listener state requires explicit reconciliation.
+        digest = hashlib.sha256(canonical_json(self.durable_binding).encode("utf-8")).hexdigest()
+        return "hf2l-managed-source-v1:sha256:" + digest
 
     def to_dict(self):
         return self.model_dump(mode="json")

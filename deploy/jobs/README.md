@@ -98,24 +98,30 @@ runsc SHA-256:
 
 The owned runtime uses separate containerd and Docker sockets, data/state roots, and namespaces. Both daemons run in owned systemd transient units with private network namespaces and bounded CPU/memory/tasks. Docker uses `runsc`, sandbox netstack, networkless containers, private cgroup namespaces, no packet/raw-network access, no runtime flag override, and a separate configuration tree. It permits the specifically mounted execution Unix socket, while direct filesystem access remains disabled.
 
+Daemon startup bounds Go threading with `GOMAXPROCS=2` and pins both daemons to an explicit host CPU mask. For a new runtime, `setup.py start --cpu-count N` selects up to N CPUs available to the operator; the default maximum is 2 and a one-CPU host is supported. Its private `runtime-policy.json` records the requested count and exact selected mask. Restart reuses that policy, and unavailable configured CPUs refuse startup. Changing the policy requires a new owned runtime root and fresh isolation and backing-I/O qualification.
+
+The qualified profile binds the policy file hash, requested count, exact mask, and threading environment. Setup, both qualifiers, and the executor compare the active daemon/containerd affinity with that identity; modified policy bytes or process affinity refuse admission. Select a count suitable for the deployment's capacity before qualification.
+
 Install/start success reports `ready_for_qualification`; it does not establish a qualified profile. Preload an approved immutable runtime image into that explicit daemon. Never choose a mutable tag at job launch.
 
 ## Build the trusted runtime image
 
 The deployment builder `runtime/build_image.py` stages the trusted application, Exchange, and manager wheels plus an exact, hashed dependency wheelhouse on the trusted host. This builds the deployment runtime, not a submitted job's package hooks. Its Docker build is offline (`--network=none`).
 
-The image builder targets CPython 3.14/`cp314`, with CPU Torch `2.14.1+cpu`; other Python/image ABI combinations require qualification. Preload and independently approve the immutable Python 3.14 base image in the owned daemon. The pilot builder default local base image ID is `sha256:2e3f788256a7e2abe86eb972dd72d7bcdf4273f5d775817d2e3619170852559b`; verify the actual local image rather than assuming it exists.
+The image builder targets CPython 3.14/`cp314`, with CPU Torch `2.14.1+cpu`; other Python/image ABI combinations require qualification. Preload and independently approve the immutable Python 3.14 base image in the owned daemon. Pass the deployment's actual operator-approved immutable local base image ID with `--base-image`; the builder requires it explicitly and does not assume a previously qualified image exists.
 
 ```sh
 python3 deploy/jobs/runtime/build_image.py \
   --docker-host unix:///srv/hf2l/runtime/docker.sock \
-  --base-image sha256:2e3f788256a7e2abe86eb972dd72d7bcdf4273f5d775817d2e3619170852559b \
+  --base-image sha256:YOUR_ACTUAL_APPROVED_BASE_IMAGE_DIGEST \
   --python /usr/bin/python3.14 \
   --uv /usr/local/bin/uv \
   --output-dir /srv/hf2l/validation/runtime-image
 ```
 
 Use the deployment's actual persistent UV path and host CPython 3.14 interpreter. The output parent stays outside the source checkout. The builder verifies the preloaded base, wheel hashes, runtime ABI, package installs, and nonroot read-only/networkless CPU training/checkpoint smoke. It emits an immutable `image_id`, manifests, dependency hashes, and logs. `--stage-only` creates offline inputs and does not build or qualify an image.
+
+For a frozen release, pass `--source-commit` with the full Git commit and run from its clean checkout. Tracked, untracked, and ignored additions are refused. To reuse prebuilt release wheels, pass `--project-wheelhouse` pointing to exactly the `hf2l`, `hf2l-exchange`, and `hf2l-jobs` wheels plus `manifest.json` containing `wheels` records with each `filename` and `sha256`. All identities and hashes are checked before any wheel is copied. `--reuse-wheelhouse` independently reuses verified dependency wheels.
 
 Use the resulting worker `image_id` in runtime qualification, then approve that ID under the job catalog's `hf2l-cpu` image identifier. The Python base image ID is not the worker image approval. Image build/smoke alone does not admit jobs.
 
@@ -155,12 +161,12 @@ The initial isolation profile also needs node-local backing-device qualification
 python3 deploy/jobs/runtime/qualify_readonly_io.py \
   --profile /srv/hf2l/runtime/executor-profile.json \
   --root /srv/hf2l/validation/readonly-io \
-  --base-image sha256:2e3f788256a7e2abe86eb972dd72d7bcdf4273f5d775817d2e3619170852559b
+  --base-image sha256:YOUR_ACTUAL_APPROVED_BASE_IMAGE_DIGEST
 ```
 
 Use an operator-approved immutable Python-capable image already loaded in this explicit daemon; the helper does not pull an image. Its root must be private, inside the qualified owned resource root, and outside the source checkout, with at least 512 MiB free for bounded synthetic canaries. It probes uncached reads from source, dataset, build, and image backing paths while a sibling continues, validates actual executor device limits, and checks owned cleanup.
 
-Only a passing complete report atomically adds `backing_io_qualified`, verified `backing_devices`, and the backing-I/O report path/hash/check count/time to the executor profile. It preserves the original isolation evidence, pins its parent image under a task-specific tag, and removes derived images with `--no-prune`. The original 197-check publication alone does not satisfy the current executor's physical-I/O gate.
+Only a passing complete report atomically adds `backing_io_qualified`, verified `backing_devices`, and the backing-I/O report path/hash/check count/time to the executor profile. It preserves the original isolation evidence, pins its parent image under a task-specific tag, and removes derived images with `--no-prune`. Isolation qualification alone does not satisfy the current executor's physical-I/O gate.
 
 Republishing the original profile preserves supplemental admission only when the runtime, base policy, and private hash-verified report still match. Corrupt evidence refuses republication without overwriting the active profile; changed runtime evidence requires the backing-I/O qualifier again.
 

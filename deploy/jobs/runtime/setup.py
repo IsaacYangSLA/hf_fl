@@ -26,6 +26,8 @@ ARCHIVE_SHA512 = "79869ae9a589355a46d46fdac068d9a954e741741ffe77c64e38c56ea95549
 BASE_URL = f"https://storage.googleapis.com/gvisor/releases/release/{RELEASE}/x86_64"
 MARKER = ".hf2l-jobs-runtime"
 MARKER_CONTENT = "hf2l-owned-isolated-runtime-v1\n"
+RUNTIME_ENVIRONMENT = {"GOMAXPROCS": "2"}
+DEFAULT_RUNTIME_CPU_COUNT = 2
 
 
 def call(args: list[str], **kwargs):
@@ -164,11 +166,63 @@ def unit_pid(root: Path, component: str) -> int:
     return int(result.stdout.strip() or "0")
 
 
+
+def runtime_cpu_affinity(cpu_count: int = DEFAULT_RUNTIME_CPU_COUNT) -> list[int]:
+    """Select at most the requested number of CPUs available to this operator."""
+    if type(cpu_count) is not int or cpu_count < 1:
+        raise ValueError("runtime CPU count must be a positive integer")
+    available = sorted(os.sched_getaffinity(0))
+    if not available:
+        raise ValueError("runtime requires at least one available host CPU")
+    return available[:cpu_count]
+
+
+def runtime_cpu_policy(root: Path, cpu_count: int | None = None, *, create: bool = False) -> dict:
+    """Keep daemon startup and qualification bound to one explicit CPU policy."""
+    path = root / "runtime-policy.json"
+    if cpu_count is not None:
+        runtime_cpu_affinity(cpu_count)  # Validate before reading or writing policy.
+    if path.exists() or path.is_symlink():
+        metadata = path.lstat()
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                or metadata.st_uid != os.getuid() or metadata.st_mode & 0o077
+                or metadata.st_size > 64 * 1024):
+            raise ValueError("runtime CPU policy must be a private regular file")
+        policy = json.loads(path.read_text())
+        if not isinstance(policy, dict):
+            raise ValueError("runtime CPU policy is invalid")
+        count = policy.get("cpu_count")
+        affinity = policy.get("cpu_affinity")
+        if (set(policy) != {"cpu_count", "cpu_affinity"}
+                or type(count) is not int or count < 1
+                or not isinstance(affinity, list) or not affinity or len(affinity) > count
+                or any(type(cpu) is not int or cpu < 0 for cpu in affinity)
+                or sorted(set(affinity)) != affinity):
+            raise ValueError("runtime CPU policy is invalid")
+        if cpu_count is not None and cpu_count != count:
+            raise ValueError("existing CPU policy differs; use a new runtime root and requalify")
+        if not set(affinity).issubset(os.sched_getaffinity(0)):
+            raise ValueError("configured runtime CPUs are unavailable to this operator")
+    elif create:
+        count = DEFAULT_RUNTIME_CPU_COUNT if cpu_count is None else cpu_count
+        policy = {"cpu_count": count, "cpu_affinity": runtime_cpu_affinity(count)}
+        path.write_text(json.dumps(policy, indent=2) + "\n")
+        path.chmod(0o600)
+    else:
+        raise ValueError("runtime CPU policy is missing; restart with an explicit qualified policy")
+    return {"runtime_cpu_count": policy["cpu_count"],
+            "runtime_cpu_affinity": policy["cpu_affinity"],
+            "runtime_cpu_policy": str(path),
+            "runtime_cpu_policy_sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+
 def launch_service(root: Path, component: str, command: list[str], *, private_network: bool = True) -> None:
     call(["sudo", "-n", "systemd-run", "--quiet", "--collect",
           "--unit=" + unit(root, component),
           *(["--property=PrivateNetwork=yes"] if private_network else []),
           "--property=CPUQuota=200%",
+          "--property=Environment=GOMAXPROCS=2",
+          "--property=CPUAffinity=" + " ".join(str(cpu) for cpu in runtime_cpu_policy(root)["runtime_cpu_affinity"]),
           "--property=MemoryMax=2G",
           "--property=TasksMax=4096",
           "--property=StandardOutput=append:" + str(root / (component + ".log")),
@@ -176,7 +230,8 @@ def launch_service(root: Path, component: str, command: list[str], *, private_ne
           *command])
 
 
-def start(root: Path) -> dict:
+def start(root: Path, cpu_count: int | None = None) -> dict:
+    runtime_cpu_policy(root, cpu_count, create=True)
     if not (root / "installation.json").exists():
         install(root)
     if (root / "docker.sock").exists():
@@ -246,6 +301,15 @@ def status(root: Path) -> dict:
     if host_network == daemon_network:
         raise ValueError("daemon shares host network namespace")
     containerd_pid = unit_pid(root, "containerd")
+    cpu_policy = runtime_cpu_policy(root)
+    for component in ("dockerd", "containerd"):
+        environment = call(["sudo", "-n", "systemctl", "show", "--value",
+                            "--property=Environment", unit(root, component)]).stdout.split()
+        if "GOMAXPROCS=2" not in environment:
+            raise ValueError("owned runtime must explicitly bound Go startup threading")
+        component_pid = unit_pid(root, component)
+        if sorted(os.sched_getaffinity(component_pid)) != cpu_policy["runtime_cpu_affinity"]:
+            raise ValueError("owned runtime host CPU affinity changed")
     containerd_network = call(["sudo", "-n", "readlink", f"/proc/{containerd_pid}/ns/net"]).stdout.strip()
     daemon_mount = call(["sudo", "-n", "readlink", f"/proc/{daemon_pid}/ns/mnt"]).stdout.strip()
     containerd_mount = call(["sudo", "-n", "readlink", f"/proc/{containerd_pid}/ns/mnt"]).stdout.strip()
@@ -258,6 +322,8 @@ def status(root: Path) -> dict:
                 "network": "none", "proxy_transport": "unix", "bounded_volumes": "loop-ext4",
                 "read_only": True, "docker_version": info["ServerVersion"],
                 "cgroup_version": info["CgroupVersion"], "qualified": False,
+                "runtime_environment": RUNTIME_ENVIRONMENT,
+                **cpu_policy,
                 "daemon_pid": daemon_pid, "host_network_namespace": host_network,
                 "daemon_network_namespace": daemon_network, "containerd_socket": config["containerd"],
                 "containerd_pid": containerd_pid, "daemon_mount_namespace": daemon_mount}
@@ -309,6 +375,22 @@ def preserve_readonly_qualification(path: Path, profile: dict) -> dict:
                 "runtime_files_sha256", "sandbox_uid", "sandbox_gid", "profile", "runtime",
                 "network", "runsc_network", "runsc_host_uds", "proxy_transport",
                 "bounded_volumes", "read_only")
+    if "runtime_environment" in profile:
+        if (profile.get("runtime_environment") != RUNTIME_ENVIRONMENT
+                or not isinstance(profile.get("containerd_unit"), str)
+                or not profile["containerd_unit"]
+                or not isinstance(profile.get("runtime_cpu_affinity"), list)
+                or not profile["runtime_cpu_affinity"]
+                or type(profile.get("runtime_cpu_count")) is not int
+                or profile["runtime_cpu_count"] < len(profile["runtime_cpu_affinity"])
+                or not isinstance(profile.get("runtime_cpu_policy"), str)
+                or not isinstance(profile.get("runtime_cpu_policy_sha256"), str)
+                or not re.fullmatch(r"[a-f0-9]{64}", profile["runtime_cpu_policy_sha256"])
+                or any(type(cpu) is not int or cpu < 0 for cpu in profile["runtime_cpu_affinity"])
+                or sorted(set(profile["runtime_cpu_affinity"])) != profile["runtime_cpu_affinity"]):
+            raise ValueError("new runtime qualification identity is incomplete or invalid")
+        identity += ("containerd_unit", "runtime_environment", "runtime_cpu_affinity",
+                     "runtime_cpu_count", "runtime_cpu_policy", "runtime_cpu_policy_sha256")
     if (previous.get("qualification_sha256") != profile.get("qualification_sha256")
             or any(previous.get(key) != profile.get(key) for key in identity)):
         # Changed runtime or ownership requires fresh supplemental qualification.
@@ -359,6 +441,7 @@ def preserve_readonly_qualification(path: Path, profile: dict) -> dict:
 
 def publish_profile(root: Path, qualification: str, resource_root: str) -> dict:
     status(root)  # Verify the currently running daemon, not only saved evidence.
+    cpu_policy = runtime_cpu_policy(root)
     report_path = Path(qualification)
     if report_path.is_symlink() or not report_path.is_file():
         raise ValueError("qualification must be a trusted regular report")
@@ -370,6 +453,10 @@ def publish_profile(root: Path, qualification: str, resource_root: str) -> dict:
     config_bytes = (root / "daemon.json").read_bytes()
     runtime = report.get("runtime", {})
     installation = json.loads((root / "installation.json").read_text())
+    if any(runtime.get(key) != value for key, value in cpu_policy.items()):
+        raise ValueError("qualification tested a different runtime CPU policy")
+    if runtime.get("runtime_environment") != RUNTIME_ENVIRONMENT:
+        raise ValueError("qualification tested different runtime threading settings")
     if runtime.get("binary_sha256") != installation["runsc_sha256"]:
         raise ValueError("qualification tested a different runtime binary")
     if runtime.get("sha256") != hashlib.sha256(config_bytes).hexdigest():
@@ -395,6 +482,9 @@ def publish_profile(root: Path, qualification: str, resource_root: str) -> dict:
         "docker_data_root": str(root / "data"),
         "containerd_socket": str(root / "containerd.sock"),
         "daemon_unit": unit(root, "dockerd") + ".service",
+        "containerd_unit": unit(root, "containerd") + ".service",
+        "runtime_environment": RUNTIME_ENVIRONMENT,
+        **cpu_policy,
         "runsc_sha256": installation["runsc_sha256"],
         "runsc_release": RELEASE, "runtime_files_sha256": installation["runtime_files_sha256"],
         "qualification_path": str(report_path.resolve()),
@@ -416,16 +506,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["install", "start", "status", "stop", "publish-profile"])
     parser.add_argument("--root", required=True)
+    parser.add_argument("--cpu-count", type=int, help="Maximum host CPUs for a new runtime (default: 2); requires requalification")
     parser.add_argument("--qualification", help="Successful trusted qualify.py report")
     parser.add_argument("--resource-root", help="Private parent for provisioner and executor resources")
     args = parser.parse_args()
     if args.action == "publish-profile" and not (args.qualification and args.resource_root):
         parser.error("publish-profile requires --qualification and --resource-root")
+    if args.cpu_count is not None and (args.action != "start" or args.cpu_count < 1):
+        parser.error("--cpu-count must be positive and is only accepted by start")
     root = owned_root(args.root, create=args.action == "install")
     with (root / ".setup.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         result = (publish_profile(root, args.qualification, args.resource_root)
-                  if args.action == "publish-profile" else globals()[args.action](root))
+                  if args.action == "publish-profile" else
+                  start(root, args.cpu_count) if args.action == "start" else globals()[args.action](root))
         print(json.dumps(result, indent=2))
 
 

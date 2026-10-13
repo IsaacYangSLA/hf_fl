@@ -605,6 +605,145 @@ class Controller:
                 Outbox.topic == "dispatch", Outbox.state == "processing",
                 Outbox.lease_until > self.now()).limit(1)) is not None
 
+    def _confirm_never_started(self, job_id, attempt_id):
+        """Prove a queued attempt had no permitted external effect.
+
+        Every reservation, dispatch and provisioning effect has a durable intent.
+        An empty current-attempt ledger, checked under the job lock, therefore
+        proves absence. Older retained data needs confirmed predecessor fencing;
+        missing acknowledgements or elapsed leases never prove absence.
+        This also repairs terminal queued cancellations recorded before this
+        proof was persisted, without changing evidence for executed attempts.
+        """
+        from .models import Allocation, Attempt, Job, Outbox, ProvisioningOperation, ProvisioningResource
+        self._require_claim()
+        with self.database.transaction() as session:
+            job = session.scalar(select(Job).where(Job.id == job_id).with_for_update())
+            attempt = session.scalar(select(Attempt).where(Attempt.id == attempt_id).with_for_update())
+            if (job is None or attempt is None or attempt.job_id != job.id
+                    or attempt.number != job.current_attempt or attempt.epoch not in {job.epoch, job.epoch + 1}
+                    or job.state not in {"CANCELLING", "CANCELLED", "FAILED"}
+                    or attempt.state not in {"QUEUED", "CANCELLED", "FAILED"}
+                    or attempt.started_at is not None or attempt.heartbeat_at is not None
+                    or attempt.node_id is not None or attempt.resources_json
+                    or attempt.publication_status not in {"none", "absent"}
+                    or set(attempt.details_json or {}) - {
+                        "desired_terminal", "desired_terminal_reason", "automatic_retries", "never_started_cleanup"}):
+                return False
+            for model in (Allocation, ProvisioningOperation, ProvisioningResource):
+                if session.scalar(select(model.id).where(model.job_id == job.id,
+                        model.attempt_id == attempt.id).limit(1)) is not None:
+                    return False
+            # A queued retry may retain an older execution's results. Its
+            # stopped/revoked predecessor evidence must be positive, and all
+            # remaining resources must be retained data rather than credentials
+            # or an unfinished external effect.
+            previous = list(session.scalars(select(Attempt).where(
+                Attempt.job_id == job.id, Attempt.id != attempt.id)))
+            previous_ids = {row.id for row in previous}
+            if any(not row.revocation_confirmed or not row.termination_confirmed
+                    or row.publication_status not in {"none", "absent", "confirmed", "published"}
+                    for row in previous):
+                return False
+            historical_allocations = list(session.scalars(select(Allocation).where(Allocation.job_id == job.id)))
+            if any(row.attempt_id not in previous_ids or row.state != "RELEASED"
+                    or row.released_at is None or not row.termination_confirmed for row in historical_allocations):
+                return False
+            historical_operations = list(session.scalars(select(ProvisioningOperation).where(
+                ProvisioningOperation.job_id == job.id)))
+            previous_by_id = {row.id: row for row in previous}
+            components = {item["component_id"] for item in job.spec_json["components"]}
+            from .resources import stable_key
+            safe_refusals = {"capacity", "invalid_resources", "job_deadline_expired",
+                             "unsupported_profile", "node_mismatch", "pool_mismatch", "invalid_identity"}
+            def operation_closed(row):
+                if row.attempt_id not in previous_ids or row.component_id not in components:
+                    return False
+                old = previous_by_id[row.attempt_id]
+                identity = f"{job.id}:{old.id}:{old.epoch}:{row.component_id}:"
+                if row.state == "ready" and row.last_error is None:
+                    # The trusted provisioner has distinct shared/attempt keys.
+                    return (row.idempotency_key in {
+                        stable_key("hf2l", job.id, old.id, row.component_id, row.operation),
+                        stable_key("hf2l", job.id, "", row.component_id, row.operation)}
+                        and row.desired_json.get("epoch", old.epoch) == old.epoch)
+                if row.state == "confirmed" and row.last_error is None:
+                    return (row.idempotency_key == identity + row.operation
+                            and row.desired_json.get("epoch") == old.epoch)
+                if (row.operation != "reserve" or row.idempotency_key != identity + "reserve"
+                        or row.desired_json.get("epoch") != old.epoch):
+                    return False
+                if row.state == "refused" and row.last_error in safe_refusals:
+                    return True
+                if row.state != "unknown":
+                    return False
+                # A lost node reservation reply is settled by exact positive
+                # stop/collection/release evidence, never by lease expiration.
+                allocation = next((value for value in historical_allocations
+                    if value.attempt_id == old.id and value.component_id == row.component_id
+                    and value.epoch == old.epoch), None)
+                if allocation is None:
+                    return False
+                closed = {}
+                for effect in historical_operations:
+                    if (effect.attempt_id == old.id and effect.component_id == row.component_id
+                            and effect.operation in {"stop", "collect", "release"}
+                            and effect.idempotency_key == identity + effect.operation
+                            and effect.desired_json.get("epoch") == old.epoch
+                            and effect.state == "confirmed" and effect.last_error is None):
+                        closed[effect.operation] = effect
+                return (set(closed) == {"stop", "collect", "release"}
+                    and closed["stop"].observed_json.get("termination_confirmed") is True
+                    and closed["release"].observed_json.get("confirmed") is True)
+            if any(not operation_closed(row) for row in historical_operations):
+                return False
+            historical_resources = list(session.scalars(select(ProvisioningResource).where(
+                ProvisioningResource.job_id == job.id)))
+            data_kinds = {"source", "build_products", "component_state", "execution_state",
+                          "retained_output", "retained_artifact_root", "collection_budget", "log_budget"}
+            for row in historical_resources:
+                old = previous_by_id.get(row.attempt_id)
+                ownership = row.ownership_json or {}
+                if (old is None or row.component_id not in components
+                        or ownership.get("job_id") != job.id
+                        or ownership.get("component_id") != row.component_id
+                        or ownership.get("attempt_id", old.id) != old.id
+                        or ownership.get("epoch", old.epoch) != old.epoch
+                        or ownership.get("kind", row.kind) != row.kind):
+                    return False
+                if row.deleted_at is not None or row.state == "deleted":
+                    continue
+                if not row.retained or row.kind not in data_kinds:
+                    return False
+                if row.state == "planned" and row.kind in {"collection_budget", "log_budget"}:
+                    pointer = "collection_resource_id" if row.kind == "collection_budget" else "log_resource_id"
+                    if not any(value.attempt_id == old.id and value.component_id == row.component_id
+                            and value.epoch == old.epoch and value.details_json.get(pointer) == row.id
+                            for value in historical_allocations):
+                        return False
+                elif row.state not in {"ready", "retained"}:
+                    return False
+            retries = (attempt.details_json or {}).get("automatic_retries", 0)
+            if type(retries) is not int or not 0 <= retries <= 3:
+                return False
+            if session.scalar(select(Outbox.id).where(Outbox.job_id == job.id,
+                    Outbox.topic.in_(("dispatch", "restore_proxies")),
+                    Outbox.state != "done").limit(1)) is not None:
+                return False
+            if attempt.revocation_confirmed and attempt.termination_confirmed:
+                return True
+            attempt.revocation_confirmed = True
+            attempt.termination_confirmed = True
+            attempt.publication_status = "absent"
+            attempt.details_json = {**(attempt.details_json or {}), "never_started_cleanup": {
+                "reason": "never_dispatched", "authority": "manager_operation_ledger",
+                "no_current_attempt_effects": True, "fenced_prior_attempts": sorted(previous_ids)}}
+            job.version += 1
+            job.updated_at = self.now()
+            Scheduler._event(session, job, "attempt.never_started_cleanup_confirmed",
+                             {"attempt_id": attempt.id, "reason": "never_dispatched"}, self.now())
+            return True
+
     def _fence(self, item):
         from .models import Allocation, Attempt, Job, Project
         snapshot = self._snapshot(item.job_id, item.attempt_id)
@@ -619,6 +758,9 @@ class Controller:
             self._terminal(job.id, "CANCELLED", "cancelled")
             return True
         if not allocations and attempt.state == "QUEUED" and job.state == "CANCELLING":
+            if not self._confirm_never_started(job.id, attempt.id):
+                self._attention(job.id, "queued_cancellation_effects_unconfirmed")
+                return True
             reason = "deadline_exceeded" if job.phase == "deadline_exceeded" else "cancelled"
             self._terminal(job.id, "FAILED" if reason == "deadline_exceeded" else "CANCELLED", reason)
             return True
@@ -1070,6 +1212,9 @@ class Controller:
                 RetentionService(self.database, clock=self.clock).confirm_job_data_deleted(job.id)
         else:
             self._require_claim()
+            if attempt is not None and (not attempt.revocation_confirmed or not attempt.termination_confirmed):
+                if self._confirm_never_started(job.id, attempt.id):
+                    job, attempt, allocations = self._snapshot(job.id, attempt.id)
             confirmed = self.provisioner.cleanup(job, attempt)
             self._require_claim()
         with self.database.transaction() as session:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import errno
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -23,12 +24,16 @@ import tempfile
 import time
 import traceback
 
+SETUP_SPEC = importlib.util.spec_from_file_location("hf2l_runtime_setup", Path(__file__).with_name("setup.py"))
+SETUP = importlib.util.module_from_spec(SETUP_SPEC)
+SETUP_SPEC.loader.exec_module(SETUP)
+
 LABEL = "hf2l.jobs.qualification"
 MIB = 1024 * 1024
 
 PROBE = r"""
 import errno, json, os, pathlib, socket, sys, time
-job, foreign, host_pid, host_secret, foreign_source, foreign_state, foreign_socket, daemon_socket, host_ip, host_port, abstract_name = sys.argv[1:]
+job, foreign, host_pid, host_secret, foreign_source, foreign_state, foreign_socket, daemon_socket, host_ip, host_port, abstract_name, operator_home = sys.argv[1:]
 checks = []
 def add(name, passed, **detail):
     checks.append(dict(name=name, passed=bool(passed), **detail))
@@ -52,7 +57,7 @@ for name, path in [
     ("global_docker_socket", "/var/run/docker.sock"),
     ("task_containerd_socket", str(pathlib.Path(daemon_socket).with_name("containerd.sock"))),
     ("global_containerd_socket", "/run/containerd/containerd.sock"),
-    ("host_home", "/localhome/local-isaacy/.ssh/authorized_keys"),
+    ("host_home", str(pathlib.Path(operator_home) / ".ssh" / "authorized_keys")),
     ("host_block_device", "/dev/sda"),
 ]:
     rejected_read(name, path)
@@ -77,7 +82,7 @@ for name, path in [
     else:
         add(name, False)
 for name, path in [
-    ("source_traversal", "/job/source/../../localhome/local-isaacy"),
+    ("source_traversal", "/job/source/../../root"),
     ("foreign_proxy_path", foreign_socket),
 ]:
     add(name, not os.path.exists(path), path=path)
@@ -330,6 +335,19 @@ class Qualification:
         daemon_netns = run(["sudo", "-n", "readlink", f"/proc/{daemon_pid}/ns/net"]).stdout.strip()
         self.report["network_namespaces"] = {"host": host_netns, "daemon": daemon_netns}
         self.check("daemon_private_network_namespace", bool(daemon_netns) and daemon_netns != host_netns)
+        runtime_root = config_path.parent
+        cpu_policy = SETUP.runtime_cpu_policy(runtime_root)
+        for component in ("dockerd", "containerd"):
+            unit = "hf2l-jobs-" + component + "-" + hashlib.sha256(str(runtime_root).encode()).hexdigest()[:12]
+            environment = run(["sudo", "-n", "systemctl", "show", unit,
+                               "--property=Environment", "--value"]).stdout.split()
+            self.check(component + "_bounded_go_threads", "GOMAXPROCS=2" in environment)
+            pid = run(["sudo", "-n", "systemctl", "show", unit, "--property=MainPID", "--value"]).stdout.strip()
+            affinity = sorted(os.sched_getaffinity(int(pid)))
+            self.check(component + "_bounded_host_cpu_affinity", affinity == cpu_policy["runtime_cpu_affinity"], affinity=affinity)
+        self.report["runtime"]["runtime_environment"] = {"GOMAXPROCS": "2"}
+        self.report["runtime"].update(cpu_policy)
+
         if not all(item["passed"] for item in self.report["checks"]):
             raise RuntimeError("required runtime profile configuration is unavailable")
 
@@ -384,7 +402,7 @@ class Qualification:
             "--entrypoint", "python", self.args.image, "-u", "-c", PROBE,
             job, "B" if job == "A" else "A", str(os.getpid()), str(host_secret),
             str(foreign["source"]), str(foreign["mount"]), str(foreign["socket"]),
-            self.args.docker_host.removeprefix("unix://"), self.args.host_ip, str(host_port), "hf2l-qual-" + self.token,
+            self.args.docker_host.removeprefix("unix://"), self.args.host_ip, str(host_port), "hf2l-qual-" + self.token, str(Path.home()),
         ]
         self.containers.append(name)
         container_id = run(command, timeout=90).stdout.strip()

@@ -399,6 +399,47 @@ class RuntimeProfileTests(unittest.TestCase):
             LinuxExecutor._backing_device(executor, path) if str(path)=="/dev/shm"
             else dict(self.backing_fixture))
         return executor
+    def test_qualified_threading_and_effective_affinity_fail_closed_on_tamper(self):
+        from unittest.mock import patch
+        ex = self.executor()
+        policy = self.root / "runtime-policy.json"
+        policy.write_text(json.dumps({"cpu_count": 2, "cpu_affinity": [3]}))
+        policy.chmod(0o600)
+        ex.profile.update(runtime_environment={"GOMAXPROCS": "2"},
+                          runtime_cpu_affinity=[3], runtime_cpu_count=2,
+                          runtime_cpu_policy=str(policy),
+                          runtime_cpu_policy_sha256=hashlib.sha256(policy.read_bytes()).hexdigest(),
+                          containerd_unit="qualified-containerd")
+        original_system = ex._system
+        tampered_unit = [None]
+        def system(args, **kwargs):
+            if "--property=Environment" in args:
+                return SimpleNamespace(returncode=0, stdout=(
+                    "GOMAXPROCS=192" if args[2] == tampered_unit[0] else "GOMAXPROCS=2"))
+            return original_system(args, **kwargs)
+        ex._system = system
+        with patch("hf2l_jobs.executor.os.sched_getaffinity", return_value={3}):
+            ex.qualify_health()
+            for unit in ("qualified-docker", "qualified-containerd"):
+                tampered_unit[0] = unit
+                with self.assertRaises(ExecutorRefused) as failure:
+                    ex.qualify_health()
+                self.assertEqual(failure.exception.code, "runtime_unhealthy")
+            tampered_unit[0] = None
+        with patch("hf2l_jobs.executor.os.sched_getaffinity", return_value={3, 4}):
+            with self.assertRaises(ExecutorRefused) as failure:
+                ex.qualify_health()
+            self.assertEqual(failure.exception.code, "runtime_unhealthy")
+        policy.write_text(json.dumps({"cpu_count": 3, "cpu_affinity": [3]}))
+        with self.assertRaises(ExecutorRefused) as failure:
+            ex.qualify_health()
+        self.assertEqual(failure.exception.code, "runtime_unhealthy")
+        policy.write_text(json.dumps({"cpu_count": 2, "cpu_affinity": [3]}))
+        del ex.profile["runtime_cpu_affinity"]
+        with self.assertRaises(ExecutorRefused) as failure:
+            ex.qualify_health()
+        self.assertEqual(failure.exception.code, "unqualified_profile")
+
     def test_restart_copy_closes_source_directory_descriptor_even_on_refusal(self):
         import os
         from hf2l_jobs.collection import CollectionError

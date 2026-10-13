@@ -13,6 +13,7 @@ import datetime
 import fcntl
 import hashlib
 import io
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,10 @@ import subprocess
 import sys
 import tarfile
 import time
+
+SETUP_SPEC = importlib.util.spec_from_file_location("hf2l_runtime_io_setup", Path(__file__).with_name("setup.py"))
+SETUP = importlib.util.module_from_spec(SETUP_SPEC)
+SETUP_SPEC.loader.exec_module(SETUP)
 
 MIB = 1024 * 1024
 FILE_BYTES = 64 * MIB
@@ -108,6 +113,28 @@ def atomic_write(path, data, mode=0o600):
         temporary.unlink(missing_ok=True)
 
 
+
+def write_canary_file(path: Path, size_bytes: int) -> None:
+    """Make a readable synthetic COPY input inside the private canary root.
+
+    Docker COPY assigns root ownership, so relying on the caller's umask would
+    make a 0600 file unreadable to the required non-root sandbox user.
+    """
+    descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644)
+    try:
+        os.fchmod(descriptor, 0o644)
+        chunk = os.urandom(min(MIB, size_bytes))
+        remaining = size_bytes
+        while remaining:
+            view = memoryview(chunk[:remaining])
+            while view:
+                view = view[os.write(descriptor, view):]
+            remaining -= min(len(chunk), remaining)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def load_executor():
     checkout = Path(__file__).resolve().parents[3]
     source = checkout / "packages/jobs/src"
@@ -183,6 +210,9 @@ class Qualification:
         if p.get("docker_command") != self.docker or p.get("system_command") != ["sudo", "-n"]:
             raise ValueError("Qualification requires the exact trusted local command prefixes")
         runtime_root = self.profile_path.parent
+        cpu_policy = SETUP.runtime_cpu_policy(runtime_root)
+        if any(p.get(key) != value for key, value in cpu_policy.items()):
+            raise ValueError("Qualified runtime CPU policy changed")
         if (p["docker_host"] != "unix://" + str(runtime_root / "docker.sock")
                 or p["docker_data_root"] != str(runtime_root / "data")
                 or p["containerd_socket"] != str(runtime_root / "containerd.sock")
@@ -214,6 +244,16 @@ class Qualification:
                 or info.get("Containerd", {}).get("Address") != p["containerd_socket"]):
             raise ValueError("Docker/containerd identity differs from qualification")
         pid = command(["sudo", "-n", "systemctl", "show", p["daemon_unit"], "--property=MainPID", "--value"]).stdout.strip()
+        if p.get("runtime_environment") != {"GOMAXPROCS": "2"}:
+            raise ValueError("Qualified runtime threading settings are missing")
+        for unit in (p["daemon_unit"], p["containerd_unit"]):
+            environment = command(["sudo", "-n", "systemctl", "show", unit,
+                                   "--property=Environment", "--value"]).stdout.split()
+            if "GOMAXPROCS=2" not in environment:
+                raise ValueError("Qualified runtime threading settings changed")
+            runtime_pid = command(["sudo", "-n", "systemctl", "show", unit, "--property=MainPID", "--value"]).stdout.strip()
+            if sorted(os.sched_getaffinity(int(runtime_pid))) != p.get("runtime_cpu_affinity"):
+                raise ValueError("Qualified runtime host CPU affinity changed")
         if not re.fullmatch(r"[1-9][0-9]*", pid):
             raise ValueError("Qualified private daemon is not running")
         node_net = command(["sudo", "-n", "readlink", "/proc/" + pid + "/ns/net"]).stdout.strip()
@@ -239,7 +279,9 @@ class Qualification:
             "runtime_identity": {
                 key: p[key] for key in (
                     "owned_root", "docker_host", "docker_data_root", "containerd_socket",
-                    "daemon_config", "daemon_config_sha256", "daemon_unit",
+                    "daemon_config", "daemon_config_sha256", "daemon_unit", "containerd_unit",
+                    "runtime_environment", "runtime_cpu_affinity", "runtime_cpu_count",
+                    "runtime_cpu_policy", "runtime_cpu_policy_sha256",
                     "runsc_sha256", "runtime_files_sha256", "sandbox_uid", "sandbox_gid",
                     "profile", "runtime", "network", "runsc_network", "runsc_host_uds",
                     "proxy_transport", "bounded_volumes", "read_only",
@@ -266,16 +308,7 @@ class Qualification:
             directory.mkdir(mode=0o755)
             self.input_roots.append(directory)
             filename = "data.npz" if label == "dataset" else "blob"
-            descriptor = os.open(directory / filename, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o644)
-            try:
-                chunk = os.urandom(MIB)
-                for _ in range(FILE_BYTES // MIB):
-                    view = memoryview(chunk)
-                    while view:
-                        view = view[os.write(descriptor, view):]
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
+            write_canary_file(directory / filename, FILE_BYTES)
         self.context_path = self.run_root / "context.tar"
         with tarfile.open(self.context_path, "w") as archive:
             dockerfile = ("FROM " + self.parent_tag + "\nCOPY blob /run/hf2l-qualification-image.bin\n").encode()
@@ -308,15 +341,34 @@ class Qualification:
         root = Path("/sys/fs/cgroup") / relative.lstrip("/")
         return {"path": str(root), **{name: (root / name).read_text() for name in ("io.max", "io.stat")}}
 
+    def probe_evidence(self, name, result=None):
+        if result is None:
+            result = self.docker_call("logs", name, check=False)
+        inspection = self.docker_call("inspect", name, check=False)
+        state = json.loads(inspection.stdout)[0]["State"] if inspection.returncode == 0 else {}
+        evidence = {"name": name, "stdout": result.stdout[-64 * 1024:],
+                    "stderr": result.stderr[-64 * 1024:], "state": state}
+        if state.get("Pid", 0):
+            cgroup = self.cgroup({"State": state})
+            evidence["cgroup"] = cgroup
+        return evidence
+
     def wait_log(self, name, wanted, timeout=75):
         until = time.monotonic() + timeout
+        result = None
         while time.monotonic() < until:
             result = self.docker_call("logs", name)
-            if len(result.stdout) > 64 * 1024:
+            if len(result.stdout) > 64 * 1024 or len(result.stderr) > 64 * 1024:
+                self.report.setdefault("probe_failures", []).append(self.probe_evidence(name, result))
                 raise RuntimeError("Synthetic probe log exceeded its bound")
             if wanted in result.stdout:
                 return result.stdout
+            evidence = self.probe_evidence(name, result)
+            if evidence["state"].get("Running") is False:
+                self.report.setdefault("probe_failures", []).append(evidence)
+                raise RuntimeError("Synthetic probe exited before " + wanted)
             time.sleep(.1)
+        self.report.setdefault("probe_failures", []).append(self.probe_evidence(name, result))
         raise RuntimeError("Synthetic probe did not reach " + wanted)
 
     @staticmethod
@@ -511,6 +563,13 @@ class Qualification:
         except BaseException as exc:
             failure = exc
             self.report["error"] = type(exc).__name__ + ": " + str(exc)
+            self.report["failed_probe_evidence"] = []
+            for name in self.containers:
+                try:
+                    self.report["failed_probe_evidence"].append(self.probe_evidence(name))
+                except BaseException as diagnostic_error:
+                    self.report["failed_probe_evidence"].append({
+                        "name": name, "capture_error": type(diagnostic_error).__name__ + ": " + str(diagnostic_error)})
         finally:
             try:
                 self.cleanup()

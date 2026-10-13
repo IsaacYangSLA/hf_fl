@@ -1,6 +1,6 @@
 # Operating the HF²L job manager
 
-**Status:** implemented CPU v1 runbook; validated on `ipp1-3414`.
+**Status:** implemented CPU v1 runbook; runtime qualification is required for each deployment.
 
 The job manager runs independent managed FedAvg jobs in one deployment. Each job has an immutable specification, authorized source snapshot, separate Exchange space, workload identities, state, logs, and artifacts. Resource availability determines admission from the durable queue.
 
@@ -82,6 +82,8 @@ hf2l-jobs admin --config /etc/hf2l/jobs.json project-update \
 `--quota-file` replaces the quota object and accepts the same known fields as creation; `--name` and `--retention-days` are optional. The transaction locks the project and refuses quotas below current admitted CPU/RAM/disk/GPU/job usage or charged retained bytes. It increments the project version and records a sanitized before/after administrative audit identified by the invoking Unix UID. Project creation and pool updates are also audited. Changing retention affects expiration assigned to later terminal jobs; it does not rewrite an existing job's `artifacts_expire_at`.
 
 Source approval binds a source identifier to permitted projects and exact commit object IDs. The provisioner materializes a verified commit tree without Git history, repository configuration, credentials, hooks, or submodules. Public HTTPS fetching validates approved hosts and resolved addresses and rejects redirects/private endpoints. Trusted operator mirrors are a separate approval path; a job cannot select a host path. Private repositories require an operator-prepared trusted Git object mirror; direct private HTTPS credential handling is not implemented. Symlinks, submodules, and special source files are rejected. Source fetching uses a separately bounded task-owned tmpfs object receiver, strict byte/file limits, process address-space/CPU/file-size limits, bounded output, and a wall timeout; required quota tooling missing means provisioning fails closed. Trusted provisioning needs approved `sudo -n` mount/umount and Linux `prlimit` access. Creation resolves a runtime-image alias to the approved exact SHA-256 digest in the stored immutable specification and its hash. An idempotency replay uses the original request hash; retries reuse the stored digest instead of resolving an alias again. A disabled or retired required digest fails closed.
+
+Managed listener state binds the complete source/runtime specification through a versioned SHA-256 identity. The full canonical binding and per-file source manifest remain verified separately. This keeps listener identities bounded for large repositories while refusing state reuse when any bound input changes. Existing listener state using the earlier raw-JSON identity is intentionally incompatible, even when the inputs match. Drain active training before upgrading, and explicitly reconcile affected jobs and their published checkpoints before attempting recovery; the manager does not rewrite that state identity automatically.
 
 For remote-only execution, register the manager's own bounded source/provisioning storage with `hf2l-jobs admin storage-pool-set` and `provisioner.storage_pool_id`, as shown in the deployment guide. This storage-only pool does not advertise CPU/RAM or a sandbox. Local/mixed deployments can use their explicit local runtime pool.
 
@@ -340,6 +342,12 @@ An execution proxy rejects known revoked assignment authority with a bounded 403
 
 Unresolved provider writes retain cleanup/accounting fences. URL/JWT/lease expiry and local process death do not prove an in-flight provider write has finished. The deployment guide describes selected Exchange `repair-transfers` maintenance after all writers stop and actual provider quiescence is established; repair schedules cleanup rather than confirming physical deletion.
 
+Cancellation before dispatch confirms cleanup only after the controller proves that the current attempt has no reservations, provisioning effects, resources, assigned node, or unfinished dispatch. Historical attempts must already be fenced, and unknown operations require their exact authoritative closure. The proof is durable and audited, so restart can safely complete previously interrupted queued cancellation. Uncertain external effects retain cleanup and accounting fences.
+
 A terminal result and `cleanup_status` are independent. Failed cleanup remains visible and keeps affected resources charged or quarantined. Cleanup only deletes resources recorded as owned by the job/attempt/component. On restart, the controller reconciles durable operations and resource ownership rather than assuming absence or replaying unknown work.
 
 For operational readiness and executed tests, consult the [implementation validation record](validation/2026-10-09-multi-job-implementation.md).
+
+## 8. Exporting results
+
+Use the [authenticated export utility](JOB_EXPORTS.md) to retain checkpoints, outputs, logs, and sanitized metadata before configured artifact expiry. The utility verifies downloaded sizes and hashes, follows API pagination, and reports incomplete exports. It requires an authorized session and an explicit HTTPS Manager origin and output directory.

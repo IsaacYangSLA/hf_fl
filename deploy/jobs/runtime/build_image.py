@@ -23,7 +23,6 @@ import zipfile
 
 
 BUILD_INPUTS = {"build": "1.6.1", "pyproject-hooks": "1.3.3", "wheel": "0.48.0"}
-DEFAULT_BASE = "sha256:2e3f788256a7e2abe86eb972dd72d7bcdf4273f5d775817d2e3619170852559b"
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -32,10 +31,12 @@ def parser():
     value.add_argument("--output-dir", type=Path, required=True, help="Task-owned artifact parent outside the checkout")
     value.add_argument("--python", default="/usr/bin/python3.14", help="Trusted host CPython 3.14 interpreter")
     value.add_argument("--uv", default=str(Path.home() / ".local/bin/uv"), help="Trusted deployment UV executable")
-    value.add_argument("--base-image", default=DEFAULT_BASE, help="Operator-verified local image ID")
+    value.add_argument("--base-image", required=True, help="Operator-verified immutable local image ID")
     value.add_argument("--docker-host", help="Private task-owned Docker unix socket")
     value.add_argument("--stage-only", action="store_true", help="Prepare offline inputs without invoking Docker")
     value.add_argument("--reuse-wheelhouse", type=Path, help="Reuse previously verified dependency wheels")
+    value.add_argument("--project-wheelhouse", type=Path, help="Reuse the three frozen release wheels without rebuilding")
+    value.add_argument("--source-commit", help="Require this full frozen source Git commit")
     value.add_argument("--torch-version", default="2.14.1+cpu", help="Explicit CPU Torch version")
     return value
 
@@ -61,8 +62,38 @@ def wheel_metadata(path):
     return re.sub(r"[-_.]+", "-", name).lower(), version
 
 
+
+def reuse_project_wheels(frozen: Path, project: Path) -> None:
+    """Verify frozen project identities and hashes before copying any wheel."""
+    wheel_paths = list(frozen.glob("*.whl"))
+    names = [wheel_metadata(path)[0] for path in wheel_paths]
+    if len(names) != 3 or set(names) != {"hf2l", "hf2l-exchange", "hf2l-jobs"}:
+        raise ValueError("Frozen release wheelhouse must contain exactly the three project wheels")
+    manifest_path = frozen / "manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError("Frozen release wheelhouse requires its SHA256 manifest")
+    recorded = json.loads(manifest_path.read_text())
+    records = recorded.get("wheels", []) if isinstance(recorded, dict) else recorded
+    expected = {item["filename"]: item["sha256"] for item in records}
+    if len(records) != 3 or set(expected) != {path.name for path in wheel_paths}:
+        raise ValueError("Frozen release wheel manifest differs from wheel files")
+    for path in wheel_paths:
+        if digest(path) != expected[path.name]:
+            raise ValueError("Frozen release wheel failed SHA256 verification")
+    for path in wheel_paths:
+        shutil.copy2(path, project / path.name)
+
 def main(argv=None):
     args = parser().parse_args(argv)
+    source_commit = None
+    if args.source_commit:
+        if not re.fullmatch(r"[a-f0-9]{40}", args.source_commit):
+            raise ValueError("Source commit must be a full Git identity")
+        identity = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, check=True, text=True, capture_output=True).stdout.strip()
+        changed = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all", "--ignored"], cwd=ROOT, check=True, text=True, capture_output=True).stdout.strip()
+        if identity != args.source_commit or changed:
+            raise ValueError("Source checkout differs from the frozen release commit")
+        source_commit = identity
     if not re.fullmatch(r"sha256:[a-f0-9]{64}", args.base_image):
         raise ValueError("Base image must be an exact operator-verified image ID")
     parent = args.output_dir.resolve()
@@ -77,7 +108,7 @@ def main(argv=None):
     wheelhouse.mkdir(parents=True)
     logs.mkdir()
     state = {"status": "staging", "stage": str(stage), "base_image": args.base_image,
-             "torch_version": args.torch_version, "steps": [], "wheels": []}
+             "torch_version": args.torch_version, "source_commit": source_commit, "steps": [], "wheels": []}
     env = dict(os.environ, PYTHONUNBUFFERED="1", OMP_NUM_THREADS="2", MKL_NUM_THREADS="2",
                OPENBLAS_NUM_THREADS="2", DOCKER_BUILDKIT="0")
 
@@ -109,8 +140,13 @@ def main(argv=None):
         run("build-tools", [python, "-m", "pip", "install", "build==" + BUILD_INPUTS["build"]])
         project = stage / "project-wheels"
         project.mkdir()
-        for name, path in (("hf2l", ROOT), ("exchange", ROOT / "packages/exchange"), ("jobs", ROOT / "packages/jobs")):
-            run("wheel-" + name, [python, "-m", "build", "--wheel", "--outdir", project, path])
+        if args.project_wheelhouse:
+            frozen = args.project_wheelhouse.resolve(strict=True)
+            reuse_project_wheels(frozen, project)
+            state["project_wheelhouse"] = str(frozen)
+        else:
+            for name, path in (("hf2l", ROOT), ("exchange", ROOT / "packages/exchange"), ("jobs", ROOT / "packages/jobs")):
+                run("wheel-" + name, [python, "-m", "build", "--wheel", "--outdir", project, path])
         if args.reuse_wheelhouse:
             previous = args.reuse_wheelhouse.resolve()
             records = json.loads((previous / "wheel-manifest.json").read_text())
@@ -211,6 +247,9 @@ def main(argv=None):
             run("base-tag", [*docker, "tag", args.base_image, tag])
             run("offline-build", [*docker, "build", "--network", "none", "--pull=false", "--build-arg",
                                  "BASE_IMAGE=" + tag, "--iidfile", stage / "image.id", stage])
+            # Docker 29 creates --iidfile as root-owned 0600 when invoked with
+            # sudo; retain private permissions while returning this owned receipt.
+            run("image-id-owner", ["sudo", "-n", "chown", f"{os.getuid()}:{os.getgid()}", stage / "image.id"])
             state["image_id"] = (stage / "image.id").read_text().strip()
             if not re.fullmatch(r"sha256:[a-f0-9]{64}", state["image_id"]):
                 raise ValueError("Docker did not return an immutable image ID")

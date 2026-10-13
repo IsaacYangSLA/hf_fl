@@ -233,6 +233,46 @@ class LinuxExecutor:
         pid = self._system(["systemctl", "show", unit, "--property=MainPID", "--value"]).stdout.strip()
         if not re.fullmatch(r"[1-9][0-9]*", pid):
             raise ExecutorRefused("Qualified daemon is not running", "runtime_unhealthy")
+        runtime_environment = self.profile.get("runtime_environment")
+        if runtime_environment is not None:
+            if runtime_environment != {"GOMAXPROCS": "2"} or not self.profile.get("containerd_unit"):
+                raise ExecutorRefused("Qualified runtime threading policy is invalid", "unqualified_profile")
+            affinity = self.profile.get("runtime_cpu_affinity")
+            cpu_count = self.profile.get("runtime_cpu_count")
+            if (not isinstance(affinity, list) or not affinity
+                    or type(cpu_count) is not int or cpu_count < len(affinity)
+                    or any(type(cpu) is not int or cpu < 0 for cpu in affinity)
+                    or sorted(set(affinity)) != affinity):
+                raise ExecutorRefused("Qualified runtime CPU affinity is invalid", "unqualified_profile")
+            policy_path = self.profile.get("runtime_cpu_policy")
+            if not isinstance(policy_path, str) or not Path(policy_path).is_absolute():
+                raise ExecutorRefused("Qualified runtime CPU policy is missing", "unqualified_profile")
+            policy_file = Path(policy_path)
+            try:
+                metadata = policy_file.lstat()
+                if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                        or metadata.st_uid != os.getuid() or metadata.st_mode & 0o077
+                        or metadata.st_size > 64 * 1024
+                        or any(parent.is_symlink() for parent in policy_file.parents)):
+                    raise ValueError("Unsafe CPU policy file")
+                policy_bytes = policy_file.read_bytes()
+                policy = json.loads(policy_bytes)
+            except (OSError, ValueError) as exc:
+                raise ExecutorRefused("Qualified runtime CPU policy is unavailable", "runtime_unhealthy") from exc
+            if (hashlib.sha256(policy_bytes).hexdigest() != self.profile.get("runtime_cpu_policy_sha256")
+                    or policy != {"cpu_count": cpu_count, "cpu_affinity": affinity}):
+                raise ExecutorRefused("Qualified runtime CPU policy changed", "runtime_unhealthy")
+            for runtime_unit in (unit, self.profile["containerd_unit"]):
+                environment = self._system(["systemctl", "show", runtime_unit,
+                                            "--property=Environment", "--value"]).stdout.split()
+                if "GOMAXPROCS=2" not in environment:
+                    raise ExecutorRefused("Qualified runtime threading settings changed", "runtime_unhealthy")
+                runtime_pid = self._system(["systemctl", "show", runtime_unit,
+                                            "--property=MainPID", "--value"]).stdout.strip()
+                if not re.fullmatch(r"[1-9][0-9]*", runtime_pid):
+                    raise ExecutorRefused("Qualified runtime process is missing", "runtime_unhealthy")
+                if sorted(os.sched_getaffinity(int(runtime_pid))) != affinity:
+                    raise ExecutorRefused("Qualified runtime host CPU affinity changed", "runtime_unhealthy")
         net = self._system(["readlink", "/proc/" + pid + "/ns/net"]).stdout.strip()
         host_net = self._system(["readlink", "/proc/1/ns/net"]).stdout.strip()
         if not net or net == host_net:
