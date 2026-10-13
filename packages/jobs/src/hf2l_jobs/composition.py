@@ -613,6 +613,8 @@ def _uvicorn(app, settings, arguments, *, default_port=8082):
     host = arguments.host or service.get("host", "127.0.0.1")
     port = arguments.port if arguments.port is not None else service.get("port", default_port)
     _integer(port, 1, 65535)
+    graceful_timeout = _integer(service.get("graceful_shutdown_timeout_seconds",
+        settings.graceful_shutdown_timeout_seconds), 1, 60)
     cert, key = service.get("tls_certificate"), service.get("tls_key")
     try:
         local = ipaddress.ip_address(host).is_loopback
@@ -623,7 +625,7 @@ def _uvicorn(app, settings, arguments, *, default_port=8082):
     if key:
         read_secret(key)
     uvicorn.run(app, host=host, port=port, ssl_certfile=cert, ssl_keyfile=key,
-                proxy_headers=False, access_log=False)
+                proxy_headers=False, access_log=False, timeout_graceful_shutdown=graceful_timeout)
 
 
 def dispatch(arguments):

@@ -21,6 +21,8 @@ Configure `HF2L_JOBS_DATABASE_URL` for a dedicated manager PostgreSQL database. 
 
 Trusted operational settings use `hf2l-jobs <command> --config /etc/hf2l/jobs.json`, or `HF2L_JOBS_OPERATIONAL_CONFIG_FILE`. The configuration's sections are `executor`, `node`, `provisioner`, `service`, `gateway`, `proxy`, `retention`, `boundaries`, `controller`, `secrets`, `nodes`, and `participants`. Job requests cannot replace this trusted configuration.
 
+The manager gives open HTTP requests and dashboard event streams 15 seconds to finish during shutdown, then cancels outstanding request tasks so the process can exit. Set `HF2L_JOBS_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS` (or the `JOBS_` alias) to an integer from 1 to 60 seconds. The trusted `service.graceful_shutdown_timeout_seconds` setting overrides that environment value with the same bounds. Keep the process supervisor stop deadline above this grace period so the manager can finish shutdown. An API restart preserves durable jobs and sessions; clients reconnect their streams after restart. Stopping the API does not terminate training executions or release their allocations.
+
 ## 2. Human login and authorization
 
 Set the following server environment variables. The `JOBS_` prefix is also supported; configuring both prefixes with different values is rejected.

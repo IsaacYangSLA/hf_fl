@@ -113,6 +113,7 @@ class Settings:
     max_body_bytes: int = 1_048_576
     docs_enabled: bool = False
     extra: Mapping[str, Any] = field(default_factory=dict, repr=False)
+    graceful_shutdown_timeout_seconds: int = 15
 
     @property
     def database(self):
@@ -129,6 +130,9 @@ class Settings:
     def validate(self, component: str = "server"):
         if not self.database_url.startswith(("postgresql:", "postgresql+psycopg:", "sqlite:")):
             raise ValueError("Manager database must be PostgreSQL or SQLite (tests)")
+        if (type(self.graceful_shutdown_timeout_seconds) is not int
+                or not 1 <= self.graceful_shutdown_timeout_seconds <= 60):
+            raise ValueError("Manager graceful shutdown timeout must be an integer from 1 to 60 seconds")
         if not 1024 <= self.max_body_bytes <= 8_388_608:
             raise ValueError("Manager request size must be between 1KiB and 8MiB")
         if component == "server":
@@ -181,4 +185,5 @@ class Settings:
             oidc=oidc, platform_operator_ids=tuple(filter(None, _env("PLATFORM_OPERATOR_IDS").split(","))),
             broker=broker, max_body_bytes=int(_env("MAX_BODY_BYTES", "1048576")),
             docs_enabled=_bool("DOCS_ENABLED"), extra=MappingProxyType(extra),
+            graceful_shutdown_timeout_seconds=int(_env("GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS", "15")),
         ).validate(component)
