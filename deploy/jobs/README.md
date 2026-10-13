@@ -119,9 +119,122 @@ python3 deploy/jobs/runtime/build_image.py \
   --output-dir /srv/hf2l/validation/runtime-image
 ```
 
-Use the deployment's actual persistent UV path and host CPython 3.14 interpreter. The output parent stays outside the source checkout. The builder verifies the preloaded base, wheel hashes, runtime ABI, package installs, and nonroot read-only/networkless CPU training/checkpoint smoke. It emits an immutable `image_id`, manifests, dependency hashes, and logs. `--stage-only` creates offline inputs and does not build or qualify an image.
+Use the deployment's actual persistent UV path and host CPython 3.14 interpreter. The output parent stays outside the source checkout. The builder verifies the preloaded base, wheel hashes, runtime ABI, package installs, and nonroot read-only/networkless CPU training/checkpoint smoke. It emits an immutable `image_id`, manifests, dependency hashes, and logs. `--stage-only` stages inputs and does not build or qualify an image; preparing uncached host inputs can access package indexes.
 
-For a frozen release, pass `--source-commit` with the full Git commit and run from its clean checkout. Tracked, untracked, and ignored additions are refused. To reuse prebuilt release wheels, pass `--project-wheelhouse` pointing to exactly the `hf2l`, `hf2l-exchange`, and `hf2l-jobs` wheels plus `manifest.json` containing `wheels` records with each `filename` and `sha256`. All identities and hashes are checked before any wheel is copied. `--reuse-wheelhouse` independently reuses verified dependency wheels.
+For a frozen release, pass `--source-commit` with the full Git commit and run from its clean checkout. Tracked, untracked, and ignored additions are refused. Keep caches and generated manifests outside that checkout.
+
+### Prepare and approve cached inputs
+
+A cached rebuild requires three separately approved wheelhouses:
+
+| Argument | Contents and manifest |
+| --- | --- |
+| `--build-wheelhouse` | Exactly seven host frontend wheels; `build-wheel-manifest.json` is in the wheelhouse's **parent** directory |
+| `--project-wheelhouse` | Exactly `hf2l`, `hf2l-exchange`, and `hf2l-jobs`; `manifest.json` is inside the wheelhouse |
+| `--reuse-wheelhouse` | A complete prior runtime dependency cache, including the pinned worker build frontends and CPU Torch; `wheel-manifest.json` is inside the wheelhouse |
+
+The seven host frontend pins are `build==1.6.1`, `packaging==26.3`, `pip==26.2.1`, `pyproject-hooks==1.3.3`, `setuptools==84.0.0`, `setuptools-scm==9.2.2`, and `wheel==0.48.0`. The dependency cache must include worker frontends `build==1.6.1`, `pyproject-hooks==1.3.3`, and `wheel==0.48.0`, plus the requested CPU Torch version and all runtime dependencies.
+
+Frontend and runtime dependency manifests contain records with `filename`, normalized distribution `name`, exact `version`, and lowercase SHA-256 `sha256`; `size_bytes` is optional. Records can be a JSON array or an object with a `wheels` array. A project manifest accepts this same format or legacy records containing only `filename` and `sha256`. For legacy project records, the builder derives name/version from verified wheel metadata; when either identity field is supplied, both are required and must match.
+
+Prepare the frontend cache while connected to the operator's approved package sources. Run from the trusted checkout with an approved CPython 3.14 interpreter that already has pip. Set `HF2L_BUILD_PYTHON` to that interpreter and `HF2L_FRONTEND_CACHE` to a new absolute directory outside the checkout, whose parent already exists:
+
+```sh
+set -eu
+test -n "$HF2L_BUILD_PYTHON" && test -n "$HF2L_FRONTEND_CACHE"
+umask 077
+HF2L_FRONTEND_CACHE="$HF2L_FRONTEND_CACHE" "$HF2L_BUILD_PYTHON" -B - <<'PYTHON'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+from deploy.jobs.runtime.build_image import (
+    BUILD_FRONTEND, ROOT, digest, verify_wheel_cache, wheel_metadata,
+)
+
+assert sys.version_info[:2] == (3, 14)
+parent = Path(os.environ["HF2L_FRONTEND_CACHE"])
+if (not parent.is_absolute() or ".." in parent.parts
+        or any(p.is_symlink() for p in (parent, *parent.parents))
+        or parent == ROOT or ROOT in parent.parents):
+    raise ValueError("Cache must be an absolute safe path outside the checkout")
+parent.mkdir(mode=0o700, exist_ok=False)
+wheels = parent / "build-wheelhouse"
+wheels.mkdir(mode=0o700)
+subprocess.run([
+    sys.executable, "-m", "pip", "download", "--only-binary=:all:",
+    "--no-deps", "--dest", str(wheels),
+    *[name + "==" + version for name, version in sorted(BUILD_FRONTEND.items())],
+], check=True)
+records = []
+for path in sorted(wheels.glob("*.whl")):
+    name, version = wheel_metadata(path)
+    records.append({"filename": path.name, "name": name, "version": version,
+                    "sha256": digest(path), "size_bytes": path.stat().st_size})
+manifest = parent / "build-wheel-manifest.json"
+with manifest.open("x") as stream:
+    json.dump({"wheels": records}, stream, indent=2, sort_keys=True)
+    stream.write("\n")
+verify_wheel_cache(wheels, manifest, BUILD_FRONTEND)
+PYTHON
+```
+
+A newly generated checksum records the bytes obtained; it does not independently establish their approval. Compare these records with approved upstream or internal release provenance, approve the exact hashes, and retain that evidence before using the cache for a build.
+
+The initial online build produces `project-wheels` and a dependency `wheelhouse/wheel-manifest.json`. Its `project-wheels` directory needs a project manifest before reuse. Select the three project wheels built from the approved frozen source and record their hashes outside the checkout. Set `HF2L_PROJECT_WHEELS` to that existing absolute directory; this example refuses to overwrite an existing manifest:
+
+```sh
+set -eu
+test -n "$HF2L_BUILD_PYTHON" && test -n "$HF2L_PROJECT_WHEELS"
+HF2L_PROJECT_WHEELS="$HF2L_PROJECT_WHEELS" "$HF2L_BUILD_PYTHON" -B - <<'PYTHON'
+import json
+import os
+from pathlib import Path
+from deploy.jobs.runtime.build_image import (
+    PROJECT_NAMES, ROOT, digest, verify_wheel_cache, wheel_metadata,
+)
+
+wheels = Path(os.environ["HF2L_PROJECT_WHEELS"])
+if (not wheels.is_absolute() or ".." in wheels.parts
+        or any(p.is_symlink() for p in (wheels, *wheels.parents))
+        or wheels == ROOT or ROOT in wheels.parents):
+    raise ValueError("Project wheels must be a safe directory outside the checkout")
+records = []
+for path in sorted(wheels.glob("*.whl")):
+    name, version = wheel_metadata(path)
+    records.append({"filename": path.name, "name": name, "version": version,
+                    "sha256": digest(path), "size_bytes": path.stat().st_size})
+if len(records) != 3 or {r["name"] for r in records} != PROJECT_NAMES:
+    raise ValueError("Expected exactly the three frozen project wheels")
+manifest = wheels / "manifest.json"
+with manifest.open("x") as stream:
+    json.dump({"wheels": records}, stream, indent=2, sort_keys=True)
+    stream.write("\n")
+verify_wheel_cache(wheels, manifest)
+PYTHON
+```
+
+Approve those project hashes against the recorded frozen source/build provenance. Keep the frontend, project, and dependency caches immutable after approval. Every cache wheel, including older project wheels in a reused dependency cache, is verified before Git, UV, or copying. Missing or additional wheels, duplicate identities, metadata/hash mismatches, and symlinks in cache paths are rejected. The three newly approved project wheels replace older project wheels when staging the runtime.
+
+### Rebuild from all three verified caches
+
+Set the variables below to the approved cache directories and full source commit, then run from the unchanged frozen checkout:
+
+```sh
+python3 deploy/jobs/runtime/build_image.py \
+  --docker-host unix:///srv/hf2l/runtime/docker.sock \
+  --base-image sha256:YOUR_ACTUAL_APPROVED_BASE_IMAGE_DIGEST \
+  --source-commit "$HF2L_SOURCE_COMMIT" \
+  --build-wheelhouse "$HF2L_FRONTEND_CACHE/build-wheelhouse" \
+  --project-wheelhouse "$HF2L_PROJECT_WHEELS" \
+  --reuse-wheelhouse "$HF2L_RUNTIME_WHEELHOUSE" \
+  --python /usr/bin/python3.14 \
+  --uv /usr/local/bin/uv \
+  --output-dir /srv/hf2l/validation/runtime-image
+```
+
+With `--reuse-wheelhouse`, both other cache arguments are required. The builder creates an unseeded host environment with UV offline/config suppression, installs the exact frontend wheels with no index or dependency resolution, and resolves runtime wheels from the verified local caches. Interpreter downloads and missing-input fallback downloads are disabled. Inherited pip/UV resolver settings are removed, and direct URL dependencies in the active approved wheels are rejected before subprocesses run. A missing pinned frontend, CPU Torch wheel, or unresolved runtime dependency fails the build. `--build-wheelhouse` without `--reuse-wheelhouse` reuses host tools while remaining host preparation can access package indexes.
 
 Use the resulting worker `image_id` in runtime qualification, then approve that ID under the job catalog's `hf2l-cpu` image identifier. The Python base image ID is not the worker image approval. Image build/smoke alone does not admit jobs.
 
