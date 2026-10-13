@@ -17,7 +17,13 @@ class StrictManagedCleanup(Provisioner):
     def cleanup(self, job, attempt):
         if not attempt.revocation_confirmed or not attempt.termination_confirmed:
             return False
-        return super().cleanup(job, attempt)
+        completed = super().cleanup(job, attempt)
+        if completed and getattr(self, "supervisor", None) is not None:
+            for component in job.spec_json["components"]:
+                if component["role"] != "build" and not self.supervisor.stop(
+                        job.id, attempt.id, component["component_id"], termination_confirmed=True):
+                    return False
+        return completed
 
 
 class QueuedCancellationCleanupTests(unittest.TestCase):
@@ -293,6 +299,166 @@ class QueuedCancellationCleanupTests(unittest.TestCase):
                 details_json={}, state="ready", retained=True))
         self.cancel_and_run(job)
         self.assert_no_synthetic_proof(job["id"])
+
+    def purge_and_run(self, job_id, key):
+        current = self.manager.get_job("alice", job_id)
+        self.manager.purge("alice", job_id, current["version"], key)
+        self.controller.run_once()
+        return self.read(job_id)[0]
+
+    def test_cancelled_never_admitted_job_purges_without_creating_job_resources(self):
+        job, _ = self.create()
+        self.cancel_and_run(job)
+        job_path = self.provisioner.root / job["id"]
+        self.assertFalse(job_path.exists())
+        result = self.purge_and_run(job["id"], "purge-unused")
+        self.assertIsNotNone(result.purged_at)
+        self.assertEqual(result.cleanup_status, "complete")
+        self.assertFalse(job_path.exists())
+        self.assertEqual(self.exchange.mock_calls, [])
+        self.assertEqual(self.executor.mock_calls, [])
+        with self.database.transaction(immediate=False) as session:
+            self.assertEqual(list(session.scalars(select(models.Allocation))), [])
+            self.assertEqual(list(session.scalars(select(models.ProvisioningResource))), [])
+            self.assertEqual(list(session.scalars(select(models.ProvisioningOperation))), [])
+            self.assertEqual(session.get(models.Project, "project").retained_bytes, 0)
+        self.assertTrue(self.provisioner.purge_job(result), "Unused purge remains idempotent")
+
+    def test_existing_unmarked_job_directory_cannot_use_unused_purge_shortcut(self):
+        job, _ = self.create()
+        self.cancel_and_run(job)
+        job_path = self.provisioner.root / job["id"]
+        job_path.mkdir(parents=True)
+        sentinel = job_path / "unowned-content"
+        sentinel.write_text("preserve unowned data")
+        result = self.purge_and_run(job["id"], "purge-unmarked")
+        self.assertIsNone(result.purged_at)
+        self.assertEqual(result.cleanup_status, "purge_pending")
+        self.assertEqual(sentinel.read_text(), "preserve unowned data")
+
+    def test_dangling_job_symlink_cannot_count_as_owned_directory_absence(self):
+        job, _ = self.create()
+        self.cancel_and_run(job)
+        self.provisioner.root.mkdir(parents=True)
+        job_path = self.provisioner.root / job["id"]
+        job_path.symlink_to(self.provisioner.root / "unavailable-foreign-directory", target_is_directory=True)
+        result = self.purge_and_run(job["id"], "purge-symlink")
+        self.assertIsNone(result.purged_at)
+        self.assertEqual(result.cleanup_status, "purge_pending")
+        self.assertTrue(job_path.is_symlink())
+
+    def test_missing_directory_with_unresolved_reserve_intent_is_not_unused(self):
+        job, attempt = self.create()
+        self.cancel_and_run(job)
+        self.operation(job, attempt, "reserve", "unknown")
+        result = self.purge_and_run(job["id"], "purge-unknown-reserve")
+        self.assertIsNone(result.purged_at)
+        self.assertEqual(result.cleanup_status, "purge_pending")
+        with self.database.transaction(immediate=False) as session:
+            operation = session.scalar(select(models.ProvisioningOperation).where(
+                models.ProvisioningOperation.job_id == job["id"]))
+            self.assertEqual(operation.state, "unknown")
+
+    def test_missing_directory_with_owned_unconfirmed_resource_is_not_unused(self):
+        job, attempt = self.create()
+        self.cancel_and_run(job)
+        with self.database.transaction() as session:
+            session.add(models.ProvisioningResource(job_id=job["id"], attempt_id=attempt.id,
+                component_id="owner", kind="runtime_secret", external_id="unconfirmed-secret-" + job["id"],
+                ownership_json={"job_id": job["id"], "component_id": "owner", "kind": "runtime_secret"},
+                details_json={}, retained=False, state="ready"))
+        result = self.purge_and_run(job["id"], "purge-unconfirmed-resource")
+        self.assertIsNone(result.purged_at)
+        self.assertEqual(result.cleanup_status, "purge_pending")
+        with self.database.transaction(immediate=False) as session:
+            resource = session.scalar(select(models.ProvisioningResource).where(
+                models.ProvisioningResource.job_id == job["id"]))
+            self.assertIsNone(resource.deleted_at)
+            self.assertEqual(resource.state, "ready")
+
+    def test_real_managed_proxy_cleanup_does_not_create_unowned_job_tree_before_purge(self):
+        from hf2l_jobs.execution_proxy import ProxySupervisor
+        from test_gateway import certificate_bundle
+        bundle = certificate_bundle(Path(self.fixture.directory.name))
+        supervisor = ProxySupervisor(self.provisioner.root,
+            client_ca_certificate=bundle["ca"][2], client_ca_key=bundle["ca"][3],
+            broker=Mock(), exchange_endpoint="https://exchange.example.invalid",
+            gateway_endpoint="https://gateway.example.invalid",
+            service_ca_file=bundle["ca"][2], grant_lookup=Mock())
+        self.addCleanup(supervisor.close)
+        self.provisioner.supervisor = supervisor
+        job, _ = self.create()
+        result, attempt, _ = self.cancel_and_run(job)
+        self.assertEqual(result.cleanup_status, "complete")
+        job_path = self.provisioner.root / job["id"]
+        self.assertFalse(job_path.exists(), "Stopping an absent proxy must not materialize an unowned tree")
+        result = self.purge_and_run(job["id"], "purge-after-real-proxy-cleanup")
+        self.assertIsNotNone(result.purged_at)
+        self.assertEqual(result.cleanup_status, "complete")
+        self.assertFalse(job_path.exists())
+
+    def test_legacy_exact_empty_proxy_skeleton_is_removed_with_current_never_started_proof(self):
+        job, attempt = self.create()
+        self.cancel_and_run(job)
+        current = self.provisioner.root
+        for part in (job["id"], "attempts", attempt.id, "owner"):
+            current = current / part
+            current.mkdir(parents=True, exist_ok=True, mode=0o700)
+            current.chmod(0o700)
+        result = self.purge_and_run(job["id"], "purge-legacy-empty-proxy-skeleton")
+        self.assertIsNotNone(result.purged_at)
+        self.assertEqual(result.cleanup_status, "complete")
+        self.assertFalse((self.provisioner.root / job["id"]).exists())
+        self.assertEqual(self.exchange.mock_calls, [])
+        self.assertEqual(self.executor.mock_calls, [])
+
+    def test_legacy_skeleton_with_unexpected_empty_directories_is_preserved(self):
+        for foreign in ("attempt", "component", "nested"):
+            with self.subTest(foreign=foreign):
+                job, attempt = self.create("legacy-foreign-" + foreign)
+                self.cancel_and_run(job)
+                current = self.provisioner.root
+                for part in (job["id"], "attempts", attempt.id, "owner"):
+                    current = current / part
+                    current.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    current.chmod(0o700)
+                job_path = self.provisioner.root / job["id"]
+                extra = {"attempt": job_path / "attempts" / "foreign-attempt",
+                         "component": job_path / "attempts" / attempt.id / "foreign-component",
+                         "nested": current / "unknown-child"}[foreign]
+                extra.mkdir(mode=0o700)
+                result = self.purge_and_run(job["id"], "purge-legacy-foreign-" + foreign)
+                self.assertIsNone(result.purged_at)
+                self.assertEqual(result.cleanup_status, "purge_pending")
+                self.assertTrue(extra.is_dir(), "Unknown directories must not be swept by skeleton repair")
+
+    def test_queued_retry_purge_uses_normal_owned_marker_after_current_absence_proof(self):
+        from hf2l_jobs.resources import OwnedDirectories
+        job, _, current = self.retry_fixture("marker-bound-retry-purge")
+        result, attempt, _ = self.cancel_and_run(job)
+        self.assertEqual((result.state, result.cleanup_status), ("CANCELLED", "complete"))
+        self.assertEqual(attempt.id, current.id)
+        directories = OwnedDirectories(self.provisioner.root)
+        job_path = directories.ensure_job(job["id"], result.spec_hash)
+        self.assertTrue((job_path / ".owner.json").is_file())
+        result = self.purge_and_run(job["id"], "purge-marker-bound-retry")
+        self.assertIsNotNone(result.purged_at)
+        self.assertEqual(result.cleanup_status, "complete")
+        self.assertFalse(job_path.exists())
+        self.assertEqual(self.exchange.mock_calls, [])
+        self.assertEqual(self.executor.mock_calls, [])
+
+    def test_new_unknown_attempt_evidence_invalidates_prior_unused_purge_proof(self):
+        job, initial = self.create()
+        self.cancel_and_run(job)
+        with self.database.transaction() as session:
+            attempt = session.get(models.Attempt, initial.id)
+            self.assertTrue(attempt.termination_confirmed and attempt.revocation_confirmed)
+            attempt.details_json = {**attempt.details_json, "unconfirmed_node_start": True}
+        result = self.purge_and_run(job["id"], "purge-new-unknown-attempt-evidence")
+        self.assertIsNone(result.purged_at)
+        self.assertEqual(result.cleanup_status, "purge_pending")
+        self.assertFalse((self.provisioner.root / job["id"]).exists())
 
     def test_unrecognized_attempt_effect_evidence_blocks_proof(self):
         job, attempt = self.create()

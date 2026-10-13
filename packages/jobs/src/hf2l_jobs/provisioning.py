@@ -958,10 +958,61 @@ class Provisioner:
             RetentionService(self.database).confirm_resource_deleted(row["id"], jid)
         return True
 
+    def _purge_never_started_initial(self, job) -> bool:
+        """Recheck native absence proof before repairing legacy empty directories."""
+        from sqlalchemy import select
+        from .models import Allocation, Attempt, Job, ProvisioningOperation, ProvisioningResource
+        from .scheduler import Scheduler
+        jid, spec = value(job, "id"), job_spec(job)
+        with self.database.transaction() as session:
+            stored = session.scalar(select(Job).where(Job.id == jid).with_for_update())
+            attempts = list(session.scalars(select(Attempt).where(Attempt.job_id == jid).with_for_update()))
+            native = [item for item in attempts if (item.details_json or {}).get("never_started_cleanup")]
+            if not native:
+                return False
+            # Retry attempts may also have an absence proof. They retain normal
+            # marked storage and must use the ordinary authoritative purge path.
+            if stored is None or stored.current_attempt != 1 or len(attempts) != 1:
+                return False
+            if len(native) != 1 or native[0].number != 1:
+                raise ResourceError("Never-started purge requires one initial attempt")
+            attempt = native[0]
+            proof = attempt.details_json["never_started_cleanup"]
+            if (stored is None or stored.spec_hash != spec.digest or stored.current_attempt != 1
+                    or stored.state not in {"SUCCEEDED", "FAILED", "CANCELLED"}
+                    or stored.epoch not in {0, 1} or attempt.number != 1 or attempt.epoch != 1
+                    or attempt.started_at is not None or attempt.heartbeat_at is not None
+                    or attempt.node_id is not None or attempt.resources_json
+                    or not attempt.revocation_confirmed or not attempt.termination_confirmed
+                    or attempt.publication_status != "absent"
+                    or set(attempt.details_json or {}) - {
+                        "desired_terminal", "desired_terminal_reason", "automatic_retries", "never_started_cleanup"}
+                    or not isinstance(proof, dict)
+                    or proof.get("reason") != "never_dispatched"
+                    or proof.get("authority") != "manager_operation_ledger"
+                    or proof.get("no_current_attempt_effects") is not True
+                    or proof.get("fenced_prior_attempts") != []):
+                raise ResourceError("Never-started purge absence proof is incomplete")
+            for model in (Allocation, ProvisioningOperation, ProvisioningResource):
+                if session.scalar(select(model.id).where(model.job_id == jid).limit(1)) is not None:
+                    raise ResourceError("Never-started purge has an unresolved resource or operation")
+            from .models import Outbox
+            if session.scalar(select(Outbox.id).where(Outbox.job_id == jid,
+                    Outbox.topic.in_(("dispatch", "restore_proxies")), Outbox.state != "done").limit(1)) is not None:
+                raise ResourceError("Never-started purge has an unresolved dispatch")
+            removed = OwnedDirectories(self.root).purge_empty_never_started(
+                jid, attempt.id, [component.component_id for component in spec.components])
+            if removed:
+                Scheduler._event(session, stored, "cleanup.never_started_empty_skeleton_pruned",
+                                 {"attempt_id": attempt.id, "reason": "never_dispatched"}, utcnow())
+            return True
+
     def purge_job(self, job) -> bool:
         jid, spec = value(job, "id"), job_spec(job)
         if value(job, "state") not in {"SUCCEEDED", "FAILED", "CANCELLED"}:
             raise ResourceError("Only terminal jobs can be purged")
+        if self._purge_never_started_initial(job):
+            return True
         from sqlalchemy import select
         from .models import Allocation
         with self.database.transaction(immediate=False) as session:

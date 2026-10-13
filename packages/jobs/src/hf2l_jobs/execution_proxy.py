@@ -637,7 +637,7 @@ class ProxySupervisor:
             current.mkdir(mode=0o700, exist_ok=True)
         return target
 
-    def _directory(self, job_id, attempt_id, component_id):
+    def _directory(self, job_id, attempt_id, component_id, *, create=True):
         from pathlib import Path
         for value in (job_id, attempt_id, component_id):
             identifier(value)
@@ -646,7 +646,10 @@ class ProxySupervisor:
             current = current / value
             if current.is_symlink():
                 raise ValueError("Proxy material parent cannot be a symlink")
-            current.mkdir(mode=0o700, exist_ok=True)
+            if create:
+                current.mkdir(mode=0o700, exist_ok=True)
+            elif current.exists() and not current.is_dir():
+                raise ValueError("Proxy material parent is not a directory")
         return current
 
     def _materialize(self, job_id, attempt_id, component_id, space_id, epoch, deadline):
@@ -911,17 +914,34 @@ class ProxySupervisor:
                     self._adopted.pop(identity, None)
                     return True
                 # Absence of a local handle cannot prove a foreign proxy stopped.
-                directory = self._directory(job_id, attempt_id, component_id)
-                metadata = directory / 'proxy-identity.json'
-                if metadata.exists():
-                    import json
-                    from .executor import ExecutionIdentity
-                    saved = json.loads(metadata.read_text())
-                    path = self.endpoint(ExecutionIdentity(job_id, attempt_id, component_id, saved['epoch']))
-                    from pathlib import Path
-                    if Path(path).exists():
-                        return False
-                return True
+                from contextlib import ExitStack
+                import os
+                import stat
+                with ExitStack() as stack:
+                    self._owned_proxy_root(stack, self.root)
+                    directory = self._directory(job_id, attempt_id, component_id, create=False)
+                    metadata = directory / 'proxy-identity.json'
+                    if metadata.is_symlink():
+                        raise ValueError("Proxy identity cannot be a symbolic link")
+                    if metadata.exists():
+                        import json
+                        from .executor import ExecutionIdentity
+                        info = metadata.lstat()
+                        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                                or info.st_mode & 0o077 or info.st_nlink != 1):
+                            raise ValueError("Proxy identity ownership is unsafe")
+                        saved = json.loads(metadata.read_text())
+                        if (any(saved.get(key) != expected for key, expected in (
+                                ("job_id", job_id), ("attempt_id", attempt_id), ("component_id", component_id)))
+                                or type(saved.get("epoch")) is not int or saved["epoch"] < 1):
+                            raise ValueError("Proxy identity belongs to another execution")
+                        path = self.endpoint(ExecutionIdentity(job_id, attempt_id, component_id, saved['epoch']))
+                        from pathlib import Path
+                        if Path(path).exists() or Path(path).is_symlink():
+                            return False
+                    elif directory.exists() and any(directory.iterdir()):
+                        raise ValueError("Proxy material has no trusted identity")
+                    return True
             proxy.server.should_exit = True
             proxy.thread.join(timeout=10)
             if proxy.thread.is_alive():

@@ -142,6 +142,8 @@ class OwnedDirectories:
 
     def purge(self, job_id: str, spec_digest: str) -> None:
         path = self.job_path(job_id)
+        if path.is_symlink():
+            raise ResourceError("Job directory cannot be a symbolic link")
         if not path.exists():
             return
         self.validate_job(job_id, spec_digest)
@@ -155,6 +157,68 @@ class OwnedDirectories:
             directory_path.chmod(0o700)
             names[:] = [name for name in names if not (directory_path / name).is_symlink()]
         shutil.rmtree(path)
+
+
+    def purge_empty_never_started(self, job_id: str, attempt_id: str, component_ids) -> bool:
+        """Prune only a proven initial attempt's legacy empty proxy skeleton.
+
+        The caller supplies the authoritative zero-effect proof. No ownership
+        marker is adopted, and no file is ever unlinked. Every directory is
+        checked before the first rmdir; descriptor mount identities also reject
+        same-filesystem bind mounts.
+        """
+        import stat
+        from contextlib import ExitStack
+        validate_identifier(job_id)
+        validate_identifier(attempt_id)
+        components = {validate_identifier(value) for value in component_ids}
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        def mount_id(descriptor):
+            values = Path(f"/proc/self/fdinfo/{descriptor}").read_text().splitlines()
+            found = [line.split(":", 1)[1].strip() for line in values if line.startswith("mnt_id:")]
+            if len(found) != 1 or not found[0].isdigit():
+                raise ResourceError("Directory mount identity is unavailable")
+            return int(found[0])
+        with ExitStack() as stack:
+            root_fd = os.open(self.root, flags)
+            stack.callback(os.close, root_fd)
+            root_info = os.fstat(root_fd)
+            if root_info.st_uid != os.geteuid() or stat.S_IMODE(root_info.st_mode) != 0o700:
+                raise ResourceError("Never-started skeleton authority root is not owned and private")
+            root_mount = mount_id(root_fd)
+            directories = []
+            def inspect(parent_fd, name, level):
+                try:
+                    descriptor = os.open(name, flags, dir_fd=parent_fd)
+                except FileNotFoundError:
+                    return
+                except OSError as error:
+                    raise ResourceError("Never-started skeleton contains unsafe material") from error
+                stack.callback(os.close, descriptor)
+                info = os.fstat(descriptor)
+                if (info.st_dev != root_info.st_dev or mount_id(descriptor) != root_mount
+                        or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700):
+                    raise ResourceError("Never-started skeleton ownership or mount changed")
+                allowed = ({"attempts"} if level == 0 else {attempt_id} if level == 1
+                           else components if level == 2 else set())
+                names = os.listdir(descriptor)
+                if set(names) - allowed:
+                    raise ResourceError("Never-started skeleton contains unknown material")
+                for child in names:
+                    inspect(descriptor, child, level + 1)
+                directories.append((parent_fd, name, descriptor, info))
+            inspect(root_fd, job_id, 0)
+            for parent_fd, name, descriptor, original in directories:
+                current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+                if ((current.st_dev, current.st_ino) != (original.st_dev, original.st_ino)
+                        or mount_id(descriptor) != root_mount or os.listdir(descriptor)):
+                    raise ResourceError("Never-started skeleton changed before removal")
+                try:
+                    os.rmdir(name, dir_fd=parent_fd)
+                except OSError as error:
+                    raise ResourceError("Never-started skeleton is no longer empty") from error
+                os.fsync(parent_fd)
+            return bool(directories)
 
 
 class ResourceLedger:
