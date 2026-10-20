@@ -102,7 +102,9 @@ Participants install **no server stack or Docker**.
 
 Replace all example DNS names with Org S's actual names. Use publicly trusted
 HTTPS certificates; never disable verification. Private internal TLS is an
-explicit alternative for an exercise with configured DNS and CA trust.
+explicit alternative for an exercise with configured DNS and CA trust; follow
+[the private TLS setup](#private-tls-for-a-local-practice-run) below instead of
+the public setup.
 
 ### Install one exact source revision independently
 
@@ -122,6 +124,7 @@ python -m pip install . ./packages/exchange 'PyJWT[crypto]>=2.9,<3'
 export EXAMPLE=examples/first_federation
 export EXCHANGE_ENDPOINT=https://exchange.example.org
 export ISSUER=https://auth.example.org/realms/hf2l
+export OBJECTS_ENDPOINT=https://objects.example.org
 ~~~
 
 All subsequent commands run from **that repository root with its environment
@@ -155,7 +158,13 @@ policy, then run the [Exchange provider conformance checks](../../docs/EXCHANGE_
 against the selected version and topology. The image retains its upstream source
 archive, license and build notice.
 
-Choose a private absolute runtime directory outside the checkout:
+### Public HTTPS setup
+
+Choose **one** setup: this public setup or the private TLS alternative below.
+Use a fresh private absolute runtime directory outside the checkout; do not
+initialize the same directory twice with different hosts, ports, or TLS modes.
+
+For public HTTPS, use the DNS names and endpoints agreed in step 1:
 
 ~~~bash
 export RUNTIME_DIR="$HOME/.local/share/hf2l-first-federation"
@@ -167,6 +176,96 @@ python "$EXAMPLE/stack.py" --runtime-dir "$RUNTIME_DIR" bootstrap
 python "$EXAMPLE/stack.py" --runtime-dir "$RUNTIME_DIR" status
 ~~~
 
+### Private TLS for a local practice run
+
+**Who:** Org S sets up services; each account holder configures its own client
+and browser trust. **Machine:** one isolated Linux practice host, with separate
+role terminals/profiles. **Input:** the step 1 installation and unused local
+ports 8443/8080. **Success:** trusted HTTPS, without public certificate issuance.
+This simulates the organizations on one host; loopback URLs are not reachable
+from other organizations' networks.
+
+The host administrator adds this entry to `/etc/hosts`, preserving existing
+entries, or configures equivalent local DNS:
+
+~~~text
+127.0.0.1 exchange.first-federation.test auth.first-federation.test objects.first-federation.test
+~~~
+
+Org S runs this **instead of** the public setup:
+
+~~~bash
+export RUNTIME_DIR="$HOME/.local/share/hf2l-first-federation-local"
+export EXCHANGE_ENDPOINT=https://exchange.first-federation.test:8443
+export ISSUER=https://auth.first-federation.test:8443/realms/hf2l
+export OBJECTS_ENDPOINT=https://objects.first-federation.test:8443
+python "$EXAMPLE/stack.py" --runtime-dir "$RUNTIME_DIR" init \
+  --exchange-host exchange.first-federation.test \
+  --auth-host auth.first-federation.test \
+  --objects-host objects.first-federation.test \
+  --tls internal --https-port 8443 --http-port 8080 \
+  --bind-address 127.0.0.1
+python "$EXAMPLE/stack.py" --runtime-dir "$RUNTIME_DIR" bootstrap
+python "$EXAMPLE/stack.py" --runtime-dir "$RUNTIME_DIR" status
+export SERVICE_CA="$RUNTIME_DIR/service-ca.crt"
+openssl x509 -in "$SERVICE_CA" -noout -fingerprint -sha256
+~~~
+
+Bootstrap exports the **public** CA certificate to `service-ca.crt`; the stack
+helper uses it for its own status checks. Org S sends only this certificate
+and its SHA-256 fingerprint through an authenticated channel to each account
+holder and browser operator. Never send a CA private key or share the runtime
+directory. Provisioning TLS trust is separate from the two-file project
+handoff in step 3.
+
+Org P, Alice, and Bob place the public certificate at a private local path,
+for example `$HOME/.local/share/hf2l-trust/service-ca.crt`, and compare its
+fingerprint with Org S's authenticated value. Those three roles set their
+own certificate path after placing the file:
+
+~~~bash
+export SERVICE_CA="$HOME/.local/share/hf2l-trust/service-ca.crt"
+~~~
+
+Org S keeps `SERVICE_CA` set to its generated public certificate. In **each
+role's terminal**, set the practice endpoints and trust for Python,
+object transfers, and curl. Local requests must reach the practice host
+directly, including when a proxy is configured:
+
+~~~bash
+export EXCHANGE_ENDPOINT=https://exchange.first-federation.test:8443
+export ISSUER=https://auth.first-federation.test:8443/realms/hf2l
+export OBJECTS_ENDPOINT=https://objects.first-federation.test:8443
+export NO_PROXY="${NO_PROXY:+$NO_PROXY,}localhost,127.0.0.1,exchange.first-federation.test,auth.first-federation.test,objects.first-federation.test"
+export no_proxy="$NO_PROXY"
+openssl x509 -in "$SERVICE_CA" -noout -fingerprint -sha256
+export SSL_CERT_FILE="$SERVICE_CA"
+export REQUESTS_CA_BUNDLE="$SERVICE_CA"
+export AWS_CA_BUNDLE="$SERVICE_CA"
+export CURL_CA_BUNDLE="$SERVICE_CA"
+~~~
+
+These variables do **not** configure browser trust. Before device login,
+the browser operator imports this same public certificate into the browser's
+certificate-authority store with website trust, using a dedicated practice
+profile. Restart that browser/profile and open the issuer discovery URL
+(`$ISSUER/.well-known/openid-configuration`); it must load without a
+certificate warning. Keep using that trusted profile for the device-login
+URL in step 3. Do not use TLS bypass flags or click through certificate warnings.
+
+For a browser on another device, its operator also configures the three
+names to resolve to `127.0.0.1` on that device, imports the public CA there,
+and forwards port 8443 to the Org S host. For example, replace the SSH
+destination in `ssh -N -o ExitOnForwardFailure=yes -L 8443:127.0.0.1:8443 user@org-s-server`.
+Keep that tunnel running during browser login. This provides browser access
+only; it does not make the loopback deployment available to remote participants.
+
+After the exercise, Org S stops the stack as described in step 8. Each host
+and browser operator removes only the practice DNS entries and CA trust it
+added when those are no longer needed.
+
+### Accounts and connection checks
+
 Bootstrap creates the `hf2l` realm, public device-login client `hf2l-cli`, four
 distinct accounts (`bootstrap-admin`, `owner`, `alice`, `bob`), current Exchange
 schema `0003_workload_grants`, and a private versioned bucket. Database and
@@ -177,11 +276,44 @@ passwords: deliver **only each recipient's own credential** through a private
 channel. Never send the whole file to participants. `identities.json` records
 actual issuer/subjects from Keycloak; usernames are not JWT subjects.
 
-Ask Org P, Alice, and Bob to check all three HTTPS names from
-**their own networks**.
-An unauthenticated object-store request may return access denied: distinguish
-that from DNS, TLS, or connection failure. A server-local status check does not
-prove cross-organization object transfers work.
+There are **two different passwords** for the username `bootstrap-admin`
+in `accounts.json`. Select the password by login purpose:
+
+| Login | Password location in `accounts.json` |
+| --- | --- |
+| HF²L device login to the `hf2l` realm in step 3 | `["accounts"]["bootstrap-admin"]["password"]` |
+| Keycloak administration of the `master` realm | `["keycloak_admin"]["password"]` |
+
+Use a private local editor to read the intended entry; do not paste passwords
+into commands, logs, or support reports. Each recipient gets only its own
+`["accounts"][username]["password"]`, separately from project metadata.
+The Keycloak master password is not an HF²L login credential.
+
+**Who:** Org S, Org P, Alice, and Bob. **Machine:** each caller's machine,
+from its own network for a real deployment. **Input:** the three endpoint
+variables from step 1, or the private exercise overrides and trust above.
+**Success:** all three requests return HTTP 200 with verified certificates:
+
+~~~bash
+curl --fail --silent --show-error --write-out '\nHTTP %{http_code}\n' \
+  "$EXCHANGE_ENDPOINT/ready"
+curl --fail --silent --show-error --write-out '\nHTTP %{http_code}\n' \
+  "$ISSUER/.well-known/openid-configuration"
+curl --fail --silent --show-error --write-out '\nHTTP %{http_code}\n' \
+  "$OBJECTS_ENDPOINT/minio/health/ready"
+~~~
+
+Install curl using the caller's distribution packages if needed. For private
+TLS, curl uses `CURL_CA_BUNDLE` above; alternatively pass
+`--cacert "$SERVICE_CA"` explicitly. The issuer discovery response must report
+the agreed `$ISSUER`. An unauthenticated request to the object-store **root**
+may return access denied; use the health URL above for this check.
+
+These are connection/readiness checks. Org S's `stack.py status` also probes
+the independent worker's database/storage access. Neither check proves signed
+object transfers work across organizations: each participant must complete its
+authenticated download/upload in step 5 from its own network. Local practice
+and server-local checks cannot replace that acceptance.
 
 ## 3. Org S creates and delegates the project to Org P
 
@@ -191,7 +323,10 @@ identity mapping. **Success:** durable project state with a space ID.
 **Handoff:** delegated project state and trusted project identities to Org P.
 
 Device login displays a verification URL and user code. Use the
-**bootstrap-admin** account in the browser; put no password on the command line.
+**bootstrap-admin** account in the browser with
+`accounts.json["accounts"]["bootstrap-admin"]["password"]` for the `hf2l`
+realm, not the Keycloak master password. Put no password on the command line.
+For private TLS, finish the Python and browser trust setup in step 2 first.
 
 ~~~bash
 export ADMIN_PROFILE="$HOME/.local/share/hf2l-credentials/bootstrap-admin"
@@ -264,11 +399,16 @@ credentials; keep them private.
 `owner` account. **Success:** initial global model and two invitations.
 **Handoff:** Alice's invitation to Org A, Bob's invitation to Org B.
 
+Org P uses its **own** `owner` browser login/profile and the two received files;
+none of the commands below uses Org S's runtime or administrator profile.
+For private TLS, the public CA was provisioned separately in step 2.
+
 ~~~bash
 export OWNER_WORK="$HOME/.local/share/hf2l-owner"
 mkdir -p "$OWNER_WORK"
 chmod 700 "$OWNER_WORK"
 # Place only project.json and identities.json received from Org S here.
+chmod 600 "$OWNER_WORK/project.json" "$OWNER_WORK/identities.json"
 export PROJECT_STATE="$OWNER_WORK/project.json"
 export OWNER_PROFILE="$OWNER_WORK/login"
 python "$EXAMPLE/auth.py" login --issuer "$ISSUER" \
@@ -276,6 +416,21 @@ python "$EXAMPLE/auth.py" login --issuer "$ISSUER" \
 as_owner() {
   python "$EXAMPLE/auth.py" run --profile "$OWNER_PROFILE" -- "$@"
 }
+python "$EXAMPLE/auth.py" identity --profile "$OWNER_PROFILE"
+as_owner python "$EXAMPLE/project.py" inspect --state "$PROJECT_STATE"
+~~~
+
+### Verify the Org S → Org P handoff
+
+Before enrollment, compare the login's subject with
+`identities.json["accounts"]["owner"]["subject"]`. The first `inspect` result
+must show the same `space_id` as Org P's received `project.json` and membership
+roles containing `admin`, `publisher`, and `reader`. A null `reference` and
+`record` are expected before the initial model is published.
+
+Continue only after those identity, space, and permission checks pass:
+
+~~~bash
 export SPACE_ID="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["space_id"])' "$PROJECT_STATE")"
 as_owner python "$EXAMPLE/project.py" enroll \
   --state "$PROJECT_STATE" --identities "$OWNER_WORK/identities.json" \
@@ -296,6 +451,14 @@ for participant in alice bob; do
 done
 as_owner python "$EXAMPLE/project.py" inspect --state "$PROJECT_STATE"
 ~~~
+
+Successful Alice/Bob enrollment using the filtered receipt, followed by the
+final `inspect`, confirms Org P can administer the delegated project and
+publish its initial model. Keep Org P's updated state locally: enrollment adds
+participant bindings to its copy of `project.json`. A private sibling
+`project.json.lock` is an expected local lock, not a third handoff file.
+Never transfer an authentication profile or use a shared runtime to make
+this check pass.
 
 Enrollment uses trusted Keycloak subjects and approved participant bindings.
 Do not accept an unverified JWT payload or arbitrary participant-supplied ID.
@@ -586,6 +749,14 @@ rounds, authorization failures, token renewal, recovery and persistent restart.
 It writes a private `summary.json` under a sibling
 `<runtime>-verification/<run-id>/` directory. Inspect gate results: an attempted
 run or a partial-stage result is not a passing qualification.
+
+**Handoff coverage:** the verifier currently uses its administrator-created
+project-state file and full runtime identity receipt for the simulated
+aggregator. It does not execute the filtered, copied two-file handoff in
+steps 3–4. Complete [the handoff check](#verify-the-org-s--org-p-handoff)
+separately with Org P's own files and login; a passing verifier alone does not
+establish that boundary. Separate actor directories/profiles also do not
+establish operating-system filesystem isolation.
 
 The verifier stops its own stack on completion/failure and removes its owned
 containers and network while retaining persistent volumes and private runtime
