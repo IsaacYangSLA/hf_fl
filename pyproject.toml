@@ -7,7 +7,7 @@ name = "hf2l"
 dynamic = ["version"]
 description = "Framework-independent federated learning and authenticated exchange adapters"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
   "numpy>=1.26.0",
   "safetensors>=0.4.0",

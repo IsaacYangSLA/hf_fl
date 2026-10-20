@@ -76,7 +76,7 @@ For an IP endpoint use `-verify_ip` with its actual address. Include approved in
 
 ## CPU runtime setup
 
-The administrator helper `runtime/setup.py` requires Linux x86_64, Python 3.12 or later, cgroup v2, Docker, systemd, and approved noninteractive `sudo` access to the explicit runtime operations. The manager distribution itself supports Python 3.10 or later.
+The administrator helper `runtime/setup.py` requires Linux x86_64, Python 3.12 or later, cgroup v2, Docker, systemd, and approved noninteractive `sudo` access to the explicit runtime operations. The manager distribution itself supports Python 3.11 or later.
 
 Choose a new short absolute runtime directory owned by the operator, at least three path components below `/`, with enough space for its dedicated Docker data and bounded job volumes. Unix socket path limits apply. The helper refuses system Docker roots and foreign/unmarked directories. Verified runtime executables are staged in an owned `/opt/hf2l-jobs-runtime-<id>` directory so unprivileged runtime sidecars can traverse them without broadening private home-directory permissions. It neither rewrites `/etc/docker` nor restarts the system Docker service.
 

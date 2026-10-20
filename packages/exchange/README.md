@@ -11,7 +11,8 @@ are independent identifiers. No package publication is implied by this checkout.
 
 ## Install from this repository
 
-Run these commands from the repository root, using the project environment:
+The SDK and service require Python 3.11 or later. Run these commands from the
+repository root, using the project environment:
 
 ```sh
 python3 -m venv .venv
@@ -84,8 +85,13 @@ Exchange continues to require exact versions and size/SHA-256 verification.
 ## Validation boundaries
 
 The configured CI workflow checks SDK and server imports in separate minimal
-environments, then runs SQLite/Moto tests, PostgreSQL and pinned-MinIO integration
-tests, and the existing HF²L regression suite. Local source checks can be run with:
+environments, then runs SQLite/Moto tests, PostgreSQL and MinIO integration
+tests, and the existing HF²L regression suite. PostgreSQL uses a pinned image
+digest. MinIO is built from verified upstream commit
+`7aac2a2c5b7c882e68c1ce017d8256be2feea27f` and source-archive SHA-256
+`71794c2df26aad0cc99e8421c58b7aa2dd55969f979b0e7d1e931042e9fabcd6`,
+using the [shared Dockerfile](../../examples/first_federation/Dockerfile.minio)
+and its pinned build/runtime images. Local source checks can be run with:
 
 ```sh
 .venv/bin/python scripts/check_exchange_dependencies.py --mode source

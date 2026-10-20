@@ -633,7 +633,8 @@ if (result.next_cursor) panel.append(button("Load more artifacts", async () => {
       $("logout-button").hidden = false; $("operations-link").hidden = !operator();
       const catalog = await api("/catalog"); state.catalog = catalog;
       $("create-button").hidden = !(catalog.projects || []).length;
-      route(); connectEvents();
+      // Initial routing closes dialogs; finish it before accepting creation.
+      route(); $("create-button").disabled = false; connectEvents();
     } catch (error) {
       $("login-panel").hidden = false;
       $("login-panel").querySelector("p").textContent = errorMessage(error);

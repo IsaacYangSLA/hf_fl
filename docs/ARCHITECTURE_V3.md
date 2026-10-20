@@ -5,7 +5,8 @@ the useful application boundaries proposed in the current checkout's
 [architecture review](history/ARCHITECTURE_REVIEW.md). It is an integration and
 maintenance design for this repository, not a third incompatible wire protocol.
 The Exchange HTTP API remains `/v2`; existing HF²L manifest versions, filenames
-and command aliases remain readable. Python 3.10 remains supported.
+and command aliases remain readable. The current distributions require Python
+3.11 or later.
 
 This document records the accepted design integrated at `60e4bf8`, subsequent
 application and Exchange fixes, and the shared client/owner listeners in the
@@ -78,7 +79,7 @@ smaller application boundary. V3 selects the following combination.
 | Shared lease abstraction over every resource | Defer | Preserve tested transfer/acquisition ownership rules; do not force their different lifecycles into one abstraction |
 | Central filesystem helpers | Accept | `hf2l/common/fs.py` owns reusable operations; `hub_helpers.py` remains a compatibility facade |
 | Structured, generated contracts and dependency tests | Accept | Generate API/error/environment artifacts from implemented Exchange sources; verify package and import boundaries |
-| Drop Python 3.10 for `StrEnum` | Reject | The useful design does not require a newer runtime floor |
+| Drop Python 3.10 for `StrEnum` | Superseded | The current runtime minimum is Python 3.11; this policy change does not require rewriting existing enums |
 | Delete old hardening tests before replacement | Reject | Keep regression oracles and map changed expectations explicitly |
 | Additional blob providers, multi-issuer configuration, brokers, push delivery | Defer | These need distinct requirements and provider/deployment evidence |
 

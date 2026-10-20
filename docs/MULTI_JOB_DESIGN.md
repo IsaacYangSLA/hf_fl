@@ -29,7 +29,7 @@ V1 manages FedAvg jobs using fresh `fedavg.v1` Exchange spaces for model artifac
 
 ## 2. Architecture and ownership
 
-Add an independently packaged Python distribution `hf2l-jobs`, import package `hf2l_jobs`, under `packages/jobs`, requiring Python 3.10 or later. Use FastAPI, SQLAlchemy, and PostgreSQL. Serve packaged HTML/CSS/JavaScript from the manager; dashboard development and deployment do not require Node.js.
+Add an independently packaged Python distribution `hf2l-jobs`, import package `hf2l_jobs`, under `packages/jobs`, requiring Python 3.11 or later. Use FastAPI, SQLAlchemy, and PostgreSQL. Serve packaged HTML/CSS/JavaScript from the manager; dashboard development and deployment do not require Node.js.
 
 ```mermaid
 flowchart LR

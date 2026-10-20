@@ -647,9 +647,15 @@ schemas/buckets; never provide production database or bucket administration
 credentials. Minimal-install checks run in fresh SDK-only/server-only/core-only
 environments so accidental optional dependencies are detectable. The configured
 [Exchange test workflow](../.github/workflows/exchange_tests.yml) covers Python
-3.10/3.12, dependency isolation, generic integration and HF²L regressions, with
-PostgreSQL and MinIO pinned by digest for provider checks. This workflow has not
-been executed on GitHub for these changes.
+3.12, dependency isolation, generic integration and HF²L regressions, with
+PostgreSQL pinned by image digest for provider checks. MinIO is built with the
+[shared source-build Dockerfile](../examples/first_federation/Dockerfile.minio)
+from upstream commit `7aac2a2c5b7c882e68c1ce017d8256be2feea27f`, verified
+against source-archive SHA-256
+`71794c2df26aad0cc99e8421c58b7aa2dd55969f979b0e7d1e931042e9fabcd6`.
+The Dockerfile also pins the build and runtime images by digest. The previous
+prebuilt MinIO registry digest is unavailable; it is retained only in historical
+records. Historical results below do not establish that current CI changes passed.
 
 Local verification of the integrated sources on 2026-09-22 used the project
 `.venv` and Python 3.12. These are historical results from before the subsequent

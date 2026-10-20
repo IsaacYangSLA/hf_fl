@@ -13,7 +13,7 @@ python -m pip install -e 'packages/exchange[server]' -e '.[examples]' -e 'packag
 hf2l-jobs --help
 ```
 
-The distributions require Python 3.10 or later. Clean manager/server wheels are validated on Python 3.10–3.14; functional cohort scope and exact versions are in the [validation report](../../docs/validation/2026-10-09-multi-job-implementation.md). PostgreSQL is the deployment database; SQLite supports isolated tests. Trusted bootstrap includes separate bounded source-filesystem and model-object pools.
+The distributions require Python 3.11 or later. CI checks clean manager/server wheels on Python 3.11–3.14; functional cohort scope and exact versions are in the [validation report](../../docs/validation/2026-10-09-multi-job-implementation.md). PostgreSQL is the deployment database; SQLite supports isolated tests. Trusted bootstrap includes separate bounded source-filesystem and model-object pools.
 
 ## Operation
 

@@ -169,8 +169,8 @@ def check_metadata() -> list[str]:
     if entries.get("hf2l-jobs") != "hf2l_jobs.cli:main":
         problems.append("hf2l-jobs console entry point is missing or incorrect")
     python_requires = distribution.metadata.get("Requires-Python", "")
-    if not python_requires or "3.10" not in python_requires:
-        problems.append(f"Expected Python >=3.10 metadata, got {python_requires!r}")
+    if python_requires.strip() != ">=3.11":
+        problems.append(f"Expected Python >=3.11 metadata, got {python_requires!r}")
     return problems
 
 

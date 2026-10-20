@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        python: ['3.11', '3.12', '3.13', '3.14']
         installation: [manager, server]
     steps:
       - uses: actions/checkout@v4
@@ -131,7 +131,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.10', '3.12', '3.14']
+        python: ['3.12', '3.14']
     env:
       EXCHANGE_REQUIRE_TESTS: '1'
       OMP_NUM_THREADS: '2'
@@ -199,7 +199,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ['3.10', '3.12', '3.14']
+        python: ['3.12', '3.14']
     env:
       JOBS_REQUIRE_RUNTIME_TESTS: '1'
       EXCHANGE_REQUIRE_TESTS: '1'

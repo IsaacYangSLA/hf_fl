@@ -121,6 +121,17 @@ LAYERS: tuple[Layer, ...] = (
           ("hf2l_exchange.auth", "hf2l_exchange.client")),
     Layer("CIFAR-10 service composition", ("examples.exchange_cifar10.start_service",),
           ("hf2l_exchange.transfer_client",)),
+    # First-federation composition and contract tests use public client and
+    # checkpoint facades. Grant these dependencies to the individual modules.
+    Layer("first federation project composition", ("examples.first_federation.project",),
+          ("examples", "hf2l.data_utils", "hf2l_exchange.client",
+           "hf2l_exchange.client_types", "hf2l_exchange.domain")),
+    Layer("first federation verification composition", ("examples.first_federation.verify",),
+          ("examples", "hf2l.data_utils", "hf2l_exchange.client")),
+    Layer("first federation checkpoint contract tests", ("examples.first_federation.tests.test_model",),
+          ("examples", "hf2l.data_utils", "hf2l.checkpoint_utils")),
+    Layer("first federation project contract tests", ("examples.first_federation.tests.test_project",),
+          ("examples", "hf2l.data_utils", "hf2l_exchange.client_types", "hf2l_exchange.domain")),
     Layer("installed examples", ("examples",), ("examples", "hf2l.data_utils")),
     Layer("cli", ("hf2l.cli",), ("hf2l", "hf2l_exchange.cli")),
     Layer("legacy commands", LEGACY_COMMANDS, ("hf2l",)),
@@ -617,6 +628,52 @@ class GateSelfTests(unittest.TestCase):
             with self.subTest(module=name):
                 self.assertEqual("installed examples", layer_of(name).name)
                 self.assertEqual(3, len(edge_violations(self._source(name, text))))
+
+    def test_first_federation_modules_accept_only_their_required_facades(self) -> None:
+        allowed = {
+            "examples.first_federation.project": (
+                "hf2l_exchange.client", "hf2l_exchange.client_types", "hf2l_exchange.domain",
+            ),
+            "examples.first_federation.verify": ("hf2l_exchange.client",),
+            "examples.first_federation.tests.test_model": ("hf2l.checkpoint_utils",),
+            "examples.first_federation.tests.test_project": (
+                "hf2l_exchange.client_types", "hf2l_exchange.domain",
+            ),
+        }
+        all_facades = {target for targets in allowed.values() for target in targets}
+        server_modules = {
+            "hf2l_exchange.api", "hf2l_exchange.application", "hf2l_exchange.auth",
+            "hf2l_exchange.models", "hf2l_exchange.storage", "hf2l_exchange.transfer_client",
+            "hf2l.checkpoint.aggregate",
+        }
+        for name, targets in allowed.items():
+            for target in targets:
+                with self.subTest(module=name, accepted=target):
+                    self.assertEqual([], edge_violations(self._source(name, f"import {target}\n")))
+            for target in server_modules | (all_facades - set(targets)):
+                with self.subTest(module=name, rejected=target):
+                    self.assertEqual(1, len(edge_violations(self._source(name, f"import {target}\n"))))
+
+    def test_first_federation_allowances_do_not_extend_to_sibling_modules(self) -> None:
+        siblings = (
+            "examples.first_federation", "examples.first_federation.model",
+            "examples.first_federation.project_extra", "examples.first_federation.verify_extra",
+            "examples.first_federation.tests",
+            "examples.first_federation.tests.test_model_extra",
+            "examples.first_federation.tests.test_project_extra",
+            "examples.first_federation.tests.test_stack",
+            "examples.other.project", "examples.other.verify",
+        )
+        text = (
+            "import hf2l_exchange.client\n"
+            "import hf2l_exchange.client_types\n"
+            "import hf2l_exchange.domain\n"
+            "import hf2l.checkpoint_utils\n"
+        )
+        for name in siblings:
+            with self.subTest(module=name):
+                self.assertEqual("installed examples", layer_of(name).name)
+                self.assertEqual(4, len(edge_violations(self._source(name, text))))
 
     def test_only_the_cli_init_may_import_hf2l_eagerly(self) -> None:
         self.assertEqual([], init_violations(self._source("hf2l.cli", "from hf2l.cli import fl\n", is_package=True)))

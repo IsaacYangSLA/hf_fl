@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ['3.10', '3.12']
+        python: ['3.12']
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ['3.10', '3.12']
+        python: ['3.12']
         installation: [sdk, server]
     steps:
       - uses: actions/checkout@v4
@@ -65,7 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ['3.10', '3.12']
+        python: ['3.12']
     env:
       EXCHANGE_REQUIRE_TESTS: '1'
     steps:
@@ -84,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ['3.10', '3.12']
+        python: ['3.12']
     env:
       EXCHANGE_REQUIRE_TESTS: '1'
     steps:
@@ -142,12 +142,17 @@ jobs:
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           .venv/bin/python -m pip install -e './packages/exchange[server,test]' -e '.[torch,hf,examples,exchange,service,exchange-test]'
+      - name: Build S3 test image from verified upstream source
+        timeout-minutes: 20
+        run: |
+          docker build --file examples/first_federation/Dockerfile.minio \
+            --tag hf2l-ci-minio:source .
       - name: Start pinned ephemeral S3 test service
         run: |
           docker run -d --rm --name hf2l-ci-minio -p 127.0.0.1:9000:9000 \
             -e MINIO_ROOT_USER="$AWS_ACCESS_KEY_ID" \
             -e MINIO_ROOT_PASSWORD="$AWS_SECRET_ACCESS_KEY" \
-            quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e server /data
+            hf2l-ci-minio:source server /data
           .venv/bin/python - <<'PYTHON'
           import time
           from urllib.request import urlopen

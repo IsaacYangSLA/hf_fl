@@ -515,6 +515,6 @@ than hiding a successful publication. The retained v1 fixtures are not current
 CLI entry points.
 
 The `Exchange service tests` GitHub workflow runs required dependency checks,
-SQLite/Moto on Python 3.10/3.12, and PostgreSQL/MinIO for real concurrency,
+SQLite/Moto on Python 3.12, and PostgreSQL/MinIO for real concurrency,
 schema migration and signed-URL checks. `EXCHANGE_REQUIRE_TESTS=1` turns missing
 exchange dependencies into a failure instead of an all-skipped success.

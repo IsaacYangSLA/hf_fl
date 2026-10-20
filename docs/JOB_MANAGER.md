@@ -15,7 +15,7 @@ python -m pip install -e 'packages/exchange[server]' -e '.[examples]' -e 'packag
 hf2l-jobs --help
 ```
 
-The manager requires Python 3.10 or later. Clean manager/server wheels are validated on Python 3.10–3.14; functional cohorts and exact patch versions are recorded in the validation report. The qualified default training image is separately pinned to CPython 3.14. Manager processes do not import job training plugins. The approved runtime image must contain the FL dependencies needed by its jobs.
+The manager requires Python 3.11 or later. CI checks clean manager/server wheels on Python 3.11–3.14; functional cohorts and exact patch versions are recorded in the validation report. The qualified default training image is separately pinned to CPython 3.14. Manager processes do not import job training plugins. The approved runtime image must contain the FL dependencies needed by its jobs.
 
 Configure `HF2L_JOBS_DATABASE_URL` for a dedicated manager PostgreSQL database. Initialize a new database with `hf2l-jobs init-db`; apply upgrades with `hf2l-jobs migrate-db`. Services check the schema instead of silently changing it at startup. The current manager revision is `0003_administrative_audit`; upgrades preserve the original ledger, trusted artifact locators and log-storage charges, and add sanitized trusted-administration audit records. Legacy artifacts without a trusted locator remain metadata-only until a trusted collector supplies one; arbitrary old locator strings are not parsed as paths. SQLite is an isolated test backend.
 

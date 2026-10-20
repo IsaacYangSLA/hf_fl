@@ -136,6 +136,9 @@ includes a separate script that downloads and verifies the real dataset.
 
 ## Install and authenticate
 
+HF²L, Exchange, and the job manager require Python 3.11 or later.
+[Python 3.10 reached end of life](https://peps.python.org/pep-0619/#3-10-lifespan)
+on October 1, 2026, and no longer receives Python updates.
 Create a local environment in this source checkout. Base installation supports
 NumPy/SafeTensors processing and the local backend; install the extras used by
 your application:

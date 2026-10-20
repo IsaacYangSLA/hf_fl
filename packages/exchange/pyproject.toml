@@ -7,7 +7,7 @@ name = "hf2l-exchange"
 version = "0.1.0.dev0"
 description = "Authenticated metadata exchange and direct immutable blob transfer"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = ["httpx>=0.27,<1"]
 classifiers = [
   "Development Status :: 3 - Alpha",

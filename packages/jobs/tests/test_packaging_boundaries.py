@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -18,6 +20,28 @@ class PackagingBoundaryTests(unittest.TestCase):
 
     def test_manager_distribution_has_no_training_dependencies(self):
         self.assertEqual([], GATE.check_metadata())
+
+    def test_manager_metadata_requires_the_current_python_minimum(self):
+        distribution = SimpleNamespace(
+            requires=[],
+            entry_points=[SimpleNamespace(
+                group="console_scripts", name="hf2l-jobs", value="hf2l_jobs.cli:main",
+            )],
+            metadata={"Requires-Python": ">=3.11"},
+        )
+        with patch.object(GATE.importlib.metadata, "distribution", return_value=distribution):
+            self.assertEqual([], GATE.check_metadata())
+            for value in ("", ">=3.10", ">=3.110", ">=3.11,>=3.10", "==3.11"):
+                with self.subTest(python_requires=value):
+                    distribution.metadata["Requires-Python"] = value
+                    self.assertEqual(
+                        [f"Expected Python >=3.11 metadata, got {value!r}"],
+                        GATE.check_metadata(),
+                    )
+            distribution.metadata.clear()
+            self.assertEqual(
+                ["Expected Python >=3.11 metadata, got ''"], GATE.check_metadata(),
+            )
 
     def test_dashboard_assets_are_packaged(self):
         self.assertEqual([], GATE.check_assets())

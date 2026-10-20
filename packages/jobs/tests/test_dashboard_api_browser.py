@@ -178,6 +178,36 @@ class DashboardAPIBrowserTests(unittest.IsolatedAsyncioTestCase):
         job_id = self.page.url.split("#job/")[1].split("?")[0]
         return job_id
 
+    async def test_create_waits_for_initial_catalog_and_route(self):
+        initial_catalog = asyncio.Event()
+        release_catalog = asyncio.Event()
+        first_request = True
+
+        async def delay_initial_catalog(route):
+            nonlocal first_request
+            if first_request:
+                first_request = False
+                initial_catalog.set()
+                await release_catalog.wait()
+            await route.continue_()
+
+        await self.page.route("**/api/jobs/v1/catalog", delay_initial_catalog)
+        try:
+            await self.page.goto(self.origin + "/dashboard/#queued")
+            await asyncio.wait_for(initial_catalog.wait(), 5)
+            await self.page.locator("#application").wait_for(state="visible")
+            self.assertTrue(await self.page.locator("#create-button").is_disabled(),
+                            "Creation must wait for the initial catalog and route")
+        finally:
+            release_catalog.set()
+
+        await self.page.locator("#create-button").click()
+        await self.page.locator("#create-dialog").wait_for(state="visible")
+        await self.page.locator('#create-form input[name="display_name"]').fill("Ready project")
+        self.assertEqual(await self.page.locator("#page-title").inner_text(), "Job queue")
+        self.assertEqual(await self.page.locator('#create-form input[name="display_name"]').input_value(),
+                         "Ready project")
+
     async def test_browser_create_log_artifact_access_cancel_and_history(self):
         job_id = await self.create_via_dashboard()
         persisted = self.manager.get_job("alice", job_id)
