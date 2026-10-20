@@ -451,7 +451,7 @@ fails; the CLI reports the revision and separate warning.
 
 The application supports explicit manual handoffs using `--workflow cyclic`
 and `--source-kind submission`; see the
-[local recipe and lineage contract](../README.md#cyclic-federated-learning-without-fedavg).
+[local recipe and lineage contract](TRAINING_GUIDE.md#cyclic-federated-learning-without-fedavg).
 The receiving participant must read the predecessor, every ancestor checkpoint,
 and the immutable global root. Exchange defaults `training.update` to private,
 so peer participants cannot consume each other's updates until a space

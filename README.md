@@ -1,883 +1,163 @@
-# HF²L (HF2L/HFFL): Hugging Face Federated Learning
+# HF²L (hf_fl)
 
-**HF²L** stands for **Hugging Face Federated Learning**. It can also be written
-as **HFFL**; the project name stylizes the two consecutive `F` characters as
-`F²`. This repository is a proof of concept (POC) for coordinating federated
-model training through Hugging Face Hub, JFrog Artifactory, the authenticated
-Exchange service, or a local artifact store. Generic applications can use the
-independent Exchange SDK to exchange metadata and large files without installing
-the ML application.
+HF²L coordinates federated learning across organizations. Each participant trains
+with its own data and shares a model checkpoint. The project aggregator combines
+those updates and publishes the next shared model.
 
-The [v3 architecture](docs/ARCHITECTURE_V3.md) consolidates the prior reviews and
-the implemented sibling v2 service. The [current Exchange runbook](docs/EXCHANGE_V3.md)
-documents installation, authorization, transfers, coordination and recovery.
-Architecture v3 preserves the `/v2` Exchange API and the existing HF²L document
-formats; it does not rename them to version 3.
+You can reuse an existing training job, choose where model artifacts are stored,
+and automate rounds when ready. An optional job manager adds resource queues,
+isolated execution, and a web dashboard.
 
-## Three design pillars
+This repository is an alpha implementation. Use the guides for the exact setup
+and deployment requirements.
 
-| Design | What it enables |
-|:---|:---|
-| **1. Pluggable models and client training** | Model-specific initialization, training, and evaluation can live in local plugins. Alice, Bob, and other clients may use different reviewed training implementations, frameworks, hyperparameters, and private datasets as long as they produce the same checkpoint schema. The included LeNet/MNIST and VGG/CIFAR-10 plugins demonstrate switching models by joining a differently initialized model repository without changing transport or FedAvg code. |
-| **2. Two client integration approaches** | Use three independent steps—download, train with arbitrary local code, and upload—or use the plugin-style `python -m hf2l.client_train` command to run all three around a trusted local training plugin. |
-| **3. Federated rounds and manual handoffs** | Synchronous **FedAvg** is implemented by `python -m hf2l.owner_fedavg`: participants train from one immutable global base and the owner validates, averages, and publishes their updates. Explicit cyclic mode can pass one participant's immutable submission to the next with validated lineage. The caller chooses participant order; automated swarm coordination is not implemented. |
+## Start here: your first federation
 
-## Contents
+Follow **[Your first federation](examples/first_federation/README.md)**.
+It starts with no HF²L services installed and walks through two complete rounds
+using a tiny NumPy model.
 
-- [Three design pillars](#three-design-pillars)
-- [Design overview](#design-overview)
-- [Managed jobs and dashboard](#managed-jobs-and-dashboard)
-- [Examples](#examples)
-- [Install and authenticate](#install-and-authenticate)
-  - [Local store](#local-store)
-  - [Hugging Face Hub](#hugging-face-hub)
-  - [JFrog Artifactory](#jfrog-artifactory)
-- [Owner: initialize a repository](#owner-initialize-a-repository)
-  - [LeNet with MNIST-shaped data](#lenet-with-mnist-shaped-data)
-  - [VGG with CIFAR-10 data](#vgg-with-cifar-10-data)
-- [Client option A: three independent steps](#client-option-a-three-independent-steps)
-  - [Download the exact base](#1-download-the-exact-base)
-  - [Train with any local code](#2-train-with-any-local-code)
-  - [Validate and upload a submission](#3-validate-and-upload-a-submission)
-- [Client option B: trusted training plugin](#client-option-b-trusted-training-plugin)
-- [Client and owner listeners](#client-and-owner-listeners)
-- [Cyclic federated learning without FedAvg](#cyclic-federated-learning-without-fedavg)
-- [FedAvg: validate, average, and publish submissions](#fedavg-validate-average-and-publish-submissions)
-  - [Automatically discover the current round](#automatically-discover-the-current-round)
-  - [Explicitly select submissions](#explicitly-select-submissions)
-- [Large models](#large-models)
-- [Build and install the wheel](#build-and-install-the-wheel)
-- [Local validation](#local-validation)
+| Who | What they do |
+| --- | --- |
+| **Org S — Service** | Deploy the shared services, manage accounts, and create/delegate the project. |
+| **Org P — Aggregator** | Agree on the model, enroll participants, initialize the checkpoint, aggregate, evaluate, and publish. |
+| **Org A — Alice** | Train locally on private data and submit an update. |
+| **Org B — Bob** | Independently train locally and submit an update. |
 
-The model repository provides versioned transport without hard-coding a
-model class, dataset, training loop, or federation schedule into that transport
-layer.
+Org S deploys the included [Compose stack](examples/first_federation/compose.yaml).
+Org P, Alice, and Bob install client tools; they do not deploy server stacks.
+The walkthrough needs no Hugging Face account, Torch, GPU, or external dataset.
 
-The shared checkpoint contract is deliberately small:
+A round follows this sequence:
 
-- `config.json`
-- either `model.safetensors`, or `model.safetensors.index.json` and its shards
-- identical tensor names, shapes, dtypes, configuration, and shard filenames
-  across the round
+1. Org P publishes a common starting checkpoint.
+2. Alice and Bob download that exact version and train locally.
+3. Each uploads an update and its training sample count.
+4. Org P validates the updates, runs FedAvg, and publishes the next checkpoint.
 
-Only weights, configuration, checksums, and non-secret submission metadata are
-uploaded. Client datasets and training code remain local.
+To adapt your own trainer, start with
+[Use your existing training job](examples/first_federation/README.md#use-your-existing-training-job).
 
-## Design overview
+## Choose how to run training
 
-The [v3 architecture](docs/ARCHITECTURE_V3.md) describes the current component
-boundaries, accepted review concepts and invariants. The independent
-[Exchange service](docs/EXCHANGE_V3.md) provides authenticated metadata exchange,
-PostgreSQL persistence and authorized private S3 transfers. Its optional FedAvg
-profile supplies the FL rules; generic spaces need no model vocabulary.
-
-The independent [job manager](docs/JOB_MANAGER.md) provides job creation,
-resource queues, lifecycle management, and a web dashboard for current and
-historical jobs. Its [multi-job design](docs/MULTI_JOB_DESIGN.md) defines the
-isolation and recovery contracts.
-
-The [historical slides](docs/history/DESIGN_SLIDES.md) and
-[legacy v1 service guide](docs/EXCHANGE_SERVICE.md) describe earlier interfaces.
-New `--backend exchange` usage targets the independent service's `/v2` API.
-
-## Managed jobs and dashboard
-
-Install the separate control-plane package for a deployment that schedules
-multiple FedAvg jobs:
-
-```bash
-python -m pip install -e 'packages/jobs[server]'
-hf2l-jobs --help
-```
-
-The API and packaged dashboard share OIDC authentication and job-specific
-permissions. PostgreSQL stores specifications, attempts, reservations, queues,
-access rules, and history. The scheduler reserves every managed component before
-starting a job and keeps uncertain executions quarantined until their stop is
-confirmed.
-
-Each job receives a pinned source snapshot, a private Exchange space, separate
-state and artifacts, and scoped execution credentials held by its trusted
-proxy. Training runs inside the qualified `runsc-cpu-v1` sandbox; the manager
-package has no ML dependencies. Participant datasets remain on their machines.
-The worker image separately installs the application and its required training
-dependencies.
-
-Use the [operator guide](docs/JOB_MANAGER.md) and
-[deployment guide](deploy/jobs/README.md) for approvals, capacity, service
-configuration, workload authentication, and artifact retention. The
-[implementation validation report](docs/validation/2026-10-09-multi-job-implementation.md)
-records executed gates and their limits. The initial managed workflow is CPU
-FedAvg; GPU execution and Kubernetes require separate qualification.
-
-## Examples
-
-The [`examples/`](examples/) folder contains runnable demonstrations, model and
-data helpers used by the built-in training plugins, and integration samples.
-Start with [Your first federation](examples/first_federation/README.md) if you are
-new to HF²L and need to set up services before inviting other organizations.
-The two-client CIFAR-10 demo adds automatic listeners; the generic Exchange
-example demonstrates metadata and file exchange without ML dependencies.
-
-| Example | What it demonstrates | Documentation |
+| Workflow | Use it when | Guide |
 | --- | --- | --- |
-| [Your first federation](examples/first_federation/) | Org S deploys one shared Compose stack; Org P coordinates and aggregates while Alice in Org A and Bob in Org B train locally through two manual rounds. No external dataset, Torch, or Hugging Face account is required. | [Beginner walkthrough](examples/first_federation/README.md) |
-| [Two-client VGG/CIFAR-10 demo](examples/exchange_cifar10/) | Real CIFAR-10 preparation, authenticated Exchange startup, two client listeners and an owner listener that automatically train, aggregate, evaluate, and publish two rounds. | [Listener walkthrough](examples/exchange_cifar10/README.md#5-owner-start-the-fedavg-listener) and [manual alternative](examples/exchange_cifar10/README.md#optional-manual-training-and-aggregation) |
-| [Generic Exchange](examples/generic_exchange.py) | Upload, discover, download, and process a document using generic records, blob transfers, and coordinated publication. | [Generic SDK guide](docs/EXCHANGE_V3.md#generic-sdk-example) |
-| [LeNet model](examples/lenet_model.py) and [MNIST-shaped data](examples/mnist_data.py) | Model and data helpers for the `lenet` plugin, using local NPZ data or synthetic smoke-test data. | [Initialization](#lenet-with-mnist-shaped-data) and [client training](#client-option-b-trusted-training-plugin) |
-| [VGG model](examples/vgg_model.py) and [CIFAR-10 data](examples/cifar10_data.py) | Model and data helpers for the `vgg-cifar10` plugin, using local NPZ data or synthetic smoke-test data. | [Initialization](#vgg-with-cifar-10-data) and [client training](#client-option-b-trusted-training-plugin) |
-| [Hugging Face webhook relay](examples/hf_webhook_relay.py) | Authenticate HF webhook events and dispatch the GitHub workflow that checks whether two eligible PRs share the latest base before running FedAvg. | [Webhook and workflow setup](docs/FEDAVG_WORKFLOW.md) |
-| [Participant allowlist](examples/participant_allowlist.example.json) | Placeholder mapping from HF/JFrog repository identities to approved participant IDs for submission discovery. | [Allowlist and discovery guide](#automatically-discover-the-current-round) |
+| **Manual steps** | Keep your existing trainer: download → train → upload → aggregate. | [Training guide](docs/TRAINING_GUIDE.md#client-option-a-three-independent-steps) |
+| **Training plugin** | Let HF²L call trusted local training/evaluation code. | [Plugin contract](docs/TRAINING_GUIDE.md#plugin-interface) |
+| **Automatic listeners** | Have clients watch for new checkpoints and the owner publish completed rounds. | [Client and owner listeners](docs/CLIENT_LISTENER.md) |
+| **Managed jobs** | Schedule multiple projects/jobs with permissions, capacity limits, and isolated CPU execution. | [Job manager](docs/JOB_MANAGER.md) |
 
-Run example commands from the repository root with the project `.venv`, and
-install the dependencies described in the corresponding guide. The LeNet and
-VGG helpers do not download datasets themselves; the Exchange CIFAR-10 demo
-includes a separate script that downloads and verifies the real dataset.
+Manual, plugin, and listener workflows support all four model-store backends
+below. Managed jobs currently use Exchange-backed FedAvg and a separately
+qualified CPU runtime.
 
-## Install and authenticate
+For sequential training, there is also an explicit
+[cyclic handoff workflow](docs/TRAINING_GUIDE.md#cyclic-federated-learning-without-fedavg).
+Participant order is chosen by the caller.
 
-HF²L, Exchange, and the job manager require Python 3.11 or later.
-[Python 3.10 reached end of life](https://peps.python.org/pep-0619/#3-10-lifespan)
-on October 1, 2026, and no longer receives Python updates.
-Create a local environment in this source checkout. Base installation supports
-NumPy/SafeTensors processing and the local backend; install the extras used by
-your application:
+## Replaceable components
+
+### Model storage: four backends
+
+Use `--backend` with the training and listener commands. Changing the backend
+changes artifact transport; it does not require rewriting your trainer.
+
+| Backend | Select with | Setup and limits |
+| --- | --- | --- |
+| **Local filesystem** | `--backend local` | [Local setup](docs/TRAINING_GUIDE.md#local-store). No server or account; requires a trusted local POSIX filesystem. Principal names provide attribution, not remote authentication. |
+| **Hugging Face Hub** | `--backend huggingface` | [Hub setup](docs/TRAINING_GUIDE.md#hugging-face-hub). The default; participants submit updates through pull requests. |
+| **JFrog Artifactory** | `--backend jfrog` | [Artifactory setup](docs/TRAINING_GUIDE.md#jfrog-artifactory). Uses a Hugging Face package repository and unique named submission revisions. Publication uses preflight checks; use one aggregator. |
+| **HF²L Exchange** | `--backend exchange` | [Exchange setup](docs/EXCHANGE_V3.md). Authenticated spaces, permissions, immutable attachments, and coordinated publication. |
+
+### Other components you can choose
+
+These are separate configuration choices, rather than additional `--backend`
+values.
+
+| Component | Available choices | Where to configure it |
+| --- | --- | --- |
+| **Exchange object storage** | Versioned S3-compatible storage. The supplied deployment uses **MinIO**; an optional **patched SeaweedFS** build is available. | [S3 settings](docs/EXCHANGE_V3.md#configure-and-start), including `EXCHANGE_S3_ENDPOINT` and `EXCHANGE_S3_BUCKET`. |
+| **Identity provider** | A provider meeting the documented OIDC/token requirements. The beginner stack supplies **Keycloak**. | [Exchange identity settings](docs/EXCHANGE_V3.md#configure-and-start) and [manager authentication](docs/JOB_MANAGER.md). |
+| **Metadata database** | **PostgreSQL** for deployments; **SQLite** for local development and tests. | `EXCHANGE_DATABASE_URL` and `JOBS_DATABASE_URL`; see the service guides. |
+| **Model and training code** | Your existing trainer or a trusted local Python plugin. Bundled examples include **LeNet** and **VGG/CIFAR-10**. | [Training and evaluation hooks](docs/TRAINING_GUIDE.md#plugin-interface), using `--plugin` and `--plugin-arg`. |
+| **Checkpoint array processing** | **NumPy** or optional **Torch**. BF16 processing requires Torch. | `--array-backend numpy` or `--array-backend torch`; [checkpoint handling](docs/TRAINING_GUIDE.md#large-models). |
+
+**MinIO and SeaweedFS are storage underneath Exchange.** Both use the same S3
+adapter; neither is a separate model-store backend. The
+[SeaweedFS compatibility build](deploy/seaweedfs/README.md) requires the supplied
+patch and one S3 gateway. Unmodified SeaweedFS 4.47 fails the multipart retry
+contract. Qualify another S3 deployment against the documented conformance tests.
+
+Training implementations must export compatible **SafeTensors** checkpoints:
+the same configuration, tensor names, shapes, dtypes, and shard layout.
+**FedAvg** is the supplied aggregation algorithm, with sample-count or uniform
+weighting. Additional algorithms and checkpoint formats require implementation.
+
+## Install from source
+
+HF²L, Exchange, and the manager require **Python 3.11 or later**.
+The beginner walkthrough uses **Python 3.12** and lists its host prerequisites.
+Python 3.10 is [no longer supported by Python](https://peps.python.org/pep-0619/#3-10-lifespan).
+
+From the repository root:
 
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -e .
-# Hugging Face and the training examples used below:
-.venv/bin/python -m pip install -e '.[hf,examples]'
+.venv/bin/hf2l --help
 ```
 
-For JFrog, use `.venv/bin/python -m pip install -e '.[jfrog,examples]'`.
-Torch alone is available through `.[torch]`; it is required for BF16 checkpoints
-and Torch training. These integration changes are unreleased; earlier published
-packages do not necessarily expose the interfaces described here.
-
-The independent Exchange SDK and server are separate installations:
-
-```bash
-# Generic SDK, without HF²L or ML dependencies:
-.venv/bin/python -m pip install -e './packages/exchange'
-# Or install the server and HF²L adapter together:
-.venv/bin/python -m pip install -e './packages/exchange[server]' -e '.[exchange]'
-```
-
-The unified `.venv/bin/hf2l --help` lists the application commands. Existing
-`python -m hf2l.client_download`, owner commands and console aliases remain
-supported. `.venv/bin/hf2l-exchange --help` lists the independent service commands.
-
-### Local store
-
-Use `--backend local --endpoint work/local-store --local-principal ACTOR` with
-the initialization, download, upload, training and owner commands below. The
-environment equivalents are `HF2L_LOCAL_ROOT` and `HF2L_LOCAL_PRINCIPAL`.
-For example, seed a local repository from an existing checkpoint:
-
-```bash
-.venv/bin/hf2l init --backend local --endpoint work/local-store \
-  --local-principal owner --repo-id local/demo --model-dir path/to/checkpoint
-```
-
-Alice uses `--local-principal alice --participant alice` when uploading, and Bob
-uses his own matching values. Both must train from the same immutable base
-revision. The owner discovers their detached submissions and publishes with:
-
-```bash
-.venv/bin/hf2l round --backend local --endpoint work/local-store \
-  --local-principal owner --repo-id local/demo --discover-submissions \
-  --output-dir work/local-round-1 --array-backend numpy --publish --json
-```
-
-The store uses a trusted local POSIX filesystem, immutable snapshots and an
-advisory lock around atomic reference updates. Principal names provide local
-attribution; filesystem access controls protect the store. They are not remote
-authentication, and network filesystems are not supported. A local round needs
-no HF account or Exchange deployment. Training through the example plugins still
-requires the `examples` extra.
-
-### Hugging Face Hub
-
-Each person uses a separate HF account. Authenticate with:
-
-```bash
-.venv/bin/hf auth login
-```
-
-Alternatively, set `HF_TOKEN` securely. The default backend is `huggingface`,
-so existing commands do not require a `--backend` argument. The owner needs
-repository write permission; clients use their own credentials and need
-permission to open pull requests.
-
-### JFrog Artifactory
-
-An Artifactory administrator must first create a **local Hugging Face** package
-repository. Each user receives a separate access or identity token with the
-minimum required read/deploy permissions. Configure the SDK-compatible endpoint:
-
-```bash
-export HF_ENDPOINT="https://COMPANY.jfrog.io/artifactory/api/huggingfaceml/hf-local"
-export HF_TOKEN="YOUR_OWN_JFROG_TOKEN"
-export HF_HUB_ETAG_TIMEOUT=86400
-export HF_HUB_DOWNLOAD_TIMEOUT=86400
-```
-
-Add `--backend jfrog` to every HF²L command. `--endpoint` can be supplied instead
-of `HF_ENDPOINT`; `JFROG_ACCESS_TOKEN` can be used instead of `HF_TOKEN`. JFrog
-supports model download/upload and named revisions, but not Hub pull requests.
-The HF²L client commands therefore store each JFrog update under a generated
-unique named revision. The owner discovers its manifest with Artifactory Query
-Language (AQL). Server permissions must prevent overwriting those revisions.
-The one-day timeouts above are suitable for very large transfers; choose values
-appropriate for your network and model sizes. HF²L also handles Artifactory
-versions that return a literal `commitUrl` placeholder after a successful
-commit: it reconstructs the response URL from the configured endpoint,
-repository ID, and server-returned commit OID, then resolves the revision back
-from Artifactory.
-See JFrog's [Hugging Face repository
-documentation](https://docs.jfrog.com/artifactory/docs/hugging-face-repositories)
-and [`jf hf` command
-reference](https://docs.jfrog.com/artifactory/docs/use-hugging-face-with-jfrog-cli).
-
-Never place a token in source control or share the owner's token. Disable
-overwrite permission for participant uploads so a named submission revision
-cannot be replaced, and restrict writes to `main` to the designated owner.
-The JFrog adapter rejects the reserved mutable aliases `main`, `master`, `HEAD`,
-`latest`, and `default`, ignoring case, for submission revisions and aggregate
-tags before provider operations. Generated client-command names use detached
-revisions. Server permissions must still enforce immutability and owner access.
-
-## Owner: initialize a repository
-
-Initialize from any intentional, local HF-style model export:
-
-```bash
-.venv/bin/python -m hf2l.init_repo \
-  --repo-id OWNER_OR_ORG/my-fedavg-model \
-  --model-dir /path/to/exported-model
-```
-
-The directory may also contain model code, tokenizer files, and a model card;
-those files are copied during initialization. Local `.git`, `.cache`,
-and `__pycache__` paths are excluded. A symlink elsewhere in the export causes
-initialization to fail. Review the directory before upload.
-
-For JFrog, the Artifactory repository itself must already exist. Initialize a
-model package inside it with the same command plus the backend selection:
-
-```bash
-.venv/bin/python -m hf2l.init_repo \
-  --backend jfrog \
-  --repo-id OWNER_OR_ORG/my-fedavg-model \
-  --model-dir /path/to/exported-model
-```
-
-JFrog visibility and write access are repository permissions, so `--private`
-is intentionally rejected for that backend.
-
-Or initialize using one of the trusted local example plugins.
-
-### LeNet with MNIST-shaped data
-
-The compact LeNet POC uses grayscale `[N, 1, 28, 28]` inputs:
-
-Its model and data implementations are
-[`examples/lenet_model.py`](examples/lenet_model.py) and
-[`examples/mnist_data.py`](examples/mnist_data.py).
-
-```bash
-.venv/bin/python -m hf2l.init_repo \
-  --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
-  --plugin lenet \
-  --plugin-arg seed=20260903
-```
-
-The script validates the checkpoint, publishes it, and prints the immutable
-initial `main` revision. Give that exact revision to all clients.
-
-### VGG with CIFAR-10 data
-
-Create a separate repository containing the VGG-11-style CIFAR-10 checkpoint:
-
-Its model and data implementations are
-[`examples/vgg_model.py`](examples/vgg_model.py) and
-[`examples/cifar10_data.py`](examples/cifar10_data.py).
-
-```bash
-.venv/bin/python -m hf2l.init_repo \
-  --repo-id OWNER_OR_ORG/vgg-cifar10-fedavg-poc \
-  --plugin vgg-cifar10 \
-  --plugin-arg seed=20260903 \
-  --plugin-arg width_multiplier=0.25
-```
-
-The `0.25` width multiplier keeps the POC lightweight while retaining the
-VGG-11 layer topology. Use `width_multiplier=1.0` for the standard channel
-widths. Once initialized, this repository uses the same
-`python -m hf2l.client_download`, `python -m hf2l.client_upload`, and
-`python -m hf2l.owner_fedavg` modules as LeNet. Do not mix LeNet and VGG
-checkpoints in one repository or round; their tensor schemas are intentionally
-different.
-
-## Client option A: three independent steps
-
-### 1. Download the exact base
-
-```bash
-.venv/bin/python -m hf2l.client_download \
-  --repo-id OWNER_OR_ORG/my-fedavg-model \
-  --base-revision OWNER_SUPPLIED_COMMIT_SHA \
-  --work-dir work/alice-round-0
-```
-
-This creates:
-
-```text
-work/alice-round-0/
-├── base_model/                  immutable input checkpoint
-└── fedavg_client_context.json   backend, repo, base revision, and round
-```
-
-Use a new work directory for every attempt and round.
-
-### 2. Train with any local code
-
-Your trainer is entirely independent of these scripts. It must load
-`base_model` and write a complete checkpoint to another directory:
-
-```bash
-.venv/bin/python /private/my_train.py \
-  --input work/alice-round-0/base_model \
-  --output work/alice-round-0/trained_model \
-  --dataset /private/alice-data
-```
-
-Do not overwrite `base_model`. Save with the same config and SafeTensors shard
-layout. For example, a Transformers trainer can load from the input directory
-and call `save_pretrained(output_dir, safe_serialization=True)` using the same
-`max_shard_size` as the base checkpoint.
-
-Optionally create a non-secret metadata object:
-
-```json
-{
-  "dataset": "private images, version 3",
-  "hyperparameters": {"epochs": 2, "learning_rate": 0.00002},
-  "metrics": {"local_loss": 0.42}
-}
-```
-
-### 3. Validate and upload a submission
-
-```bash
-.venv/bin/python -m hf2l.client_upload \
-  --work-dir work/alice-round-0 \
-  --trained-dir work/alice-round-0/trained_model \
-  --participant alice \
-  --num-examples 12500 \
-  --metadata-json /private/alice-training-metadata.json
-```
-
-The script checks the trained checkpoint against the downloaded base and opens
-a PR whose parent is the exact base commit on Hugging Face Hub. It prints a
-backend-neutral `submission_revision` such as `refs/pr/1`. Send that value to
-the owner; do not merge the client PR directly.
-
-On JFrog, add `--backend jfrog`. The command uploads a unique named revision
-such as `r0000-alice-a1b2c3d4e5f6` instead of opening a PR:
-
-```bash
-.venv/bin/python -m hf2l.client_upload \
-  --backend jfrog \
-  --work-dir work/alice-round-0 \
-  --participant alice \
-  --num-examples 12500
-```
-
-Both backends write `base_revision`, `submission_revision`, and SHA-256 values
-for every checkpoint artifact into `fedavg_submission.json`.
-
-## Client option B: trusted training plugin
-
-`python -m hf2l.client_train` composes the same download and upload functions around a
-trusted local plugin. A participant joining the LeNet repository runs:
-
-```bash
-.venv/bin/python -m hf2l.client_train \
-  --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
-  --base-revision OWNER_SUPPLIED_COMMIT_SHA \
-  --participant alice \
-  --work-dir work/alice-round-0 \
-  --plugin lenet \
-  --plugin-arg synthetic_examples=1000 \
-  --plugin-arg epochs=8 \
-  --plugin-arg learning_rate=0.2
-```
-
-For private LeNet NPZ data, add
-`--plugin-arg dataset_npz=/private/alice-images.npz`. The example NPZ format is
-`x` shaped `[N, 28, 28]` or `[N, 1, 28, 28]` and integer `y` shaped `[N]`.
-
-The same participant can join the separate VGG/CIFAR-10 repository by changing
-only the repository, plugin, data, and training options:
-
-```bash
-.venv/bin/python -m hf2l.client_train \
-  --repo-id OWNER_OR_ORG/vgg-cifar10-fedavg-poc \
-  --base-revision VGG_REPO_MAIN_COMMIT_SHA \
-  --participant alice \
-  --work-dir work/alice-vgg-round-0 \
-  --plugin vgg-cifar10 \
-  --plugin-arg dataset_npz=/private/alice-cifar10.npz \
-  --plugin-arg epochs=5 \
-  --plugin-arg learning_rate=0.01
-```
-
-The CIFAR-10 NPZ format uses integer `y` shaped `[N]` and `x` shaped either
-`[N, 32, 32, 3]` or `[N, 3, 32, 32]`. Pixels may be `uint8` values in
-`[0, 255]` or floating-point values in `[0, 1]`; the plugin applies standard
-CIFAR-10 channel normalization. Omitting `dataset_npz` uses deterministic
-synthetic RGB data for an offline smoke test, not for meaningful evaluation.
-
-For a complete run with real data, see the
-[two-client VGG/CIFAR-10 Exchange demo](examples/exchange_cifar10/README.md).
-It includes dataset preparation, authenticated service startup, separate client
-commands, sample-weighted owner aggregation, and subsequent rounds.
-
-Users of the three-step workflow make the same switch in their own trainer:
-load the VGG repository checkpoint, train it on local CIFAR-10 data, and write a
-complete compatible checkpoint before running the unchanged upload command.
-
-The package recognizes the built-in `lenet` and `vgg-cifar10` plugin names.
-For custom training, pass the path to a reviewed local Python file, such as
-`--plugin /private/alice_plugin.py`. Plugins are ordinary Python and execute
-with the caller's permissions; the commands never load code from a remote
-submission.
-
-### Plugin interface
-
-A custom plugin may implement any subset needed by the command that loads it:
-
-```python
-def initialize_model(output_dir, options):
-    # Write a complete checkpoint. Return optional JSON metadata.
-    return {"model": "my-model"}
-
-def train_model(base_dir, output_dir, options):
-    # Load base_dir, train however you want, and save to output_dir.
-    # num_examples is required; all other returned fields are optional metadata.
-    return {"num_examples": 12500, "metrics": {"loss": 0.42}}
-
-def evaluate_model(model_dir, options):
-    # Optional owner-controlled evaluation. Return JSON metadata.
-    return {"accuracy": 0.91}
-```
-
-Each repeated `--plugin-arg KEY=VALUE` is JSON-decoded when possible, so
-numbers, booleans, arrays, and objects retain their types.
-
-<a id="client-listener-train-when-a-new-round-is-ready"></a>
-
-## Client and owner listeners
-
-`hf2l listen` runs one participant's trusted training plugin whenever a new
-global round is available. It supports every existing backend: Hugging Face,
-JFrog, Exchange, and the local store. The listener polls the global reference,
-pins its immutable revision, validates the checkpoint, trains, and uploads a
-submission through the existing client workflow. Add `--role owner` to run the
-FedAvg listener: it waits for enough eligible participants on the current
-immutable base, aggregates and optionally evaluates their checkpoints, then
-publishes the next global model. Both roles share durable polling, locking,
-restart tracking, and bounded retry backoff.
-
-```bash
-.venv/bin/hf2l listen \
-  --backend huggingface --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
-  --participant alice --state-dir work/alice-listener \
-  --plugin lenet --plugin-arg dataset_npz=/private/alice-images.npz \
-  --plugin-arg epochs=2 --poll-interval 30
-
-# Run separately with owner credentials:
-.venv/bin/hf2l listen --role owner \
-  --backend huggingface --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
-  --state-dir work/owner-listener --minimum-participants 2 \
-  --allowlist /private/approved-participants.json --poll-interval 30
-```
-
-Give the owner and each participant separate credentials and state directories;
-reuse the same directories on restart. Clients process the current round on
-their first start. The owner checks submission readiness even while `main`
-stays unchanged. Both run until interrupted unless bounded with `--once` or
-`--max-rounds`. They poll through the existing backend interfaces; no broker or
-webhook is required. Owner publication retains each backend's guarantees:
-Exchange claims and fences, Hugging Face conditional commits, local conditional
-updates, and JFrog's requirement for a single publishing coordinator.
-
-See the [listener guide](docs/CLIENT_LISTENER.md) for both roles, all-backend
-commands, a complete local example, durable recovery, and publication reconciliation.
-The [VGG/CIFAR-10 Exchange walkthrough](examples/exchange_cifar10/README.md)
-runs two client listeners and an owner listener through two automatic rounds
-with real data, separate credentials, and owner-controlled aggregation.
-
-## Cyclic federated learning without FedAvg
-
-Cyclic mode passes one participant's trained checkpoint to the next without
-averaging. Start from an immutable global model with `--workflow cyclic`. For
-later hops, also select `--source-kind submission` and pin the expected
-predecessor using `--source-participant`. These options work with both
-`hf2l download` and `hf2l train`; `hf2l upload` reads the workflow from the saved
-context. Standard commands default to `--workflow fedavg --source-kind global`.
-
-The following local example uses synthetic LeNet data. Install `.[examples]`,
-initialize the model, and copy its printed `initial_main_revision`:
-
-```bash
-.venv/bin/hf2l init \
-  --backend local --endpoint work/cyclic-store --local-principal owner \
-  --repo-id local/cyclic-demo --plugin lenet --plugin-arg seed=7
-
-GLOBAL_REVISION=REPLACE_WITH_INITIAL_MAIN_REVISION
-.venv/bin/hf2l train \
-  --backend local --endpoint work/cyclic-store --local-principal alice \
-  --repo-id local/cyclic-demo --participant alice \
-  --base-revision "$GLOBAL_REVISION" --workflow cyclic \
-  --work-dir work/cyclic-alice --plugin lenet \
-  --plugin-arg synthetic_examples=64 --plugin-arg epochs=1
-```
-
-Copy Alice's immutable `resolved_revision` (or her local `submission_revision`)
-and give it to Bob:
-
-```bash
-ALICE_REVISION=REPLACE_WITH_ALICES_IMMUTABLE_REVISION
-.venv/bin/hf2l train \
-  --backend local --endpoint work/cyclic-store --local-principal bob \
-  --repo-id local/cyclic-demo --participant bob \
-  --base-revision "$ALICE_REVISION" --workflow cyclic \
-  --source-kind submission --source-participant alice \
-  --work-dir work/cyclic-bob --plugin lenet \
-  --plugin-arg synthetic_examples=96 --plugin-arg epochs=1
-```
-
-Repeat with the next participant, the preceding immutable revision, and a fresh
-work directory. For your own trainer, use `hf2l download` with the same cyclic
-options, train against `base_model`, then run the existing upload step. An
-existing ordinary FedAvg submission can be the first predecessor of a cyclic
-chain. Use immutable resolved revisions for remote handoffs rather than mutable
-PR or revision names.
-
-Each download validates the source manifest, repository/backend, expected
-participant, and ordered ancestry back to its global root. Every predecessor
-submission needs a complete checkpoint digest map, including legacy schema-1
-predecessors; legacy global roots without hashes retain their compatibility
-behavior. Contexts and submissions carry `workflow="cyclic"`, `source_kind`,
-and `lineage` with `root_revision`, `root_round`, and ordered predecessor
-`parents`. The immediate predecessor is the new submission's `base_revision`;
-the lineage excludes that new output itself. A chain may contain at most 64
-predecessor submissions. The global root and all ancestor snapshots must remain
-available and readable by the next participant. Lineage validation downloads
-those checkpoints on download and again before upload, so longer chains cost
-additional transfer, disk, and verification work. Cyclic mode validates the predecessor submission's
-checkpoint contract, so an inherited global round file cannot impose stale
-global hashes on its changed weights.
-
-The caller schedules hops and controls participant order; there is no server
-guarantee that a predecessor has only one successor. Handoffs leave `main`
-unchanged and create detached submissions; they do not publish a new global
-FedAvg round. FedAvg selection rejects cyclic-marked submissions. Polling
-listeners continue to process global FedAvg rounds and do not schedule cyclic
-or swarm work. Backend access rules still apply: Exchange peer handoffs need
-an administrator to make `training.update` shared, as described in the
-[Exchange guide](docs/EXCHANGE_V3.md#cyclic-handoffs).
-
-## FedAvg: validate, average, and publish submissions
-
-To run FedAvg automatically when two eligible HF PRs are ready, see the
-[webhook-triggered GitHub workflow setup](docs/FEDAVG_WORKFLOW.md).
-
-### Automatically discover the current round
-
-With `--discover-submissions`, the owner does not need to supply individual
-revisions. On Hub, the script lists open pull requests. On JFrog, it searches
-for `fedavg_submission.json` artifacts with AQL and obtains the uploader from
-Artifactory metadata.
-
-The recommended discovery mode also uses an allowlist that binds each approved
-repository identity to the participant ID in that user's submission manifest.
-Use the HF username on Hub and the JFrog uploader identity on Artifactory:
-
-```bash
-.venv/bin/python -m hf2l.create_allowlist \
-  --participant alice-hf=alice \
-  --participant bob-hf=bob \
-  --output participant_allowlist.json
-```
-
-```json
-{
-  "alice-hf": "alice",
-  "bob-hf": "bob"
-}
-```
-
-Repository identities are matched case-insensitively; participant IDs are
-matched exactly. Each identity and participant ID must appear only once. The
-generator rejects duplicate identities, duplicate participant IDs, and an existing output file. Do not
-commit the real allowlist if its membership is sensitive. The repository's
-[`examples/participant_allowlist.example.json`](examples/participant_allowlist.example.json)
-remains a placeholder reference.
-
-Then discover eligible submissions and aggregate without publishing:
-
-```bash
-.venv/bin/python -m hf2l.owner_fedavg \
-  --repo-id OWNER_OR_ORG/my-fedavg-model \
-  --discover-submissions \
-  --allowlist participant_allowlist.json \
-  --output-dir work/owner-check-round-1
-```
-
-For each run, automatic discovery:
-
-1. Pins the current `main` revision and reads its current FedAvg round.
-2. Lists backend submissions and rejects authors outside the allowlist.
-3. Pins each candidate revision. Hub additionally verifies commit ancestry.
-4. Downloads only `fedavg_submission.json` and verifies its repository, base
-   revision, source round, backend, participant ID, and example count.
-5. Downloads full checkpoints only for eligible submissions, then validates
-   tensors, shard layouts, and finite floating values before aggregation.
-   SHA-256 verification applies to schema-2 documents and any supplied hash map
-   in schema-1 base round records or submission manifests.
-
-Legacy schema-1 documents without hash maps remain readable without digest
-verification. A supplied schema-1 map is verified by both client download and
-owner aggregation; a mismatch fails validation. Current initialization and
-client commands produce schema-2 documents with required checksum maps.
-
-In discovery mode, unauthorized, stale, or invalid records are reported as
-`skipped_submission=...`. Automatic discovery and claimed rounds also skip
-malformed, deleted, incompatible, or non-finite checkpoints, and publish only when at least
-the required number of fully validated participants remain (two by default).
-Explicitly selected invalid submissions fail the run. A non-finite global base,
-intermediate reduction overflow, or transport outage fails the run. Duplicate eligible participant IDs fail unless the backend's selection
-policy already chose one submission per participant, as the Exchange profile
-does; otherwise withdraw a superseded submission or select revisions explicitly.
-
-On backends without participant bindings, such as HF and JFrog,
-`--discover-submissions` without `--allowlist` reports a warning and considers
-every compatible discovered submission. Local and Exchange use their explicit
-participant bindings. An allowlist remains appropriate for an untrusted HF/JFrog
-repository; compatibility checks and example counts do not establish honest
-training or protect against poisoned model updates.
-
-`--discover-prs` remains an alias for Hub-only scripts written against HF²L
-0.1.0.
-
-For JFrog, run the same command with `--backend jfrog`; `HF_ENDPOINT` identifies
-the Artifactory repository. AQL access is required in addition to model read
-access.
-
-### Explicitly select submissions
-
-Manual selection remains available:
-
-```bash
-.venv/bin/python -m hf2l.owner_fedavg \
-  --repo-id OWNER_OR_ORG/my-fedavg-model \
-  --submission refs/pr/1 \
-  --submission refs/pr/2 \
-  --output-dir work/owner-check-round-1
-```
-
-For JFrog, use the revisions printed by the clients and add `--backend jfrog`:
-
-```bash
-.venv/bin/python -m hf2l.owner_fedavg \
-  --backend jfrog \
-  --repo-id OWNER_OR_ORG/my-fedavg-model \
-  --submission r0000-alice-a1b2c3d4e5f6 \
-  --submission r0000-bob-112233445566 \
-  --output-dir work/owner-check-round-1
-```
-
-You may add `--allowlist participant_allowlist.json`; selected uploader
-identities must then match their mapped participant IDs. `--pr` remains a Hub
-alias for `--submission`.
-
-For either selection mode, the owner verifies that current `main` is the
-clients' declared base, repository identities and participant IDs satisfy the
-optional allowlist, participant IDs are distinct, example counts are positive,
-and checkpoint schemas match. It verifies required schema-2 hashes and any
-supplied schema-1 hashes in both selection modes. On Hub it also checks that
-every PR descends from the base. It computes
-dataset-size-weighted FedAvg:
-
-```text
-theta_next = sum(num_examples_i * theta_i) / sum(num_examples_i)
-```
-
-Use `--weighting uniform` only when equal client weighting is intended. Integer
-and Boolean tensors are copied only when every client value is unchanged;
-differing non-floating state is rejected because an arithmetic mean is not
-well-defined.
-
-Evaluation is optional and must come from an owner-trusted local plugin:
-
-```bash
-.venv/bin/python -m hf2l.owner_fedavg \
-  --repo-id OWNER_OR_ORG/lenet-fedavg-poc \
-  --submission refs/pr/1 --submission refs/pr/2 \
-  --output-dir work/owner-check-round-1 \
-  --plugin lenet \
-  --plugin-arg eval_examples=1000
-```
-
-For the VGG repository, use `--repo-id
-OWNER_OR_ORG/vgg-cifar10-fedavg-poc` and `--plugin vgg-cifar10`. Aggregation itself remains
-model-agnostic; only
-optional evaluation needs the model-specific plugin.
-
-`--json` renders the owner's result on standard output. Trusted plugin imports
-and initialization, training, and evaluation calls route Python stdout to
-standard error, keeping their progress messages separate from command results
-and listener JSON events. The library runner uses the same evaluation routing.
-This redirects Python's process-wide stream during each plugin call; library
-integrations should avoid concurrent unrelated stdout writers. Direct writes
-to file descriptors or subprocess output are outside that routing.
-
-After inspecting the aggregate, rerun into a new directory and publish:
-
-```bash
-.venv/bin/python -m hf2l.owner_fedavg \
-  --repo-id OWNER_OR_ORG/my-fedavg-model \
-  --discover-submissions \
-  --allowlist participant_allowlist.json \
-  --output-dir work/owner-publish-round-1 \
-  --publish \
-  --tag fedavg-round-1
-```
-
-On Hub, publication uses `parent_commit=BASE_SHA`, so the Hub rejects it if
-`main` changed after validation. On JFrog, the script re-reads `main` immediately
-before upload and only the designated owner/coordinator may write `main`.
-Artifactory does not provide the same atomic Git compare-and-swap, so concurrent
-owner processes require an external lock.
-
-On Hub, the accepted conditional commit's immutable OID identifies the published
-result; the adapter does not re-read `main` to establish success. JFrog reads
-`main` back after its upload. Hub client PRs remain unmerged; the JFrog client
-commands use separate named submission revisions, subject to the reserved-name
-checks and server-permission restrictions above. `fedavg_round.json` records
-the backend, selection mode, base and resolved input revisions, uploader
-identities, checksums, example counts, and aggregation coefficients.
-
-## Large models
-
-The Hub client uses HF's large-file transport. Current JFrog versions can also
-enable Xet for local, remote, and virtual `huggingfaceml` repositories. JFrog
-documents Xet support for files larger than 50 GB; consult its version matrix
-before selecting `huggingface_hub` and `hf_xet` versions.
-
-Aggregation works one SafeTensors shard at a time instead of loading all client
-models as Python state dictionaries. It retains the growing output shard, the
-current base tensor, the corresponding tensor from every client, and the
-accumulator. With the default NumPy backend and SafeTensors 0.8.0, input tensor
-payloads are private copies. Torch inputs can use memory-mapped storage, but
-resident pages still contribute to memory use. Dtype conversion, scaling,
-finite-value checks, and output casting can allocate additional arrays or
-tensors. Keep shards reasonably sized and budget for the number and size of
-participant tensors as well as these temporary allocations.
-
-`--accumulator-dtype float32` is the memory-conscious default. Float64 model
-tensors remain float64. Use `--accumulator-dtype float64` when the added
-precision justifies roughly doubling accumulator memory. Disk must still hold
-the base, every selected submission snapshot, and the aggregate.
-
-Checkpoint discovery reads SafeTensors headers without Torch. Use
-`--array-backend numpy` for supported non-BF16 checkpoints or
-`--array-backend torch` with the Torch extra. Both execute the same averaging
-policy through their array operations. `--weighting examples` is the default;
-`--weighting uniform` gives each accepted participant equal weight. Algorithm
-strategy injection is a library interface; FedProx is not implemented by merely
-selecting a different label.
-
-## Build and install the wheel
-
-The ASCII Python distribution name for HF²L is `hf2l`. `setuptools-scm`
-derives the package version from Git tags, so `pyproject.toml` and Python code
-do not contain a manually synchronized release number. Create the release
-commit and tag it before building official artifacts, for example:
-
-```bash
-git tag 0.1.1
-git push origin 0.1.1
-```
-
-Build from that clean, exact tag using the project virtual environment:
-
-```bash
-.venv/bin/python -m pip install -e '.[build]'
-.venv/bin/python -m build
-.venv/bin/python -m twine check dist/*
-```
-
-Install the resulting wheel into another environment with:
-
-```bash
-python3 -m venv /path/to/consumer-venv
-/path/to/consumer-venv/bin/python -m pip install dist/hf2l-VERSION-py3-none-any.whl
-```
-
-At a release tag, the wheel uses that exact version. Between tags,
-`setuptools-scm` produces a PEP 440 development version containing commit
-distance and revision information; a dirty checkout is also marked. Inspect
-the computed version with `.venv/bin/python -m setuptools_scm` before
-publishing.
-
-The examples above use Python module execution. Installing the package also
-creates the unified `hf2l` command and these retained console-command aliases:
-
-- `hf2l-init-repo`
-- `hf2l-client-download`
-- `hf2l-client-train`
-- `hf2l-client-upload`
-- `hf2l-client-listen`
-- `hf2l-create-allowlist`
-- `hf2l-owner-fedavg`
-- `hf2l-exchange-service`
-
-For example, `hf2l-client-download` is equivalent to
-`python -m hf2l.client_download`. `hf2l-exchange-service` is the legacy v1
-service command; the independent package installs `hf2l-exchange` for `/v2`.
-
-## Local validation
-
-No live HF account is needed for the local suites. Install the three editable
-distributions and their testing/training extras first:
-
-```bash
-.venv/bin/python -m pip install -e './packages/exchange[server,test]' \
-  -e './packages/jobs[server,test]' \
-  -e '.[torch,hf,examples,exchange,service,exchange-test]'
-.venv/bin/python -m unittest discover -s tests -v
-EXCHANGE_REQUIRE_TESTS=1 .venv/bin/python -m unittest discover -s packages/exchange/tests -v
-.venv/bin/python -m unittest discover -s packages/jobs/tests -v
-```
-
-Provider and process-recovery checks also run against PostgreSQL/MinIO when
-configured. The dated standalone [Colossus test plan](docs/validation/2026-10-08-colossus-test-plan.md)
-and [results](docs/validation/2026-10-08-colossus-results.md) cover the then-current Linux
-suites on Python 3.10–3.14, a 615-test PostgreSQL/MinIO run with no skips,
-wheel and contract checks, the cyclic CLI recipe, and combined 89.82% line /
-77.19% branch coverage. MinIO was built from official source because the
-pinned registry image was unavailable; the report records its exact identity.
-
-The [multi-job implementation report](docs/validation/2026-10-09-multi-job-implementation.md)
-records the newer manager, isolation, training, cleanup, and Python 3.10–3.14
-wheel gates. Fresh `hf2l_jobs` coverage is **82.00% statements / 68.46% branches**;
-that package scope is separate from the dated coverage figures above.
-
-The earlier [macOS remediation verification](docs/validation/2026-10-08-repository-remediation.md)
-is retained as dated evidence. The [Exchange validation guide](docs/EXCHANGE_V3.md#validation-status-and-deployment-limits)
-describes deployment limits and retains earlier dated results.
+This installs the NumPy/SafeTensors core and local backend. Add the packages
+needed for your chosen workflow:
+
+| Need | Install into the same environment |
+| --- | --- |
+| Hugging Face integration | `.venv/bin/python -m pip install -e '.[hf]'` |
+| JFrog integration | `.venv/bin/python -m pip install -e '.[jfrog]'` |
+| Torch and bundled training plugins | `.venv/bin/python -m pip install -e '.[examples]'` |
+| HF²L with Exchange | `.venv/bin/python -m pip install -e ./packages/exchange -e '.[exchange]'` |
+| Exchange service | `.venv/bin/python -m pip install -e './packages/exchange[server]'` |
+| Job manager and dashboard | `.venv/bin/python -m pip install -e './packages/jobs[server]'` |
+
+Installing a package does not deploy its services. Follow the beginner
+walkthrough or the relevant operator guide. Generic Exchange clients can install
+only `./packages/exchange` in a fresh environment, without HF²L or ML libraries.
+
+Use separate credentials for the service administrator, aggregator, and each
+participant. Follow the [authentication instructions](docs/TRAINING_GUIDE.md#install-and-authenticate);
+keep credentials out of source control. These development interfaces may be
+newer than published packages, so use an agreed source revision.
+
+## Managed jobs and dashboard
+
+The optional manager provides:
+
+- Job creation, cancellation, resource queues, current jobs, and retained history.
+- OIDC login and job-specific access permissions.
+- Private job source snapshots, Exchange spaces, artifacts, and execution credentials.
+- Resource reservations, recovery, logs, checkpoints, and authenticated result exports.
+
+Concurrency depends on the configured resource pools and project limits.
+Managed training uses the qualified **Linux/Docker/gVisor CPU** runtime;
+GPU and Kubernetes execution are not supported deployment alternatives.
+
+The beginner Compose example runs Exchange and its dependencies. Deploy the
+manager/dashboard and qualify its runtime separately using the
+[managed deployment guide](deploy/jobs/README.md).
+
+## Guides and examples
+
+| Goal | Read |
+| --- | --- |
+| Complete your first project | [Beginner walkthrough](examples/first_federation/README.md) |
+| Reuse a trainer, configure a backend, or run CLI commands | [Training guide](docs/TRAINING_GUIDE.md) |
+| Run a real CIFAR-10 example with automatic rounds | [Two-client Exchange demo](examples/exchange_cifar10/README.md) |
+| Exchange metadata/files without federated learning | [Generic SDK example](docs/EXCHANGE_V3.md#generic-sdk-example) |
+| Operate Exchange and its storage | [Exchange runbook](docs/EXCHANGE_V3.md) |
+| Operate, deploy, and export managed jobs | [Job manager](docs/JOB_MANAGER.md), [deployment](deploy/jobs/README.md), [exports](docs/JOB_EXPORTS.md) |
+| Build packages or run developer checks | [Build](docs/TRAINING_GUIDE.md#build-and-install-the-wheel), [validation](docs/TRAINING_GUIDE.md#local-validation) |
+| Understand component boundaries | [Architecture](docs/ARCHITECTURE_V3.md) and [multi-job design](docs/MULTI_JOB_DESIGN.md) |
+
+Raw datasets stay with participants; model updates are shared with authorized
+readers and trusted service administrators. The beginner example does not
+provide secure aggregation or differential privacy.

@@ -146,7 +146,7 @@ python -m hf2l_exchange.cli export-contract --output-dir <task-contracts>/exchan
 The `core`, `sdk`, and `server` checks run in their corresponding fresh wheel
 environments, not the full development environment. Place all output paths
 inside the task directory. Run the cyclic recipe from the current
-[README](../../README.md#cyclic-federated-learning-without-fedavg), recording the
+[training guide](../TRAINING_GUIDE.md#cyclic-federated-learning-without-fedavg), recording the
 actual immutable revisions instead of copying an example revision.
 
 ## Completion criteria and limits

@@ -13,7 +13,7 @@ The FedAvg validation annotations were synchronized on October 8, 2026 to
 reflect verification of supplied schema-1 hashes and finite-input filtering.
 This update preserves the existing SVG layout; it does not claim a new Mermaid
 render or live-provider validation. The round diagram describes synchronous
-FedAvg; [manual cyclic handoffs](../../README.md#cyclic-federated-learning-without-fedavg)
+FedAvg; [manual cyclic handoffs](../TRAINING_GUIDE.md#cyclic-federated-learning-without-fedavg)
 use a separate caller-controlled sequence.
 Authentication tokens come from an external identity provider; space membership,
 types, policy, and the private versioned bucket are prerequisites.

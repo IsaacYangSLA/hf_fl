@@ -29,7 +29,7 @@ Use listeners as context managers and close the caller-owned model store.
 ## Install and start
 
 Install the backend and training dependencies described in the
-[repository README](../README.md#install-and-authenticate). Run these commands
+[training guide](TRAINING_GUIDE.md#install-and-authenticate). Run these commands
 from the repository root with the project virtual environment.
 
 ```bash
@@ -44,7 +44,7 @@ The default role is `client`, preserving existing commands and client state.
 Equivalent module entry points are `.venv/bin/python -m hf2l.cli listen` and
 `.venv/bin/python -m hf2l.cli.listen`. The retained
 `.venv/bin/hf2l-client-listen` alias starts the same CLI. The training plugin uses
-the same [`train_model(base_dir, output_dir, options)` contract](../README.md#plugin-interface)
+the same [`train_model(base_dir, output_dir, options)` contract](TRAINING_GUIDE.md#plugin-interface)
 as `hf2l.client_train`: write a compatible checkpoint and return JSON metadata
 containing a positive integer `num_examples`. Plugins execute locally with the
 participant's permissions. Review and install the plugin locally; the listener
@@ -123,7 +123,7 @@ the webhook relay.
 ### JFrog
 
 Configure `HF_ENDPOINT` and a participant's `JFROG_ACCESS_TOKEN` or `HF_TOKEN`
-as described in the [JFrog setup](../README.md#jfrog-artifactory):
+as described in the [JFrog setup](TRAINING_GUIDE.md#jfrog-artifactory):
 
 ```bash
 .venv/bin/hf2l listen \

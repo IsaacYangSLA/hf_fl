@@ -258,7 +258,7 @@ handoff and participant order; no automated swarm scheduler or unique-successor
 guarantee is supplied. Synchronous FedAvg rejects cyclic-marked submissions,
 and listeners continue processing global FedAvg rounds. Exchange peer reads
 require an explicit shared-update policy. See the
-[manual cyclic workflow](../README.md#cyclic-federated-learning-without-fedavg).
+[manual cyclic workflow](TRAINING_GUIDE.md#cyclic-federated-learning-without-fedavg).
 
 When supplied, `algorithm_spec` propagates from the round to client context and
 submission. The owner checks its name, version and client-affecting parameters
@@ -374,7 +374,7 @@ manifest and complete digest map determine checkpoint validation, and immutable
 lineage leads back to a validated global root. Upload revalidates that source and
 its ancestry before publishing the new cyclic-marked submission. Ordinary
 FedAvg commands continue using global round records and reject cyclic updates.
-The [manual recipe](../README.md#cyclic-federated-learning-without-fedavg) describes
+The [manual recipe](TRAINING_GUIDE.md#cyclic-federated-learning-without-fedavg) describes
 participant order, the 64-predecessor bound, snapshot access and transfer costs.
 Automated cyclic/swarm scheduling and one-successor enforcement are not
 implemented. Exchange private updates remain private unless an administrator
