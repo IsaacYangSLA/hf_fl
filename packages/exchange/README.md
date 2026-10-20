@@ -64,11 +64,12 @@ The [audit findings](../../docs/ARCHITECTURE_V3.md#current-implementation-limita
 describe resolved defects and the limits of the implemented workflows.
 The implementation preserves AWS session tokens, recovers interrupted
 HF²L acquisition setup, and prevents cleanup from entering verification slots.
-The current database revision is `0002_event_sequence`: existing `0001_initial`
-installations must stop API/worker processes, back up the database, run
+The current database revision is `0003_workload_grants`: existing `0001_initial`
+or `0002_event_sequence` installations must stop API/worker processes, back up the database, run
 `hf2l-exchange migrate-db` and `check-db`, then restart. SQLite event IDs retain
 their cursor sequence after history pruning; the frozen initial migration is
-preserved. Readiness probes stay under the configured S3 prefix while retaining
+preserved. Revision `0003_workload_grants` adds managed-space workload grants and
+revocation records, and is also required for ordinary Exchange deployments. Readiness probes stay under the configured S3 prefix while retaining
 the bucket-versioning check.
 The operator guide explains credential configuration, recovery safeguards and
 the worker's remaining batch scheduling limitation.

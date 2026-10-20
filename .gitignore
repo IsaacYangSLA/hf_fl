@@ -35,3 +35,6 @@ tchngyang
 # OS/editor files
 .DS_Store
 *.swp
+
+# Private first-federation service and identity configuration
+examples/first_federation/.runtime/

@@ -1,0 +1,26 @@
+# Keep source build contexts free of local credentials and generated training data.
+.git
+**/.venv
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+**/.cache
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.env
+**/.env.*
+**/work
+**/*_work
+**/.runtime
+**/*.token
+**/credentials.json
+**/*.key
+**/*.pem
+**/*.npz
+**/*.safetensors
+**/*.bin
+**/*.pt
+**/*.pth
+build
+dist

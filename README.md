@@ -114,11 +114,14 @@ FedAvg; GPU execution and Kubernetes require separate qualification.
 
 The [`examples/`](examples/) folder contains runnable demonstrations, model and
 data helpers used by the built-in training plugins, and integration samples.
-Start with the two-client Exchange demo for a complete training round, or the
-generic Exchange example for metadata and file exchange without ML dependencies.
+Start with [Your first federation](examples/first_federation/README.md) if you are
+new to HF²L and need to set up services before inviting other organizations.
+The two-client CIFAR-10 demo adds automatic listeners; the generic Exchange
+example demonstrates metadata and file exchange without ML dependencies.
 
 | Example | What it demonstrates | Documentation |
 | --- | --- | --- |
+| [Your first federation](examples/first_federation/) | Org S deploys one shared Compose stack; Org P coordinates and aggregates while Alice in Org A and Bob in Org B train locally through two manual rounds. No external dataset, Torch, or Hugging Face account is required. | [Beginner walkthrough](examples/first_federation/README.md) |
 | [Two-client VGG/CIFAR-10 demo](examples/exchange_cifar10/) | Real CIFAR-10 preparation, authenticated Exchange startup, two client listeners and an owner listener that automatically train, aggregate, evaluate, and publish two rounds. | [Listener walkthrough](examples/exchange_cifar10/README.md#5-owner-start-the-fedavg-listener) and [manual alternative](examples/exchange_cifar10/README.md#optional-manual-training-and-aggregation) |
 | [Generic Exchange](examples/generic_exchange.py) | Upload, discover, download, and process a document using generic records, blob transfers, and coordinated publication. | [Generic SDK guide](docs/EXCHANGE_V3.md#generic-sdk-example) |
 | [LeNet model](examples/lenet_model.py) and [MNIST-shaped data](examples/mnist_data.py) | Model and data helpers for the `lenet` plugin, using local NPZ data or synthetic smoke-test data. | [Initialization](#lenet-with-mnist-shaped-data) and [client training](#client-option-b-trusted-training-plugin) |

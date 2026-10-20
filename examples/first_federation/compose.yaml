@@ -1,0 +1,124 @@
+name: ${HF2L_PROJECT_NAME:-hf2l-first-federation}
+x-exchange: &exchange
+  image: ${HF2L_PROJECT_NAME:-hf2l-first-federation}-exchange:local
+  build:
+    context: ../..
+    dockerfile: examples/first_federation/Dockerfile
+  env_file: ${HF2L_RUNTIME_DIR:?Run stack.py init first}/exchange.env
+  volumes:
+    - ${HF2L_RUNTIME_DIR}/service-ca.crt:/run/hf2l/service-ca.crt:ro
+  restart: unless-stopped
+  networks: [federation]
+  security_opt: [no-new-privileges:true]
+
+services:
+  postgres:
+    image: postgres@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${HF2L_POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U postgres]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    restart: unless-stopped
+    networks: [federation]
+
+  minio:
+    image: ${HF2L_PROJECT_NAME:-hf2l-first-federation}-minio:source
+    pull_policy: never
+    build:
+      context: ../..
+      dockerfile: examples/first_federation/Dockerfile.minio
+    command: [server, /data]
+    environment:
+      MINIO_ROOT_USER: ${HF2L_MINIO_USER}
+      MINIO_ROOT_PASSWORD: ${HF2L_MINIO_PASSWORD}
+      MINIO_BROWSER: "off"
+    volumes: [minio-data:/data]
+    restart: unless-stopped
+    networks: [federation]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.0@sha256:27b3230fbabb8c9ff3c66c864cf09dcd8a41aca82e5100679d109ef0eeb05741
+    command: [start]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${HF2L_KEYCLOAK_DB_PASSWORD}
+      KC_BOOTSTRAP_ADMIN_USERNAME: bootstrap-admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${HF2L_KEYCLOAK_ADMIN_PASSWORD}
+      KC_HOSTNAME: ${HF2L_AUTH_URL}
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_PROXY_TRUSTED_ADDRESSES: ${HF2L_PROXY_IP}
+      KC_HEALTH_ENABLED: "true"
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: unless-stopped
+    networks: [federation]
+
+  caddy:
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    environment:
+      HF2L_EXCHANGE_HOST: ${HF2L_EXCHANGE_HOST}
+      HF2L_AUTH_HOST: ${HF2L_AUTH_HOST}
+      HF2L_OBJECTS_HOST: ${HF2L_OBJECTS_HOST}
+      HF2L_HTTP_PORT: ${HF2L_HTTP_PORT}
+      HF2L_HTTPS_PORT: ${HF2L_HTTPS_PORT}
+    ports:
+      - ${HF2L_BIND_ADDRESS:-0.0.0.0}:${HF2L_HTTP_PORT}:${HF2L_HTTP_PORT}
+      - ${HF2L_BIND_ADDRESS:-0.0.0.0}:${HF2L_HTTPS_PORT}:${HF2L_HTTPS_PORT}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${HF2L_RUNTIME_DIR}/tls.conf:/etc/caddy/tls.conf:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+    networks:
+      federation:
+        ipv4_address: ${HF2L_PROXY_IP}
+        aliases:
+          - ${HF2L_EXCHANGE_HOST}
+          - ${HF2L_AUTH_HOST}
+          - ${HF2L_OBJECTS_HOST}
+
+  exchange-api:
+    <<: *exchange
+    command:
+      - uvicorn
+      - hf2l_exchange.api:create_app
+      - --factory
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - ${HF2L_PROXY_IP}
+    depends_on:
+      postgres: {condition: service_healthy}
+      caddy: {condition: service_started}
+
+  exchange-worker:
+    <<: *exchange
+    command: [hf2l-exchange, worker]
+    depends_on:
+      postgres: {condition: service_healthy}
+      caddy: {condition: service_started}
+
+networks:
+  federation:
+    ipam:
+      config:
+        - subnet: ${HF2L_NETWORK_SUBNET}
+
+volumes:
+  postgres-data:
+  minio-data:
+  caddy-data:
+  caddy-config:

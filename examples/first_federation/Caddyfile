@@ -1,0 +1,25 @@
+{
+    admin off
+    auto_https disable_redirects
+    http_port {$HF2L_HTTP_PORT}
+    https_port {$HF2L_HTTPS_PORT}
+}
+https://{$HF2L_EXCHANGE_HOST}:{$HF2L_HTTPS_PORT} {
+    import /etc/caddy/tls.conf
+    reverse_proxy exchange-api:8000 {
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-Host {hostport}
+    }
+}
+https://{$HF2L_AUTH_HOST}:{$HF2L_HTTPS_PORT} {
+    import /etc/caddy/tls.conf
+    reverse_proxy keycloak:8080 {
+        header_up X-Forwarded-Proto https
+        header_up X-Forwarded-Host {hostport}
+    }
+}
+https://{$HF2L_OBJECTS_HOST}:{$HF2L_HTTPS_PORT} {
+    import /etc/caddy/tls.conf
+    # Keep the original Host, path and query: S3 signatures cover all three.
+    reverse_proxy minio:9000
+}

@@ -96,8 +96,8 @@ worker as separate processes:
 Database commands require database settings only. The storage check requires
 storage settings only. The worker does not need JWT verification configuration.
 `migrate-db` applies the v2 revision ledger; it is not a v1 importer. The current
-revision is `0002_event_sequence`. New `init-db` databases receive that revision;
-existing `0001_initial` databases need an explicit upgrade. Stop all API and
+revision is `0003_workload_grants`. New `init-db` databases receive that revision;
+existing `0001_initial` or `0002_event_sequence` databases need an explicit upgrade. Stop all API and
 worker processes and back up the database before running:
 
 ```bash
@@ -110,7 +110,9 @@ and normal requests refuse an older revision instead of upgrading it implicitly.
 The SQLite upgrade preserves events and indexes and gives event IDs a persistent
 sequence above existing events and retained cursor floors, preventing ID reuse
 after pruning. PostgreSQL retains its existing sequence while advancing the
-ledger. There is no downgrade command; restoring the backup is required before
+ledger. The `0003_workload_grants` upgrade adds managed-space workload grants and
+revocation records; ordinary Exchange deployments use this same current schema.
+There is no downgrade command; restoring the backup is required before
 returning to a binary that accepts only `0001_initial`.
 
 Expose the API through HTTPS. The ASGI application requires the HTTPS request
