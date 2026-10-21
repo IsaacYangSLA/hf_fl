@@ -143,7 +143,9 @@ GPU and Kubernetes execution are not supported deployment alternatives.
 
 The beginner Compose example runs Exchange and its dependencies. Deploy the
 manager/dashboard and qualify its runtime separately using the
-[managed deployment guide](deploy/jobs/README.md).
+[managed deployment guide](deploy/jobs/README.md). The beginner stack lacks the
+managed Exchange, OIDC, and database configuration the manager requires; see
+[using the beginner Compose stack](docs/JOB_MANAGER.md#using-the-beginner-compose-stack).
 
 ## Guides and examples
 

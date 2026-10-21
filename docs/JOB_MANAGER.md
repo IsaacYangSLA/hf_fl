@@ -332,6 +332,20 @@ Exchange's standalone workload-audience default is `exchange-workload`, while th
 
 Apply Exchange migration `0003_workload_grants` before enabling managed services. It retains the existing event sequence migration. Managed namespace retirement is idempotent and requires revoked grants; it retains namespace history, membership, and grant/revocation tombstones. Physical blob deletion uses Exchange's cleanup worker. A pending blob cleanup must not be reported as completed deletion.
 
+### Using the beginner Compose stack
+
+The [first-federation Compose stack](../examples/first_federation/README.md) configures Exchange for human device-login clients only. It does not provide what the manager needs:
+
+| Manager requirement | Beginner stack |
+| --- | --- |
+| Exchange variables in the table above | Not set |
+| Managed backend (`create_managed_app`) and `exchange-edge` | Not run; only the public API runs behind Caddy |
+| Dashboard OIDC client: authorization code with PKCE, exact `HF2L_JOBS_OIDC_REDIRECT_URI`, RS256 `at+jwt` tokens with the `hf2l-jobs` audience and `jobs` scope | Realm has only the public `hf2l-cli` device-login client with the `exchange` audience |
+| Dedicated manager PostgreSQL database (`HF2L_JOBS_DATABASE_URL`) | Stack PostgreSQL holds Exchange and Keycloak only and is not published to the host |
+| Free `exchange-edge` port | Private TLS mode publishes Caddy on 8443, the example `exchange-edge` port |
+
+The repository does not include or qualify this combination. Deploy Exchange with the managed configuration from the [deployment guide](../deploy/jobs/README.md), or extend the beginner stack to meet every row above and qualify the result.
+
 ## 7. Retention and recovery
 
 Default raw logs, source snapshots, and checkpoints expire 90 days after termination, configurable per project. Metadata, outcome, history, ACLs, and provenance remain until authorized purge. Expired artifacts appear as expired entries. Retained storage remains charged until physical deletion is confirmed. Gang admission and static-fit validation reserve collection capacity of component disk plus 4 MiB before execution. Logical artifact bytes transfer to child records while the unused parent remainder stays charged for physical blocks and directory metadata; parent plus children retain the conservative cap. The full execution-state disk budget also remains charged until purge. Project storage quotas are conservative capacity bounds, not exact payload billing. Central source-fetch accounting settles actual snapshot filesystem blocks and owned metadata after temporary-workspace cleanup. Node-private source/build copies retain their conservative Git/filesystem peak reservation until confirmed purge, deduplicated across attempts for the same job/component. These ledgers cover separate physical copies and can retain different amounts.

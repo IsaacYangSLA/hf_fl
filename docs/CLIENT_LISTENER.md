@@ -155,6 +155,9 @@ Set `EXCHANGE_ENDPOINT` and the participant's `EXCHANGE_TOKEN`, or set
 The token-file provider rereads the file for requests. An external issuer or
 refresher must replace it before expiry; listeners do not issue tokens. An
 explicit `--token` or `EXCHANGE_TOKEN` takes precedence over `EXCHANGE_TOKEN_FILE`.
+With the [first-federation stack](../examples/first_federation/README.md#optional-automate-later-rounds-with-listeners),
+run each listener under `auth.py run`, which renews the token file until the
+account's login session ends.
 
 The space must use the FedAvg profile. Participant tokens need access to global
 models and permission to publish their own updates. The owner token needs

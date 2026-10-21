@@ -164,6 +164,24 @@ Choose **one** setup: this public setup or the private TLS alternative below.
 Use a fresh private absolute runtime directory outside the checkout; do not
 initialize the same directory twice with different hosts, ports, or TLS modes.
 
+`init` does not check the Docker host for an earlier stack. Volumes are named
+after `--project-name` (default `hf2l-first-federation`), and `stop` and the
+qualification verifier retain them. If volumes from an earlier stack with that
+name remain, PostgreSQL keeps that stack's database passwords and bootstrap
+fails waiting for Keycloak. `stop` also keeps the project's network, which
+continues to hold its subnet (`--network-subnet`, default `172.30.75.0/24`).
+Before `init`, check the host:
+
+~~~bash
+docker volume ls --filter label=com.docker.compose.project=hf2l-first-federation
+docker network ls --filter label=com.docker.compose.project=hf2l-first-federation
+~~~
+
+Use `sudo -n docker` if your account is not in the `docker` group. If either
+command lists anything, either remove that stack deliberately with `reset`
+from its own runtime directory, or initialize this stack with an unused
+`--project-name` and an unused private `--network-subnet`.
+
 For public HTTPS, use the DNS names and endpoints agreed in step 1:
 
 ~~~bash
@@ -259,6 +277,31 @@ and forwards port 8443 to the Org S host. For example, replace the SSH
 destination in `ssh -N -o ExitOnForwardFailure=yes -L 8443:127.0.0.1:8443 user@org-s-server`.
 Keep that tunnel running during browser login. This provides browser access
 only; it does not make the loopback deployment available to remote participants.
+
+#### One browser, several practice accounts
+
+Keycloak keeps a browser login session. If the browser is still signed in as
+one account, the next device-login approval silently uses that account, and
+`auth.py login` saves whichever identity approved it. Signing out of Keycloak
+is not a fix: it ends that account's session and revokes the refresh token in
+its login profile, so its next `auth.py run` fails with `invalid_grant`.
+
+For each account, open a new private window in the trusted browser profile,
+approve the device login, then close **every** private window. Private windows
+share one cookie session until all are closed. Do not sign out between
+accounts.
+
+After each login, confirm the profile holds the intended account before using
+it. On the practice host, compare `auth.py identity` with the subject recorded
+by bootstrap, for example for Alice:
+
+~~~bash
+python "$EXAMPLE/auth.py" identity --profile "$PROFILE"
+python -c 'import json,sys; print(json.load(open(sys.argv[1]))["accounts"][sys.argv[2]]["subject"])' \
+  "$RUNTIME_DIR/identities.json" alice
+~~~
+
+If the subjects differ, delete that profile directory and log in again.
 
 After the exercise, Org S stops the stack as described in step 8. Each host
 and browser operator removes only the practice DNS entries and CA trust it
@@ -657,6 +700,55 @@ python "$EXAMPLE/stack.py" --runtime-dir "$RUNTIME_DIR" reset --confirm-delete-d
 Back up necessary artifacts first. Do not delete runtime credentials while
 expecting retained volumes to work with newly generated credentials.
 
+## Optional: automate later rounds with listeners
+
+**Who:** Org P aggregator, Alice, and Bob, each in their own environment.
+**Input:** a published global model, enrolled participants, and each role's
+login profile. **Success:** each listener exits after `--max-rounds`
+publications or submissions. **Handoff:** none; listeners follow `main`.
+
+After the manual rounds, `hf2l listen` can run further rounds on the same
+space without invitations. See the [listener guide](../../docs/CLIENT_LISTENER.md).
+`model.py` provides the owner's `evaluate_model` hook but not the
+`train_model(base_dir, output_dir, options)` hook a client listener calls.
+Each participant writes a small adapter outside the checkout. The listener
+adds a `participant` entry to `options`; the adapter passes only the dataset
+to `model.py`:
+
+~~~bash
+cat > "$ACTOR_WORK/listener_plugin.py" <<EOF
+import importlib.util
+
+_spec = importlib.util.spec_from_file_location("first_federation_model", "$PWD/$EXAMPLE/model.py")
+_model = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_model)
+
+
+def train_model(base_dir, output_dir, options):
+    result = _model.train(base_dir, output_dir, options["dataset"])
+    return {"num_examples": result["num_examples"], "metrics": result["after"]}
+EOF
+as_me hf2l listen --backend exchange --repo-id "$SPACE_ID" \
+  --participant "$PARTICIPANT" --state-dir "$ACTOR_WORK/listener" \
+  --plugin "$ACTOR_WORK/listener_plugin.py" \
+  --plugin-arg "dataset=$ACTOR_WORK/private-data.npz" --max-rounds 2
+~~~
+
+Org P runs the owner listener in its own terminal, before or after the clients:
+
+~~~bash
+as_owner hf2l listen --role owner --backend exchange --repo-id "$SPACE_ID" \
+  --state-dir "$OWNER_WORK/listener" --minimum-participants 2 \
+  --array-backend numpy --plugin "$EXAMPLE/model.py" \
+  --plugin-arg "dataset=$OWNER_WORK/evaluation.npz" --max-rounds 2
+~~~
+
+`as_me` and `as_owner` run each listener under `auth.py run`, which renews the
+token file for as long as the listener runs; no separate refresher is needed.
+Renewal ends with the account's login session, at most eight hours in this
+stack. The wrapper then stops the listener. Log in again and restart it with
+the same `--state-dir`. Reuse each state directory on every restart.
+
 ## Use your existing training job
 
 Keep the download/upload commands and replace only the middle step:
@@ -704,6 +796,9 @@ safety.
 | Interrupted project setup or enrollment | Org S for project creation; Org P for enrollment | Retain each organization's own state and retry the same operation; do not blindly create another project. |
 | Uncertain publication | Org P aggregator | Inspect reference/result; retry with the **same run-state** and a **fresh output directory**. |
 | Expired login/refresh session | Account holder | Device-login again with same profile. Local training needs no token; transfers do. |
+| `invalid_grant` soon after login, or a profile reports another account's subject | Account holder on a shared practice browser | A browser sign-out revoked the session, or the browser reused another signed-in account. Delete the profile and log in again as described in [one browser, several practice accounts](#one-browser-several-practice-accounts). |
+| Bootstrap stops at `Service did not become ready: .../realms/master/...`; Keycloak logs `password authentication failed for user "keycloak"` | Org S | Volumes from an earlier stack with the same `--project-name` kept that stack's passwords. Run `stop`, then follow the pre-`init` check in [step 2](#public-https-setup) with a fresh runtime directory. |
+| Compose cannot create the `federation` network because its subnet overlaps | Org S | An earlier stack's network still holds the subnet. Initialize with an unused private `--network-subnet`, or `reset` the earlier stack deliberately. |
 
 Never include credential profiles, `accounts.json`, bearer/refresh tokens or
 storage secrets in support reports.
@@ -713,8 +808,13 @@ storage secrets in support reports.
 No manager/dashboard, gVisor runtime, remote training agent or automatic
 listener is needed: the stack coordinates artifacts while each organization
 controls its own training. Read the [Exchange operator guide](../../docs/EXCHANGE_V3.md)
-for internals/upgrades and the [CIFAR-10 example](../exchange_cifar10/README.md)
-for automatic listeners after understanding these manual handoffs.
+for internals/upgrades. To automate rounds, see
+[automate later rounds with listeners](#optional-automate-later-rounds-with-listeners)
+and the [CIFAR-10 example](../exchange_cifar10/README.md).
+
+This stack does not provide the managed Exchange configuration that the job
+manager requires; see
+[using the beginner Compose stack](../../docs/JOB_MANAGER.md#using-the-beginner-compose-stack).
 
 
 ## Optional: qualify the example in an isolated local exercise
