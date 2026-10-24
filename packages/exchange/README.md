@@ -9,9 +9,21 @@ This is an unreleased development package. The package version `0.1.0.dev0`,
 HTTP API version `/v2`, database revision, and selected application-profile version
 are independent identifiers. No package publication is implied by this checkout.
 
-## Install from this repository
+## Choose server and client implementations
 
-The SDK and service require Python 3.11 or later. Run these commands from the
+Org S can build the native **Go API and worker** using the
+[Go Exchange guide](../../docs/GO_EXCHANGE.md). They do not call a Python
+Exchange bridge or execute ML workloads. Org P, Alice, and Bob keep the same
+Python SDK and training tools. The HTTP API and current persistence contract
+remain shared; cutover requires explicit compatibility checks and qualification.
+
+The Python server remains a reference and rollback implementation. The beginner
+Compose walkthrough continues to use that reference deployment. Exchange itself
+uses versioned S3; Hugging Face/JFrog/local stores are training-layer adapters.
+
+## Install the Python SDK or reference server
+
+The SDK and Python reference service require Python 3.11 or later. Run these commands from the
 repository root, using the project environment:
 
 ```sh
@@ -22,7 +34,7 @@ python3 -m venv .venv
 The base SDK requires only HTTPX and its transport dependencies. It does not
 install FastAPI, SQLAlchemy, Torch, NumPy, SafeTensors, or Hugging Face.
 
-For the API and worker processes:
+For the Python reference API and worker processes:
 
 ```sh
 .venv/bin/python -m pip install -e './packages/exchange[server]'
@@ -87,7 +99,9 @@ preserved. Revision `0003_workload_grants` adds managed-space workload grants an
 revocation records, and is also required for ordinary Exchange deployments. Readiness probes stay under the configured S3 prefix while retaining
 the bucket-versioning check.
 The operator guide explains credential configuration, recovery safeguards and
-the worker's remaining batch scheduling limitation.
+the Python reference worker's batch scheduling limitation. Consult the
+[Go guide](../../docs/GO_EXCHANGE.md) for native-service commands, schema
+compatibility preflight, and its separate qualification requirements.
 
 Unmodified SeaweedFS 4.47 fails multipart upload retries. An optional
 [provider compatibility build](../../deploy/seaweedfs/README.md) applies a
@@ -98,7 +112,12 @@ Exchange continues to require exact versions and size/SHA-256 verification.
 
 ## Validation boundaries
 
-The configured CI workflow checks SDK and server imports in separate minimal
+The [native Go workflow](../../.github/workflows/exchange_go_tests.yml) adds
+Go formatting/build/vet/race tests, PostgreSQL compatibility, actual Python-SDK
+requests to Go HTTPS services with MinIO, and bidirectional retained-state gates.
+These configured checks do not imply a deployment has passed qualification.
+
+The existing Python CI workflow checks SDK and server imports in separate minimal
 environments, then runs SQLite/Moto tests, PostgreSQL and MinIO integration
 tests, and the existing HF²L regression suite. PostgreSQL uses a pinned image
 digest. MinIO is built from verified upstream commit

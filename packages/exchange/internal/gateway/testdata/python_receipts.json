@@ -1,0 +1,131 @@
+{
+  "source_sha256": "b7ef92d035e2776fcb920c5e4c5ba6d8e3ff15eb7157593c696634e1656d060d",
+  "cases": [
+    {
+      "name": "ascii",
+      "secret": "fixture-settlement-secret-at-least-32-bytes",
+      "authorization": "Bearer fixture-access-token-0",
+      "thumbprint": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "payload": {
+        "version": 1,
+        "authorization_sha256": "0dbb4a39e33bbd42c114b4563260224fa3513ad9a7d59e375350211c94f64f91",
+        "owner": {
+          "principal_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "subject": "participant-a",
+          "grant_id": "grant-a",
+          "space_id": "space-a",
+          "job_id": "job-a",
+          "attempt_id": "attempt-a",
+          "component_id": "component-a",
+          "epoch": 1,
+          "certificate_thumbprint": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        "put": {
+          "space_id": "space-a",
+          "record_id": "record-a",
+          "attachment_id": "attachment-a",
+          "attempt_id": "attempt-a",
+          "object_key": "private/object-a",
+          "upload_id": "upload-a",
+          "part_number": 1,
+          "token": "gateway-put-1-mutation-a"
+        }
+      },
+      "receipt": "eyJhdXRob3JpemF0aW9uX3NoYTI1NiI6IjBkYmI0YTM5ZTMzYmJkNDJjMTE0YjQ1NjMyNjAyMjRmYTM1MTNhZDlhN2Q1OWUzNzUzNTAyMTFjOTRmNjRmOTEiLCJvd25lciI6eyJhdHRlbXB0X2lkIjoiYXR0ZW1wdC1hIiwiY2VydGlmaWNhdGVfdGh1bWJwcmludCI6Inh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHgiLCJjb21wb25lbnRfaWQiOiJjb21wb25lbnQtYSIsImVwb2NoIjoxLCJncmFudF9pZCI6ImdyYW50LWEiLCJqb2JfaWQiOiJqb2ItYSIsInByaW5jaXBhbF9pZCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJzcGFjZV9pZCI6InNwYWNlLWEiLCJzdWJqZWN0IjoicGFydGljaXBhbnQtYSJ9LCJwdXQiOnsiYXR0YWNobWVudF9pZCI6ImF0dGFjaG1lbnQtYSIsImF0dGVtcHRfaWQiOiJhdHRlbXB0LWEiLCJvYmplY3Rfa2V5IjoicHJpdmF0ZS9vYmplY3QtYSIsInBhcnRfbnVtYmVyIjoxLCJyZWNvcmRfaWQiOiJyZWNvcmQtYSIsInNwYWNlX2lkIjoic3BhY2UtYSIsInRva2VuIjoiZ2F0ZXdheS1wdXQtMS1tdXRhdGlvbi1hIiwidXBsb2FkX2lkIjoidXBsb2FkLWEifSwidmVyc2lvbiI6MX0.e7365d50df946b61f9e4efef9747eca9f1f431a2f996aceffb77289f7dfc29d3",
+      "put": {
+        "space_id": "space-a",
+        "record_id": "record-a",
+        "attachment_id": "attachment-a",
+        "attempt_id": "attempt-a",
+        "object_key": "private/object-a",
+        "upload_id": "upload-a",
+        "part_number": 1,
+        "token": "gateway-put-1-mutation-a"
+      }
+    },
+    {
+      "name": "unicode",
+      "secret": "fixture-settlement-secret-at-least-32-bytes",
+      "authorization": "Bearer fixture-access-token-1",
+      "thumbprint": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "payload": {
+        "version": 1,
+        "authorization_sha256": "75f230197bf3cb06ebb4c3c2c412126e3982daaa671fffd52f94c419ac346805",
+        "owner": {
+          "principal_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "subject": "Alice\u96ea\u00e9\ud83e\uddea",
+          "grant_id": "grant-a",
+          "space_id": "space-a",
+          "job_id": "job-a",
+          "attempt_id": "attempt-a",
+          "component_id": "component-a",
+          "epoch": 1,
+          "certificate_thumbprint": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        "put": {
+          "space_id": "space-a",
+          "record_id": "record-a",
+          "attachment_id": "attachment-a",
+          "attempt_id": "attempt-a",
+          "object_key": "\u8bad\u7ec3/object-a",
+          "upload_id": "upload-a",
+          "part_number": 1,
+          "token": "gateway-put-1-mutation-a"
+        }
+      },
+      "receipt": "eyJhdXRob3JpemF0aW9uX3NoYTI1NiI6Ijc1ZjIzMDE5N2JmM2NiMDZlYmI0YzNjMmM0MTIxMjZlMzk4MmRhYWE2NzFmZmZkNTJmOTRjNDE5YWMzNDY4MDUiLCJvd25lciI6eyJhdHRlbXB0X2lkIjoiYXR0ZW1wdC1hIiwiY2VydGlmaWNhdGVfdGh1bWJwcmludCI6Inh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHgiLCJjb21wb25lbnRfaWQiOiJjb21wb25lbnQtYSIsImVwb2NoIjoxLCJncmFudF9pZCI6ImdyYW50LWEiLCJqb2JfaWQiOiJqb2ItYSIsInByaW5jaXBhbF9pZCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJzcGFjZV9pZCI6InNwYWNlLWEiLCJzdWJqZWN0IjoiQWxpY2VcdTk2ZWFcdTAwZTlcdWQ4M2VcdWRkZWEifSwicHV0Ijp7ImF0dGFjaG1lbnRfaWQiOiJhdHRhY2htZW50LWEiLCJhdHRlbXB0X2lkIjoiYXR0ZW1wdC1hIiwib2JqZWN0X2tleSI6Ilx1OGJhZFx1N2VjMy9vYmplY3QtYSIsInBhcnRfbnVtYmVyIjoxLCJyZWNvcmRfaWQiOiJyZWNvcmQtYSIsInNwYWNlX2lkIjoic3BhY2UtYSIsInRva2VuIjoiZ2F0ZXdheS1wdXQtMS1tdXRhdGlvbi1hIiwidXBsb2FkX2lkIjoidXBsb2FkLWEifSwidmVyc2lvbiI6MX0.59394ec7a367ad25f56fdd7849f4960a433de390616c8d6917b8698ba365e0da",
+      "put": {
+        "space_id": "space-a",
+        "record_id": "record-a",
+        "attachment_id": "attachment-a",
+        "attempt_id": "attempt-a",
+        "object_key": "\u8bad\u7ec3/object-a",
+        "upload_id": "upload-a",
+        "part_number": 1,
+        "token": "gateway-put-1-mutation-a"
+      }
+    },
+    {
+      "name": "escapes-int64",
+      "secret": "fixture-settlement-secret-at-least-32-bytes",
+      "authorization": "Bearer fixture-access-token-2",
+      "thumbprint": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "payload": {
+        "version": 1,
+        "authorization_sha256": "59825cebe8b5feb6f6c28423343bdbdcf0b30ef16866b7910699292ac63266e5",
+        "owner": {
+          "principal_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "subject": "line\n\t<&>\\\"",
+          "grant_id": "grant-a",
+          "space_id": "space-a",
+          "job_id": "job-a",
+          "attempt_id": "attempt-a",
+          "component_id": "component-a",
+          "epoch": 9223372036854775807,
+          "certificate_thumbprint": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        "put": {
+          "space_id": "space-a",
+          "record_id": "record-a",
+          "attachment_id": "attachment-a",
+          "attempt_id": "attempt-a",
+          "object_key": "private/object-a",
+          "upload_id": "upload-a",
+          "part_number": 10000,
+          "token": "gateway-put-10000-mutation-a"
+        }
+      },
+      "receipt": "eyJhdXRob3JpemF0aW9uX3NoYTI1NiI6IjU5ODI1Y2ViZThiNWZlYjZmNmMyODQyMzM0M2JkYmRjZjBiMzBlZjE2ODY2Yjc5MTA2OTkyOTJhYzYzMjY2ZTUiLCJvd25lciI6eyJhdHRlbXB0X2lkIjoiYXR0ZW1wdC1hIiwiY2VydGlmaWNhdGVfdGh1bWJwcmludCI6Inh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHgiLCJjb21wb25lbnRfaWQiOiJjb21wb25lbnQtYSIsImVwb2NoIjo5MjIzMzcyMDM2ODU0Nzc1ODA3LCJncmFudF9pZCI6ImdyYW50LWEiLCJqb2JfaWQiOiJqb2ItYSIsInByaW5jaXBhbF9pZCI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJzcGFjZV9pZCI6InNwYWNlLWEiLCJzdWJqZWN0IjoibGluZVxuXHQ8Jj5cXFwiIn0sInB1dCI6eyJhdHRhY2htZW50X2lkIjoiYXR0YWNobWVudC1hIiwiYXR0ZW1wdF9pZCI6ImF0dGVtcHQtYSIsIm9iamVjdF9rZXkiOiJwcml2YXRlL29iamVjdC1hIiwicGFydF9udW1iZXIiOjEwMDAwLCJyZWNvcmRfaWQiOiJyZWNvcmQtYSIsInNwYWNlX2lkIjoic3BhY2UtYSIsInRva2VuIjoiZ2F0ZXdheS1wdXQtMTAwMDAtbXV0YXRpb24tYSIsInVwbG9hZF9pZCI6InVwbG9hZC1hIn0sInZlcnNpb24iOjF9.50a58d41e9cb4d2bc93acaea4e44471e1e58765a3816ecfd40126c3932b09f2e",
+      "put": {
+        "space_id": "space-a",
+        "record_id": "record-a",
+        "attachment_id": "attachment-a",
+        "attempt_id": "attempt-a",
+        "object_key": "private/object-a",
+        "upload_id": "upload-a",
+        "part_number": 10000,
+        "token": "gateway-put-10000-mutation-a"
+      }
+    }
+  ]
+}

@@ -1,0 +1,2160 @@
+{
+  "revisions": [
+    "0001_manager",
+    "0002_artifact_locator",
+    "0003_administrative_audit"
+  ],
+  "tables": [
+    {
+      "columns": [
+        {
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "cookie_hash",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "verifier",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "nonce",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "expires_at",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "used_at",
+          "nullable": true,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE auth_login_attempts (\n\tid VARCHAR(64) NOT NULL, \n\tcookie_hash VARCHAR(64) NOT NULL, \n\tverifier TEXT NOT NULL, \n\tnonce VARCHAR(128) NOT NULL, \n\texpires_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tused_at TIMESTAMP WITH TIME ZONE, \n\tPRIMARY KEY (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE auth_login_attempts (\n\tid VARCHAR(64) NOT NULL, \n\tcookie_hash VARCHAR(64) NOT NULL, \n\tverifier TEXT NOT NULL, \n\tnonce VARCHAR(128) NOT NULL, \n\texpires_at DATETIME NOT NULL, \n\tused_at DATETIME, \n\tPRIMARY KEY (id)\n)\n\n"
+      },
+      "indexes": [
+        {
+          "create": {
+            "postgresql": "CREATE INDEX ix_auth_login_attempts_expires_at ON auth_login_attempts (expires_at)",
+            "sqlite": "CREATE INDEX ix_auth_login_attempts_expires_at ON auth_login_attempts (expires_at)"
+          },
+          "name": "ix_auth_login_attempts_expires_at"
+        }
+      ],
+      "name": "auth_login_attempts"
+    },
+    {
+      "columns": [
+        {
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "time",
+          "name": "expires_at",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE auth_logout_replays (\n\tid VARCHAR(64) NOT NULL, \n\texpires_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tPRIMARY KEY (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE auth_logout_replays (\n\tid VARCHAR(64) NOT NULL, \n\texpires_at DATETIME NOT NULL, \n\tPRIMARY KEY (id)\n)\n\n"
+      },
+      "indexes": [
+        {
+          "create": {
+            "postgresql": "CREATE INDEX ix_auth_logout_replays_expires_at ON auth_logout_replays (expires_at)",
+            "sqlite": "CREATE INDEX ix_auth_logout_replays_expires_at ON auth_logout_replays (expires_at)"
+          },
+          "name": "ix_auth_logout_replays_expires_at"
+        }
+      ],
+      "name": "auth_logout_replays"
+    },
+    {
+      "columns": [
+        {
+          "default": {
+            "kind": "id"
+          },
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "actor_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "operation",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "resource_type",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "resource_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "json",
+          "name": "before_json",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "json",
+          "name": "after_json",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_admin_audit (\n\tid VARCHAR(32) NOT NULL, \n\tactor_id VARCHAR(256) NOT NULL, \n\toperation VARCHAR(64) NOT NULL, \n\tresource_type VARCHAR(64) NOT NULL, \n\tresource_id VARCHAR(256) NOT NULL, \n\tbefore_json JSONB, \n\tafter_json JSONB, \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tCHECK (length(actor_id) BETWEEN 1 AND 256 AND length(operation) BETWEEN 1 AND 64 AND length(resource_type) BETWEEN 1 AND 64 AND length(resource_id) BETWEEN 1 AND 256)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_admin_audit (\n\tid VARCHAR(32) NOT NULL, \n\tactor_id VARCHAR(256) NOT NULL, \n\toperation VARCHAR(64) NOT NULL, \n\tresource_type VARCHAR(64) NOT NULL, \n\tresource_id VARCHAR(256) NOT NULL, \n\tbefore_json JSON, \n\tafter_json JSON, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tCHECK (length(actor_id) BETWEEN 1 AND 256 AND length(operation) BETWEEN 1 AND 64 AND length(resource_type) BETWEEN 1 AND 64 AND length(resource_id) BETWEEN 1 AND 256)\n)\n\n"
+      },
+      "indexes": [
+        {
+          "create": {
+            "postgresql": "CREATE INDEX ix_jm_admin_audit_actor ON jm_admin_audit (actor_id, created_at, id)",
+            "sqlite": "CREATE INDEX ix_jm_admin_audit_actor ON jm_admin_audit (actor_id, created_at, id)"
+          },
+          "name": "ix_jm_admin_audit_actor"
+        },
+        {
+          "create": {
+            "postgresql": "CREATE INDEX ix_jm_admin_audit_resource ON jm_admin_audit (resource_type, resource_id, created_at, id)",
+            "sqlite": "CREATE INDEX ix_jm_admin_audit_resource ON jm_admin_audit (resource_type, resource_id, created_at, id)"
+          },
+          "name": "ix_jm_admin_audit_resource"
+        }
+      ],
+      "name": "jm_admin_audit"
+    },
+    {
+      "columns": [
+        {
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "principal_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "issuer",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "subject",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "provider_sid",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "csrf_hash",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "access_token",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "last_seen_at",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "checked_at",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "expires_at",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "absolute_expires_at",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "revoked_at",
+          "nullable": true,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_auth_sessions (\n\tid VARCHAR(64) NOT NULL, \n\tprincipal_id VARCHAR(256) NOT NULL, \n\tissuer VARCHAR(1024) NOT NULL, \n\tsubject VARCHAR(256) NOT NULL, \n\tprovider_sid VARCHAR(256), \n\tcsrf_hash VARCHAR(64) NOT NULL, \n\taccess_token TEXT, \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tlast_seen_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tchecked_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\texpires_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tabsolute_expires_at TIMESTAMP WITH TIME ZONE, \n\trevoked_at TIMESTAMP WITH TIME ZONE, \n\tPRIMARY KEY (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_auth_sessions (\n\tid VARCHAR(64) NOT NULL, \n\tprincipal_id VARCHAR(256) NOT NULL, \n\tissuer VARCHAR(1024) NOT NULL, \n\tsubject VARCHAR(256) NOT NULL, \n\tprovider_sid VARCHAR(256), \n\tcsrf_hash VARCHAR(64) NOT NULL, \n\taccess_token TEXT, \n\tcreated_at DATETIME NOT NULL, \n\tlast_seen_at DATETIME NOT NULL, \n\tchecked_at DATETIME NOT NULL, \n\texpires_at DATETIME NOT NULL, \n\tabsolute_expires_at DATETIME, \n\trevoked_at DATETIME, \n\tPRIMARY KEY (id)\n)\n\n"
+      },
+      "indexes": [
+        {
+          "create": {
+            "postgresql": "CREATE INDEX ix_jm_sessions_expiry ON jm_auth_sessions (expires_at)",
+            "sqlite": "CREATE INDEX ix_jm_sessions_expiry ON jm_auth_sessions (expires_at)"
+          },
+          "name": "ix_jm_sessions_expiry"
+        },
+        {
+          "create": {
+            "postgresql": "CREATE INDEX ix_jm_sessions_principal ON jm_auth_sessions (principal_id, revoked_at)",
+            "sqlite": "CREATE INDEX ix_jm_sessions_principal ON jm_auth_sessions (principal_id, revoked_at)"
+          },
+          "name": "ix_jm_sessions_principal"
+        }
+      ],
+      "name": "jm_auth_sessions"
+    },
+    {
+      "columns": [
+        {
+          "kind": "value",
+          "name": "scope",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "principal_id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "key",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "request_hash",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "json",
+          "name": "response_json",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 200
+          },
+          "kind": "value",
+          "name": "status_code",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_idempotency (\n\tscope VARCHAR(128) NOT NULL, \n\tprincipal_id VARCHAR(256) NOT NULL, \n\tkey VARCHAR(256) NOT NULL, \n\trequest_hash VARCHAR(64) NOT NULL, \n\tresponse_json JSONB NOT NULL, \n\tstatus_code INTEGER NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tPRIMARY KEY (scope, principal_id, key)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_idempotency (\n\tscope VARCHAR(128) NOT NULL, \n\tprincipal_id VARCHAR(256) NOT NULL, \n\t\"key\" VARCHAR(256) NOT NULL, \n\trequest_hash VARCHAR(64) NOT NULL, \n\tresponse_json JSON NOT NULL, \n\tstatus_code INTEGER NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (scope, principal_id, \"key\")\n)\n\n"
+      },
+      "indexes": [],
+      "name": "jm_idempotency"
+    },
+    {
+      "columns": [
+        {
+          "default": {
+            "kind": "id"
+          },
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "name",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "node_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 0
+          },
+          "kind": "value",
+          "name": "cpu_millicores",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 0
+          },
+          "kind": "value",
+          "name": "memory_bytes",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 0
+          },
+          "kind": "value",
+          "name": "disk_bytes",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "list"
+          },
+          "kind": "json",
+          "name": "gpu_uuids",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "list"
+          },
+          "kind": "json",
+          "name": "gpu_profiles",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "list"
+          },
+          "kind": "json",
+          "name": "sandbox_profiles",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": false
+          },
+          "kind": "bool",
+          "name": "healthy",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": false
+          },
+          "kind": "bool",
+          "name": "quarantined",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 1
+          },
+          "kind": "value",
+          "name": "version",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "map"
+          },
+          "kind": "json",
+          "name": "details_json",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "updated_at",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_pools (\n\tid VARCHAR(128) NOT NULL, \n\tname VARCHAR(200) NOT NULL, \n\tnode_id VARCHAR(128) NOT NULL, \n\tcpu_millicores BIGINT NOT NULL, \n\tmemory_bytes BIGINT NOT NULL, \n\tdisk_bytes BIGINT NOT NULL, \n\tgpu_uuids JSONB NOT NULL, \n\tgpu_profiles JSONB NOT NULL, \n\tsandbox_profiles JSONB NOT NULL, \n\thealthy BOOLEAN NOT NULL, \n\tquarantined BOOLEAN NOT NULL, \n\tversion INTEGER NOT NULL, \n\tdetails_json JSONB NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tCHECK (cpu_millicores >= 0 AND memory_bytes >= 0 AND disk_bytes >= 0 AND version >= 1)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_pools (\n\tid VARCHAR(128) NOT NULL, \n\tname VARCHAR(200) NOT NULL, \n\tnode_id VARCHAR(128) NOT NULL, \n\tcpu_millicores BIGINT NOT NULL, \n\tmemory_bytes BIGINT NOT NULL, \n\tdisk_bytes BIGINT NOT NULL, \n\tgpu_uuids JSON NOT NULL, \n\tgpu_profiles JSON NOT NULL, \n\tsandbox_profiles JSON NOT NULL, \n\thealthy BOOLEAN NOT NULL, \n\tquarantined BOOLEAN NOT NULL, \n\tversion INTEGER NOT NULL, \n\tdetails_json JSON NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tCHECK (cpu_millicores >= 0 AND memory_bytes >= 0 AND disk_bytes >= 0 AND version >= 1)\n)\n\n"
+      },
+      "indexes": [],
+      "name": "jm_pools"
+    },
+    {
+      "columns": [
+        {
+          "default": {
+            "kind": "id"
+          },
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "name",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 90
+          },
+          "kind": "value",
+          "name": "retention_days",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "quota_cpu_millicores",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "quota_memory_bytes",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "quota_disk_bytes",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "quota_gpus",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "max_active_jobs",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "map"
+          },
+          "kind": "json",
+          "name": "quotas_json",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 0
+          },
+          "kind": "value",
+          "name": "retained_bytes",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 1
+          },
+          "kind": "value",
+          "name": "version",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_projects (\n\tid VARCHAR(128) NOT NULL, \n\tname VARCHAR(200) NOT NULL, \n\tretention_days INTEGER NOT NULL, \n\tquota_cpu_millicores BIGINT, \n\tquota_memory_bytes BIGINT, \n\tquota_disk_bytes BIGINT, \n\tquota_gpus INTEGER, \n\tmax_active_jobs INTEGER, \n\tquotas_json JSONB NOT NULL, \n\tretained_bytes BIGINT NOT NULL, \n\tversion INTEGER NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tCHECK (retention_days >= 0), \n\tCHECK (retained_bytes >= 0)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_projects (\n\tid VARCHAR(128) NOT NULL, \n\tname VARCHAR(200) NOT NULL, \n\tretention_days INTEGER NOT NULL, \n\tquota_cpu_millicores BIGINT, \n\tquota_memory_bytes BIGINT, \n\tquota_disk_bytes BIGINT, \n\tquota_gpus INTEGER, \n\tmax_active_jobs INTEGER, \n\tquotas_json JSON NOT NULL, \n\tretained_bytes BIGINT NOT NULL, \n\tversion INTEGER NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tCHECK (retention_days >= 0), \n\tCHECK (retained_bytes >= 0)\n)\n\n"
+      },
+      "indexes": [],
+      "name": "jm_projects"
+    },
+    {
+      "columns": [
+        {
+          "kind": "value",
+          "name": "revision",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "applied_at",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_schema_revisions (\n\trevision VARCHAR(64) NOT NULL, \n\tapplied_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tPRIMARY KEY (revision)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_schema_revisions (\n\trevision VARCHAR(64) NOT NULL, \n\tapplied_at DATETIME NOT NULL, \n\tPRIMARY KEY (revision)\n)\n\n"
+      },
+      "indexes": [],
+      "name": "jm_schema_revisions"
+    },
+    {
+      "columns": [
+        {
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "project_id",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": ""
+          },
+          "kind": "value",
+          "name": "name",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "list"
+          },
+          "kind": "json",
+          "name": "allowed_hosts",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "map"
+          },
+          "kind": "json",
+          "name": "policy_json",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": "approved"
+          },
+          "kind": "value",
+          "name": "status",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "url",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "map"
+          },
+          "kind": "json",
+          "name": "details_json",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "list"
+          },
+          "kind": "json",
+          "name": "allowed_commits",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": true
+          },
+          "kind": "bool",
+          "name": "enabled",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_approved_sources (\n\tid VARCHAR(128) NOT NULL, \n\tproject_id VARCHAR(128), \n\tname VARCHAR(200) NOT NULL, \n\tallowed_hosts JSONB NOT NULL, \n\tpolicy_json JSONB NOT NULL, \n\tstatus VARCHAR(32) NOT NULL, \n\turl VARCHAR(2048) NOT NULL, \n\tdetails_json JSONB NOT NULL, \n\tallowed_commits JSONB NOT NULL, \n\tenabled BOOLEAN NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(project_id) REFERENCES jm_projects (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_approved_sources (\n\tid VARCHAR(128) NOT NULL, \n\tproject_id VARCHAR(128), \n\tname VARCHAR(200) NOT NULL, \n\tallowed_hosts JSON NOT NULL, \n\tpolicy_json JSON NOT NULL, \n\tstatus VARCHAR(32) NOT NULL, \n\turl VARCHAR(2048) NOT NULL, \n\tdetails_json JSON NOT NULL, \n\tallowed_commits JSON NOT NULL, \n\tenabled BOOLEAN NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(project_id) REFERENCES jm_projects (id)\n)\n\n"
+      },
+      "indexes": [],
+      "name": "jm_approved_sources"
+    },
+    {
+      "columns": [
+        {
+          "default": {
+            "kind": "id"
+          },
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "project_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "creator_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "name",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "json",
+          "name": "spec_json",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "spec_hash",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": "QUEUED"
+          },
+          "kind": "value",
+          "name": "state",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "phase",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "json",
+          "name": "queue_reason",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 1
+          },
+          "kind": "value",
+          "name": "version",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 0
+          },
+          "kind": "value",
+          "name": "current_attempt",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 0
+          },
+          "kind": "value",
+          "name": "attempt_count",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 0
+          },
+          "kind": "value",
+          "name": "epoch",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 0
+          },
+          "kind": "value",
+          "name": "backfill_count",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 0
+          },
+          "kind": "value",
+          "name": "current_round",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "target_round",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": "none"
+          },
+          "kind": "value",
+          "name": "cleanup_status",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "error_code",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "outcome_reason",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "deadline_at",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "next_attempt_at",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "updated_at",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "terminated_at",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "artifacts_expire_at",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "purged_at",
+          "nullable": true,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_jobs (\n\tid VARCHAR(32) NOT NULL, \n\tproject_id VARCHAR(128) NOT NULL, \n\tcreator_id VARCHAR(256) NOT NULL, \n\tname VARCHAR(200) NOT NULL, \n\tspec_json JSONB NOT NULL, \n\tspec_hash VARCHAR(64) NOT NULL, \n\tstate VARCHAR(32) NOT NULL, \n\tphase VARCHAR(64), \n\tqueue_reason JSONB, \n\tversion INTEGER NOT NULL, \n\tcurrent_attempt INTEGER NOT NULL, \n\tattempt_count INTEGER NOT NULL, \n\tepoch INTEGER NOT NULL, \n\tbackfill_count INTEGER NOT NULL, \n\tcurrent_round INTEGER NOT NULL, \n\ttarget_round INTEGER NOT NULL, \n\tcleanup_status VARCHAR(32) NOT NULL, \n\terror_code VARCHAR(128), \n\toutcome_reason VARCHAR(128), \n\tdeadline_at TIMESTAMP WITH TIME ZONE, \n\tnext_attempt_at TIMESTAMP WITH TIME ZONE, \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tterminated_at TIMESTAMP WITH TIME ZONE, \n\tartifacts_expire_at TIMESTAMP WITH TIME ZONE, \n\tpurged_at TIMESTAMP WITH TIME ZONE, \n\tPRIMARY KEY (id), \n\tCHECK (state IN ('QUEUED', 'PROVISIONING', 'STARTING', 'RUNNING', 'RECONCILING', 'NEEDS_ATTENTION', 'CANCELLING', 'SUCCEEDED', 'FAILED', 'CANCELLED')), \n\tCHECK (version >= 1 AND epoch >= 0 AND target_round >= 1 AND current_round >= 0 AND backfill_count >= 0), \n\tFOREIGN KEY(project_id) REFERENCES jm_projects (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_jobs (\n\tid VARCHAR(32) NOT NULL, \n\tproject_id VARCHAR(128) NOT NULL, \n\tcreator_id VARCHAR(256) NOT NULL, \n\tname VARCHAR(200) NOT NULL, \n\tspec_json JSON NOT NULL, \n\tspec_hash VARCHAR(64) NOT NULL, \n\tstate VARCHAR(32) NOT NULL, \n\tphase VARCHAR(64), \n\tqueue_reason JSON, \n\tversion INTEGER NOT NULL, \n\tcurrent_attempt INTEGER NOT NULL, \n\tattempt_count INTEGER NOT NULL, \n\tepoch INTEGER NOT NULL, \n\tbackfill_count INTEGER NOT NULL, \n\tcurrent_round INTEGER NOT NULL, \n\ttarget_round INTEGER NOT NULL, \n\tcleanup_status VARCHAR(32) NOT NULL, \n\terror_code VARCHAR(128), \n\toutcome_reason VARCHAR(128), \n\tdeadline_at DATETIME, \n\tnext_attempt_at DATETIME, \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tterminated_at DATETIME, \n\tartifacts_expire_at DATETIME, \n\tpurged_at DATETIME, \n\tPRIMARY KEY (id), \n\tCHECK (state IN ('QUEUED', 'PROVISIONING', 'STARTING', 'RUNNING', 'RECONCILING', 'NEEDS_ATTENTION', 'CANCELLING', 'SUCCEEDED', 'FAILED', 'CANCELLED')), \n\tCHECK (version >= 1 AND epoch >= 0 AND target_round >= 1 AND current_round >= 0 AND backfill_count >= 0), \n\tFOREIGN KEY(project_id) REFERENCES jm_projects (id)\n)\n\n"
+      },
+      "indexes": [
+        {
+          "create": {
+            "postgresql": "CREATE INDEX ix_jm_jobs_project ON jm_jobs (project_id, created_at, id)",
+            "sqlite": "CREATE INDEX ix_jm_jobs_project ON jm_jobs (project_id, created_at, id)"
+          },
+          "name": "ix_jm_jobs_project"
+        },
+        {
+          "create": {
+            "postgresql": "CREATE INDEX ix_jm_jobs_queue ON jm_jobs (state, created_at, id)",
+            "sqlite": "CREATE INDEX ix_jm_jobs_queue ON jm_jobs (state, created_at, id)"
+          },
+          "name": "ix_jm_jobs_queue"
+        }
+      ],
+      "name": "jm_jobs"
+    },
+    {
+      "columns": [
+        {
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "project_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "participant_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "node_id",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "dataset_label",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": true
+          },
+          "kind": "bool",
+          "name": "enabled",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_participant_bindings (\n\tid VARCHAR(128) NOT NULL, \n\tproject_id VARCHAR(128) NOT NULL, \n\tparticipant_id VARCHAR(128) NOT NULL, \n\tnode_id VARCHAR(128), \n\tdataset_label VARCHAR(200) NOT NULL, \n\tenabled BOOLEAN NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(project_id) REFERENCES jm_projects (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_participant_bindings (\n\tid VARCHAR(128) NOT NULL, \n\tproject_id VARCHAR(128) NOT NULL, \n\tparticipant_id VARCHAR(128) NOT NULL, \n\tnode_id VARCHAR(128), \n\tdataset_label VARCHAR(200) NOT NULL, \n\tenabled BOOLEAN NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(project_id) REFERENCES jm_projects (id)\n)\n\n"
+      },
+      "indexes": [],
+      "name": "jm_participant_bindings"
+    },
+    {
+      "columns": [
+        {
+          "kind": "value",
+          "name": "project_id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "principal_id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": "submitter"
+          },
+          "kind": "value",
+          "name": "role",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_project_members (\n\tproject_id VARCHAR(128) NOT NULL, \n\tprincipal_id VARCHAR(256) NOT NULL, \n\trole VARCHAR(24) NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tPRIMARY KEY (project_id, principal_id), \n\tCHECK (role IN ('submitter', 'admin')), \n\tFOREIGN KEY(project_id) REFERENCES jm_projects (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_project_members (\n\tproject_id VARCHAR(128) NOT NULL, \n\tprincipal_id VARCHAR(256) NOT NULL, \n\trole VARCHAR(24) NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (project_id, principal_id), \n\tCHECK (role IN ('submitter', 'admin')), \n\tFOREIGN KEY(project_id) REFERENCES jm_projects (id)\n)\n\n"
+      },
+      "indexes": [],
+      "name": "jm_project_members"
+    },
+    {
+      "columns": [
+        {
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "project_id",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": ""
+          },
+          "kind": "value",
+          "name": "name",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": true
+          },
+          "kind": "bool",
+          "name": "approved",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": "approved"
+          },
+          "kind": "value",
+          "name": "status",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "digest",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": true
+          },
+          "kind": "bool",
+          "name": "enabled",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "map"
+          },
+          "kind": "json",
+          "name": "details_json",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_runtime_images (\n\tid VARCHAR(128) NOT NULL, \n\tproject_id VARCHAR(128), \n\tname VARCHAR(200) NOT NULL, \n\tapproved BOOLEAN NOT NULL, \n\tstatus VARCHAR(32) NOT NULL, \n\tdigest VARCHAR(128) NOT NULL, \n\tenabled BOOLEAN NOT NULL, \n\tdetails_json JSONB NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(project_id) REFERENCES jm_projects (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_runtime_images (\n\tid VARCHAR(128) NOT NULL, \n\tproject_id VARCHAR(128), \n\tname VARCHAR(200) NOT NULL, \n\tapproved BOOLEAN NOT NULL, \n\tstatus VARCHAR(32) NOT NULL, \n\tdigest VARCHAR(128) NOT NULL, \n\tenabled BOOLEAN NOT NULL, \n\tdetails_json JSON NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(project_id) REFERENCES jm_projects (id)\n)\n\n"
+      },
+      "indexes": [],
+      "name": "jm_runtime_images"
+    },
+    {
+      "columns": [
+        {
+          "kind": "value",
+          "name": "reference",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "project_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": true
+          },
+          "kind": "bool",
+          "name": "enabled",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_secret_references (\n\treference VARCHAR(1024), \n\tid VARCHAR(128) NOT NULL, \n\tproject_id VARCHAR(128) NOT NULL, \n\tenabled BOOLEAN NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(project_id) REFERENCES jm_projects (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_secret_references (\n\treference VARCHAR(1024), \n\tid VARCHAR(128) NOT NULL, \n\tproject_id VARCHAR(128) NOT NULL, \n\tenabled BOOLEAN NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(project_id) REFERENCES jm_projects (id)\n)\n\n"
+      },
+      "indexes": [],
+      "name": "jm_secret_references"
+    },
+    {
+      "columns": [
+        {
+          "default": {
+            "kind": "id"
+          },
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "job_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "attempt_number",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "kind",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "name",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "size_bytes",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "sha256",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "storage_key",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "json",
+          "name": "locator_json",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": "available"
+          },
+          "kind": "value",
+          "name": "state",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "expires_at",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "deleted_at",
+          "nullable": true,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_artifacts (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32) NOT NULL, \n\tattempt_number INTEGER, \n\tkind VARCHAR(64) NOT NULL, \n\tname VARCHAR(256) NOT NULL, \n\tsize_bytes BIGINT NOT NULL, \n\tsha256 VARCHAR(64) NOT NULL, \n\tstorage_key VARCHAR(1024) NOT NULL, \n\tlocator_json JSONB, \n\tstate VARCHAR(32) NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\texpires_at TIMESTAMP WITH TIME ZONE, \n\tdeleted_at TIMESTAMP WITH TIME ZONE, \n\tPRIMARY KEY (id), \n\tCHECK (size_bytes >= 0), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_artifacts (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32) NOT NULL, \n\tattempt_number INTEGER, \n\tkind VARCHAR(64) NOT NULL, \n\tname VARCHAR(256) NOT NULL, \n\tsize_bytes BIGINT NOT NULL, \n\tsha256 VARCHAR(64) NOT NULL, \n\tstorage_key VARCHAR(1024) NOT NULL, \n\tlocator_json JSON, \n\tstate VARCHAR(32) NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\texpires_at DATETIME, \n\tdeleted_at DATETIME, \n\tPRIMARY KEY (id), \n\tCHECK (size_bytes >= 0), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id)\n)\n\n"
+      },
+      "indexes": [
+        {
+          "create": {
+            "postgresql": "CREATE INDEX ix_jm_artifacts_job ON jm_artifacts (job_id, created_at, id)",
+            "sqlite": "CREATE INDEX ix_jm_artifacts_job ON jm_artifacts (job_id, created_at, id)"
+          },
+          "name": "ix_jm_artifacts_job"
+        }
+      ],
+      "name": "jm_artifacts"
+    },
+    {
+      "columns": [
+        {
+          "default": {
+            "kind": "id"
+          },
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "job_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "number",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "epoch",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": "RESERVED"
+          },
+          "kind": "value",
+          "name": "state",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "node_id",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "started_at",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "ended_at",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "heartbeat_at",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": false
+          },
+          "kind": "bool",
+          "name": "revocation_confirmed",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": false
+          },
+          "kind": "bool",
+          "name": "termination_confirmed",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": "none"
+          },
+          "kind": "value",
+          "name": "publication_status",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "error_code",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "map"
+          },
+          "kind": "json",
+          "name": "details_json",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "map"
+          },
+          "kind": "json",
+          "name": "resources_json",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_attempts (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32) NOT NULL, \n\tnumber INTEGER NOT NULL, \n\tepoch INTEGER NOT NULL, \n\tstate VARCHAR(32) NOT NULL, \n\tnode_id VARCHAR(128), \n\tstarted_at TIMESTAMP WITH TIME ZONE, \n\tended_at TIMESTAMP WITH TIME ZONE, \n\theartbeat_at TIMESTAMP WITH TIME ZONE, \n\trevocation_confirmed BOOLEAN NOT NULL, \n\ttermination_confirmed BOOLEAN NOT NULL, \n\tpublication_status VARCHAR(32) NOT NULL, \n\terror_code VARCHAR(128), \n\tdetails_json JSONB NOT NULL, \n\tresources_json JSONB NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (job_id, number), \n\tUNIQUE (job_id, epoch), \n\tCHECK (number >= 1 AND epoch >= 1), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_attempts (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32) NOT NULL, \n\tnumber INTEGER NOT NULL, \n\tepoch INTEGER NOT NULL, \n\tstate VARCHAR(32) NOT NULL, \n\tnode_id VARCHAR(128), \n\tstarted_at DATETIME, \n\tended_at DATETIME, \n\theartbeat_at DATETIME, \n\trevocation_confirmed BOOLEAN NOT NULL, \n\ttermination_confirmed BOOLEAN NOT NULL, \n\tpublication_status VARCHAR(32) NOT NULL, \n\terror_code VARCHAR(128), \n\tdetails_json JSON NOT NULL, \n\tresources_json JSON NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (job_id, number), \n\tUNIQUE (job_id, epoch), \n\tCHECK (number >= 1 AND epoch >= 1), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id)\n)\n\n"
+      },
+      "indexes": [],
+      "name": "jm_attempts"
+    },
+    {
+      "columns": [
+        {
+          "default": {
+            "kind": "id"
+          },
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "job_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "sequence",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "kind",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "actor_id",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "version",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "epoch",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "map"
+          },
+          "kind": "json",
+          "name": "data_json",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_events (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32) NOT NULL, \n\tsequence BIGINT NOT NULL, \n\tkind VARCHAR(64) NOT NULL, \n\tactor_id VARCHAR(256), \n\tversion INTEGER, \n\tepoch INTEGER, \n\tdata_json JSONB NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (job_id, sequence), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_events (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32) NOT NULL, \n\tsequence BIGINT NOT NULL, \n\tkind VARCHAR(64) NOT NULL, \n\tactor_id VARCHAR(256), \n\tversion INTEGER, \n\tepoch INTEGER, \n\tdata_json JSON NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (job_id, sequence), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id)\n)\n\n"
+      },
+      "indexes": [
+        {
+          "create": {
+            "postgresql": "CREATE INDEX ix_jm_events_job ON jm_events (job_id, sequence)",
+            "sqlite": "CREATE INDEX ix_jm_events_job ON jm_events (job_id, sequence)"
+          },
+          "name": "ix_jm_events_job"
+        }
+      ],
+      "name": "jm_events"
+    },
+    {
+      "columns": [
+        {
+          "kind": "value",
+          "name": "job_id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "principal_id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "role",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "granted_by",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_job_members (\n\tjob_id VARCHAR(32) NOT NULL, \n\tprincipal_id VARCHAR(256) NOT NULL, \n\trole VARCHAR(24) NOT NULL, \n\tgranted_by VARCHAR(256), \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tPRIMARY KEY (job_id, principal_id), \n\tCHECK (role IN ('reader', 'operator', 'admin')), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_job_members (\n\tjob_id VARCHAR(32) NOT NULL, \n\tprincipal_id VARCHAR(256) NOT NULL, \n\trole VARCHAR(24) NOT NULL, \n\tgranted_by VARCHAR(256), \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (job_id, principal_id), \n\tCHECK (role IN ('reader', 'operator', 'admin')), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id)\n)\n\n"
+      },
+      "indexes": [
+        {
+          "create": {
+            "postgresql": "CREATE INDEX ix_jm_members_principal ON jm_job_members (principal_id, job_id)",
+            "sqlite": "CREATE INDEX ix_jm_members_principal ON jm_job_members (principal_id, job_id)"
+          },
+          "name": "ix_jm_members_principal"
+        }
+      ],
+      "name": "jm_job_members"
+    },
+    {
+      "columns": [
+        {
+          "default": {
+            "kind": "id"
+          },
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "job_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "attempt_number",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "component",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "sequence",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "data",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 0
+          },
+          "kind": "value",
+          "name": "charged_bytes",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "expires_at",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "deleted_at",
+          "nullable": true,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_log_chunks (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32) NOT NULL, \n\tattempt_number INTEGER, \n\tcomponent VARCHAR(128) NOT NULL, \n\tsequence BIGINT NOT NULL, \n\tdata TEXT NOT NULL, \n\tcharged_bytes BIGINT DEFAULT '0' NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\texpires_at TIMESTAMP WITH TIME ZONE, \n\tdeleted_at TIMESTAMP WITH TIME ZONE, \n\tPRIMARY KEY (id), \n\tCHECK (length(data) <= 65536 AND charged_bytes >= 0), \n\tUNIQUE (job_id, component, sequence), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_log_chunks (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32) NOT NULL, \n\tattempt_number INTEGER, \n\tcomponent VARCHAR(128) NOT NULL, \n\tsequence BIGINT NOT NULL, \n\tdata TEXT NOT NULL, \n\tcharged_bytes BIGINT DEFAULT '0' NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\texpires_at DATETIME, \n\tdeleted_at DATETIME, \n\tPRIMARY KEY (id), \n\tCHECK (length(data) <= 65536 AND charged_bytes >= 0), \n\tUNIQUE (job_id, component, sequence), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id)\n)\n\n"
+      },
+      "indexes": [],
+      "name": "jm_log_chunks"
+    },
+    {
+      "columns": [
+        {
+          "default": {
+            "kind": "id"
+          },
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "job_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "attempt_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "component_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "pool_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "cpu_millicores",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "memory_bytes",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "disk_bytes",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 0
+          },
+          "kind": "value",
+          "name": "gpu_count",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "epoch",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": "RESERVED"
+          },
+          "kind": "value",
+          "name": "state",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": false
+          },
+          "kind": "bool",
+          "name": "acknowledged",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": false
+          },
+          "kind": "bool",
+          "name": "termination_confirmed",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "map"
+          },
+          "kind": "json",
+          "name": "details_json",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "released_at",
+          "nullable": true,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_allocations (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32) NOT NULL, \n\tattempt_id VARCHAR(32) NOT NULL, \n\tcomponent_id VARCHAR(128) NOT NULL, \n\tpool_id VARCHAR(128) NOT NULL, \n\tcpu_millicores BIGINT NOT NULL, \n\tmemory_bytes BIGINT NOT NULL, \n\tdisk_bytes BIGINT NOT NULL, \n\tgpu_count INTEGER NOT NULL, \n\tepoch INTEGER NOT NULL, \n\tstate VARCHAR(32) NOT NULL, \n\tacknowledged BOOLEAN NOT NULL, \n\ttermination_confirmed BOOLEAN NOT NULL, \n\tdetails_json JSONB NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\treleased_at TIMESTAMP WITH TIME ZONE, \n\tPRIMARY KEY (id), \n\tCHECK (cpu_millicores >= 0 AND memory_bytes >= 0 AND disk_bytes >= 0 AND gpu_count >= 0 AND epoch >= 1), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id), \n\tFOREIGN KEY(attempt_id) REFERENCES jm_attempts (id), \n\tFOREIGN KEY(pool_id) REFERENCES jm_pools (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_allocations (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32) NOT NULL, \n\tattempt_id VARCHAR(32) NOT NULL, \n\tcomponent_id VARCHAR(128) NOT NULL, \n\tpool_id VARCHAR(128) NOT NULL, \n\tcpu_millicores BIGINT NOT NULL, \n\tmemory_bytes BIGINT NOT NULL, \n\tdisk_bytes BIGINT NOT NULL, \n\tgpu_count INTEGER NOT NULL, \n\tepoch INTEGER NOT NULL, \n\tstate VARCHAR(32) NOT NULL, \n\tacknowledged BOOLEAN NOT NULL, \n\ttermination_confirmed BOOLEAN NOT NULL, \n\tdetails_json JSON NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\treleased_at DATETIME, \n\tPRIMARY KEY (id), \n\tCHECK (cpu_millicores >= 0 AND memory_bytes >= 0 AND disk_bytes >= 0 AND gpu_count >= 0 AND epoch >= 1), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id), \n\tFOREIGN KEY(attempt_id) REFERENCES jm_attempts (id), \n\tFOREIGN KEY(pool_id) REFERENCES jm_pools (id)\n)\n\n"
+      },
+      "indexes": [
+        {
+          "create": {
+            "postgresql": "CREATE INDEX ix_jm_alloc_pool ON jm_allocations (pool_id, state)",
+            "sqlite": "CREATE INDEX ix_jm_alloc_pool ON jm_allocations (pool_id, state)"
+          },
+          "name": "ix_jm_alloc_pool"
+        },
+        {
+          "create": {
+            "postgresql": "CREATE UNIQUE INDEX uq_jm_live_component ON jm_allocations (job_id, component_id) WHERE released_at IS NULL",
+            "sqlite": "CREATE UNIQUE INDEX uq_jm_live_component ON jm_allocations (job_id, component_id) WHERE released_at IS NULL"
+          },
+          "name": "uq_jm_live_component"
+        }
+      ],
+      "name": "jm_allocations"
+    },
+    {
+      "columns": [
+        {
+          "default": {
+            "kind": "id"
+          },
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "job_id",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "attempt_id",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "attempt_number",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "topic",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "map"
+          },
+          "kind": "json",
+          "name": "payload_json",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "idempotency_key",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": "pending"
+          },
+          "kind": "value",
+          "name": "state",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "lease_owner",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "lease_until",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 0
+          },
+          "kind": "value",
+          "name": "attempts",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "next_attempt_at",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "last_error",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_outbox (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32), \n\tattempt_id VARCHAR(32), \n\tattempt_number INTEGER, \n\ttopic VARCHAR(64) NOT NULL, \n\tpayload_json JSONB NOT NULL, \n\tidempotency_key VARCHAR(256) NOT NULL, \n\tstate VARCHAR(32) NOT NULL, \n\tlease_owner VARCHAR(128), \n\tlease_until TIMESTAMP WITH TIME ZONE, \n\tattempts INTEGER NOT NULL, \n\tnext_attempt_at TIMESTAMP WITH TIME ZONE, \n\tlast_error VARCHAR(256), \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id), \n\tFOREIGN KEY(attempt_id) REFERENCES jm_attempts (id), \n\tUNIQUE (idempotency_key)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_outbox (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32), \n\tattempt_id VARCHAR(32), \n\tattempt_number INTEGER, \n\ttopic VARCHAR(64) NOT NULL, \n\tpayload_json JSON NOT NULL, \n\tidempotency_key VARCHAR(256) NOT NULL, \n\tstate VARCHAR(32) NOT NULL, \n\tlease_owner VARCHAR(128), \n\tlease_until DATETIME, \n\tattempts INTEGER NOT NULL, \n\tnext_attempt_at DATETIME, \n\tlast_error VARCHAR(256), \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id), \n\tFOREIGN KEY(attempt_id) REFERENCES jm_attempts (id), \n\tUNIQUE (idempotency_key)\n)\n\n"
+      },
+      "indexes": [
+        {
+          "create": {
+            "postgresql": "CREATE INDEX ix_jm_outbox_dispatch ON jm_outbox (state, next_attempt_at, lease_until, id)",
+            "sqlite": "CREATE INDEX ix_jm_outbox_dispatch ON jm_outbox (state, next_attempt_at, lease_until, id)"
+          },
+          "name": "ix_jm_outbox_dispatch"
+        }
+      ],
+      "name": "jm_outbox"
+    },
+    {
+      "columns": [
+        {
+          "default": {
+            "kind": "id"
+          },
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "job_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "attempt_id",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": "owner"
+          },
+          "kind": "value",
+          "name": "component_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "operation",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "idempotency_key",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": "planned"
+          },
+          "kind": "value",
+          "name": "state",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "map"
+          },
+          "kind": "json",
+          "name": "desired_json",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "map"
+          },
+          "kind": "json",
+          "name": "observed_json",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "last_error",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "updated_at",
+          "nullable": false,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_provisioning_operations (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32) NOT NULL, \n\tattempt_id VARCHAR(32), \n\tcomponent_id VARCHAR(128) NOT NULL, \n\toperation VARCHAR(64) NOT NULL, \n\tidempotency_key VARCHAR(256) NOT NULL, \n\tstate VARCHAR(32) NOT NULL, \n\tdesired_json JSONB NOT NULL, \n\tobserved_json JSONB NOT NULL, \n\tlast_error VARCHAR(256), \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id), \n\tFOREIGN KEY(attempt_id) REFERENCES jm_attempts (id), \n\tUNIQUE (idempotency_key)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_provisioning_operations (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32) NOT NULL, \n\tattempt_id VARCHAR(32), \n\tcomponent_id VARCHAR(128) NOT NULL, \n\toperation VARCHAR(64) NOT NULL, \n\tidempotency_key VARCHAR(256) NOT NULL, \n\tstate VARCHAR(32) NOT NULL, \n\tdesired_json JSON NOT NULL, \n\tobserved_json JSON NOT NULL, \n\tlast_error VARCHAR(256), \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id), \n\tFOREIGN KEY(attempt_id) REFERENCES jm_attempts (id), \n\tUNIQUE (idempotency_key)\n)\n\n"
+      },
+      "indexes": [],
+      "name": "jm_provisioning_operations"
+    },
+    {
+      "columns": [
+        {
+          "default": {
+            "kind": "id"
+          },
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "job_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "attempt_id",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": "owner"
+          },
+          "kind": "value",
+          "name": "component_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "kind",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "external_id",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "map"
+          },
+          "kind": "json",
+          "name": "ownership_json",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "map"
+          },
+          "kind": "json",
+          "name": "details_json",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": "planned"
+          },
+          "kind": "value",
+          "name": "state",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": false
+          },
+          "kind": "bool",
+          "name": "retained",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "value",
+            "value": 0
+          },
+          "kind": "value",
+          "name": "size_bytes",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "default": {
+            "kind": "now"
+          },
+          "kind": "time",
+          "name": "updated_at",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "deleted_at",
+          "nullable": true,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_provisioning_resources (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32) NOT NULL, \n\tattempt_id VARCHAR(32), \n\tcomponent_id VARCHAR(128) NOT NULL, \n\tkind VARCHAR(64) NOT NULL, \n\texternal_id VARCHAR(1024), \n\townership_json JSONB NOT NULL, \n\tdetails_json JSONB NOT NULL, \n\tstate VARCHAR(32) NOT NULL, \n\tretained BOOLEAN NOT NULL, \n\tsize_bytes BIGINT NOT NULL, \n\tcreated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tupdated_at TIMESTAMP WITH TIME ZONE NOT NULL, \n\tdeleted_at TIMESTAMP WITH TIME ZONE, \n\tPRIMARY KEY (id), \n\tUNIQUE (kind, external_id), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id), \n\tFOREIGN KEY(attempt_id) REFERENCES jm_attempts (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_provisioning_resources (\n\tid VARCHAR(32) NOT NULL, \n\tjob_id VARCHAR(32) NOT NULL, \n\tattempt_id VARCHAR(32), \n\tcomponent_id VARCHAR(128) NOT NULL, \n\tkind VARCHAR(64) NOT NULL, \n\texternal_id VARCHAR(1024), \n\townership_json JSON NOT NULL, \n\tdetails_json JSON NOT NULL, \n\tstate VARCHAR(32) NOT NULL, \n\tretained BOOLEAN NOT NULL, \n\tsize_bytes BIGINT NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tdeleted_at DATETIME, \n\tPRIMARY KEY (id), \n\tUNIQUE (kind, external_id), \n\tFOREIGN KEY(job_id) REFERENCES jm_jobs (id), \n\tFOREIGN KEY(attempt_id) REFERENCES jm_attempts (id)\n)\n\n"
+      },
+      "indexes": [
+        {
+          "create": {
+            "postgresql": "CREATE INDEX ix_jm_resource_job ON jm_provisioning_resources (job_id, state)",
+            "sqlite": "CREATE INDEX ix_jm_resource_job ON jm_provisioning_resources (job_id, state)"
+          },
+          "name": "ix_jm_resource_job"
+        }
+      ],
+      "name": "jm_provisioning_resources"
+    },
+    {
+      "columns": [
+        {
+          "default": {
+            "kind": "id"
+          },
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "value",
+          "name": "allocation_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "pool_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "gpu_uuid",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "time",
+          "name": "released_at",
+          "nullable": true,
+          "primary_key": false
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_gpu_allocations (\n\tid VARCHAR(32) NOT NULL, \n\tallocation_id VARCHAR(32) NOT NULL, \n\tpool_id VARCHAR(128) NOT NULL, \n\tgpu_uuid VARCHAR(128) NOT NULL, \n\treleased_at TIMESTAMP WITH TIME ZONE, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(allocation_id) REFERENCES jm_allocations (id), \n\tFOREIGN KEY(pool_id) REFERENCES jm_pools (id)\n)\n\n",
+        "sqlite": "\nCREATE TABLE jm_gpu_allocations (\n\tid VARCHAR(32) NOT NULL, \n\tallocation_id VARCHAR(32) NOT NULL, \n\tpool_id VARCHAR(128) NOT NULL, \n\tgpu_uuid VARCHAR(128) NOT NULL, \n\treleased_at DATETIME, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(allocation_id) REFERENCES jm_allocations (id), \n\tFOREIGN KEY(pool_id) REFERENCES jm_pools (id)\n)\n\n"
+      },
+      "indexes": [
+        {
+          "create": {
+            "postgresql": "CREATE UNIQUE INDEX uq_jm_live_gpu ON jm_gpu_allocations (gpu_uuid) WHERE released_at IS NULL",
+            "sqlite": "CREATE UNIQUE INDEX uq_jm_live_gpu ON jm_gpu_allocations (gpu_uuid) WHERE released_at IS NULL"
+          },
+          "name": "uq_jm_live_gpu"
+        }
+      ],
+      "name": "jm_gpu_allocations"
+    }
+  ],
+  "upgrades": {
+    "jm_artifacts": {
+      "column": "locator_json",
+      "definition": {
+        "postgresql": "locator_json JSONB",
+        "sqlite": "locator_json JSON"
+      }
+    },
+    "jm_log_chunks": {
+      "column": "charged_bytes",
+      "definition": {
+        "postgresql": "charged_bytes BIGINT DEFAULT '0' NOT NULL CHECK (charged_bytes >= 0)",
+        "sqlite": "charged_bytes BIGINT DEFAULT '0' NOT NULL CHECK (charged_bytes >= 0)"
+      }
+    }
+  }
+}

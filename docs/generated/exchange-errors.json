@@ -44,6 +44,30 @@
       "status_expression": "response.status_code"
     },
     {
+      "call": "_error",
+      "code_expression": "exc.code",
+      "source": "gateway_api.py:183",
+      "status_expression": "exc.status"
+    },
+    {
+      "call": "_error",
+      "code_expression": "exc.code",
+      "source": "gateway_api.py:187",
+      "status_expression": "503 if exc.retryable else 409"
+    },
+    {
+      "call": "_error",
+      "code_expression": "'not_found' if exc.status_code == 404 else 'http_error'",
+      "source": "gateway_api.py:196",
+      "status_expression": "exc.status_code"
+    },
+    {
+      "call": "ExchangeError",
+      "code_expression": "exc.code",
+      "source": "gateway_api.py:228",
+      "status_expression": "503"
+    },
+    {
       "call": "ExchangeError",
       "code_expression": "error.get('code', 'blob_transfer_failed')",
       "source": "transfer_client.py:287",
@@ -295,6 +319,7 @@
       "code": "database_unavailable",
       "sources": [
         "api.py:304",
+        "gateway_api.py:230",
         "migrations.py:118"
       ],
       "statuses": [
@@ -370,6 +395,24 @@
       ],
       "statuses": [
         410
+      ]
+    },
+    {
+      "code": "forbidden_transfer_credentials",
+      "sources": [
+        "gateway_api.py:209"
+      ],
+      "statuses": [
+        400
+      ]
+    },
+    {
+      "code": "gateway_put_receipt_too_large",
+      "sources": [
+        "gateway_api.py:89"
+      ],
+      "statuses": [
+        503
       ]
     },
     {
@@ -450,7 +493,8 @@
     {
       "code": "internal_error",
       "sources": [
-        "api.py:334"
+        "api.py:334",
+        "gateway_api.py:202"
       ],
       "statuses": [
         500
@@ -515,7 +559,8 @@
       "code": "invalid_backend_assertion",
       "sources": [
         "api.py:286",
-        "auth.py:46"
+        "auth.py:46",
+        "gateway_api.py:207"
       ],
       "statuses": [
         401
@@ -572,9 +617,11 @@
     {
       "code": "invalid_gateway_put_receipt",
       "sources": [
+        "gateway_api.py:140",
         "transfers.py:206"
       ],
       "statuses": [
+        401,
         422
       ]
     },
@@ -639,6 +686,34 @@
       "code": "invalid_limit",
       "sources": [
         "application.py:655"
+      ],
+      "statuses": [
+        422
+      ]
+    },
+    {
+      "code": "invalid_origin_descriptor",
+      "sources": [
+        "gateway_api.py:290"
+      ],
+      "statuses": [
+        503
+      ]
+    },
+    {
+      "code": "invalid_origin_mutation_fence",
+      "sources": [
+        "gateway_api.py:301"
+      ],
+      "statuses": [
+        503
+      ]
+    },
+    {
+      "code": "invalid_part_number",
+      "sources": [
+        "gateway_api.py:285",
+        "gateway_api.py:296"
       ],
       "statuses": [
         422
@@ -735,7 +810,20 @@
     {
       "code": "invalid_request",
       "sources": [
-        "api.py:323"
+        "api.py:323",
+        "gateway_api.py:192",
+        "gateway_api.py:224",
+        "gateway_api.py:314",
+        "gateway_api.py:67"
+      ],
+      "statuses": [
+        422
+      ]
+    },
+    {
+      "code": "invalid_resource_identifier",
+      "sources": [
+        "gateway_api.py:215"
       ],
       "statuses": [
         422
@@ -870,6 +958,24 @@
       ]
     },
     {
+      "code": "invalid_workload_token",
+      "sources": [
+        "gateway_api.py:247"
+      ],
+      "statuses": [
+        401
+      ]
+    },
+    {
+      "code": "json_required",
+      "sources": [
+        "gateway_api.py:221"
+      ],
+      "statuses": [
+        415
+      ]
+    },
+    {
       "code": "last_admin",
       "sources": [
         "application.py:447"
@@ -978,6 +1084,15 @@
       ],
       "statuses": [
         422
+      ]
+    },
+    {
+      "code": "noncanonical_transfer_target",
+      "sources": [
+        "gateway_api.py:213"
+      ],
+      "statuses": [
+        400
       ]
     },
     {
@@ -1122,7 +1237,8 @@
     {
       "code": "provisioning_principal_required",
       "sources": [
-        "application.py:115"
+        "application.py:115",
+        "gateway_api.py:265"
       ],
       "statuses": [
         403
@@ -1277,6 +1393,15 @@
       ]
     },
     {
+      "code": "resource_not_found",
+      "sources": [
+        "gateway_api.py:249"
+      ],
+      "statuses": [
+        404
+      ]
+    },
+    {
       "code": "result_provenance_mismatch",
       "sources": [
         "profiles.py:123",
@@ -1357,6 +1482,24 @@
       ]
     },
     {
+      "code": "storage_backend_mismatch",
+      "sources": [
+        "gateway_api.py:275"
+      ],
+      "statuses": [
+        503
+      ]
+    },
+    {
+      "code": "storage_backend_unavailable",
+      "sources": [
+        "gateway_api.py:269"
+      ],
+      "statuses": [
+        503
+      ]
+    },
+    {
       "code": "storage_mutation_uncertain",
       "sources": [
         "transfers.py:175",
@@ -1411,6 +1554,15 @@
       ],
       "statuses": [
         422
+      ]
+    },
+    {
+      "code": "unexpected_transfer_query",
+      "sources": [
+        "gateway_api.py:211"
+      ],
+      "statuses": [
+        400
       ]
     },
     {
@@ -1537,9 +1689,11 @@
     {
       "code": "workload_identity_required",
       "sources": [
+        "gateway_api.py:238",
         "transfers.py:152"
       ],
       "statuses": [
+        401,
         403
       ]
     },

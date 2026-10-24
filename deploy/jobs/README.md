@@ -1,5 +1,18 @@
 # Job manager deployment
 
+For the native binary and cutover procedure, start with the [Go manager guide](../../docs/GO_JOB_MANAGER.md).
+This runbook supplies shared topology, qualification, and operational contracts;
+select the intended Go or reference Python executable explicitly. Runtime helpers
+and sandboxed Python FL application adapters retain their existing role.
+
+The Go transfer gateway uses the independent Exchange private HTTPS backend.
+The [native Go Exchange service](../../docs/GO_EXCHANGE.md) can supply that
+backend with `serve-gateway-backend`; keep API, managed ingress, and private
+transfer listeners distinct. The Python reference remains a rollback option.
+Apply the Go guide’s [backend configuration](../../docs/GO_JOB_MANAGER.md#independent-exchange-private-transfer-backend)
+before using the gateway configuration fragments below. Its control interface
+is separate from both the public Exchange API and the managed workload ingress.
+
 Use this runbook to configure the HF²L manager, its PostgreSQL database, controller, trusted node agent, shared Exchange service, transfer gateway, and per-execution proxies. The repository provides runtime helpers and service commands; it does not provide a complete production stack installer. Read the [operator guide](../../docs/JOB_MANAGER.md) for configuration, catalog approvals, job creation, and lifecycle actions.
 
 ## Trusted service boundaries

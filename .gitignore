@@ -6,6 +6,9 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 build/
+# The Go manager build orchestrator is source, not a Python build output.
+!packages/jobs/internal/build/
+!packages/jobs/internal/build/**
 dist/
 *.egg-info/
 

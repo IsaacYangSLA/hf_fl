@@ -1,0 +1,35 @@
+{
+  "source": "Python standard-library JSON/hashlib/hmac expressions from hf2l_exchange.domain.principal_id and auth.backend_assertion_headers",
+  "principals": [
+    {
+      "issuer": "https://issuer.example",
+      "subject": "alice",
+      "id": "ca50b4bc232aad6124ffcf970821d608fa442c2074dc9b4afc89dc1a15853fff"
+    },
+    {
+      "issuer": "https://issuer.example/界",
+      "subject": "Alice 🧠\n<admin> ",
+      "id": "39087a89973a3b8a1c7e46f54461c8d81218c65e6f6ad6fffa0e5d900a8ddfbd"
+    }
+  ],
+  "assertions": [
+    {
+      "secret": "public-test-secret-used-only-in-oracle",
+      "method": "get",
+      "target": "/v2/spaces/space-a?limit=1",
+      "authorization": "Bearer public-fixture-token",
+      "thumbprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "timestamp": 1730000000,
+      "signature": "7f246c866011dab5e36762564fd9edcde8df7490fbcbe0965a14b3000d3f91b7"
+    },
+    {
+      "secret": "public-test-secret-used-only-in-oracle",
+      "method": "post",
+      "target": "/v2/spaces/é?query=☃&kind=<test>",
+      "authorization": "Bearer public-fixture-token",
+      "thumbprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "timestamp": 1730000000,
+      "signature": "b419758d4b49b66ff2e1183d86583835e514dfee2026474270d377e161956ec3"
+    }
+  ]
+}

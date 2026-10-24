@@ -1,0 +1,2281 @@
+{
+  "cases": [
+    {
+      "args": [
+        "training.update"
+      ],
+      "name": "generic.v1_policy_training.update",
+      "operation": "policy_defaults",
+      "profile": "generic.v1",
+      "result": {
+        "publish_roles": [
+          "contributor",
+          "publisher"
+        ],
+        "visibility": "shared"
+      }
+    },
+    {
+      "args": [
+        "model.global"
+      ],
+      "name": "generic.v1_policy_model.global",
+      "operation": "policy_defaults",
+      "profile": "generic.v1",
+      "result": {
+        "publish_roles": [
+          "contributor",
+          "publisher"
+        ],
+        "visibility": "shared"
+      }
+    },
+    {
+      "args": [
+        "other"
+      ],
+      "name": "generic.v1_policy_other",
+      "operation": "policy_defaults",
+      "profile": "generic.v1",
+      "result": {
+        "publish_roles": [
+          "contributor",
+          "publisher"
+        ],
+        "visibility": "shared"
+      }
+    },
+    {
+      "args": [
+        "training.update"
+      ],
+      "name": "fedavg.v1_policy_training.update",
+      "operation": "policy_defaults",
+      "profile": "fedavg.v1",
+      "result": {
+        "publish_roles": [
+          "contributor"
+        ],
+        "visibility": "private"
+      }
+    },
+    {
+      "args": [
+        "model.global"
+      ],
+      "name": "fedavg.v1_policy_model.global",
+      "operation": "policy_defaults",
+      "profile": "fedavg.v1",
+      "result": {
+        "publish_roles": [
+          "publisher"
+        ],
+        "visibility": "shared"
+      }
+    },
+    {
+      "args": [
+        "other"
+      ],
+      "name": "fedavg.v1_policy_other",
+      "operation": "policy_defaults",
+      "profile": "fedavg.v1",
+      "result": {
+        "publish_roles": [
+          "contributor",
+          "publisher"
+        ],
+        "visibility": "shared"
+      }
+    },
+    {
+      "args": [
+        "training.update",
+        [],
+        "shared"
+      ],
+      "error": {
+        "code": "profile_policy_conflict",
+        "detail": "profile_policy_conflict",
+        "status": 422
+      },
+      "name": "validate_policy_training.update_[]",
+      "operation": "validate_policy",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "model.global",
+        [],
+        "shared"
+      ],
+      "error": {
+        "code": "profile_policy_conflict",
+        "detail": "profile_policy_conflict",
+        "status": 422
+      },
+      "name": "validate_policy_model.global_[]",
+      "operation": "validate_policy",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        [
+          "contributor"
+        ],
+        "shared"
+      ],
+      "name": "validate_policy_training.update_['contributor']",
+      "operation": "validate_policy",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "model.global",
+        [
+          "contributor"
+        ],
+        "shared"
+      ],
+      "error": {
+        "code": "profile_policy_conflict",
+        "detail": "profile_policy_conflict",
+        "status": 422
+      },
+      "name": "validate_policy_model.global_['contributor']",
+      "operation": "validate_policy",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        [
+          "contributor",
+          "contributor"
+        ],
+        "shared"
+      ],
+      "name": "validate_policy_training.update_['contributor', 'contributor']",
+      "operation": "validate_policy",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "model.global",
+        [
+          "contributor",
+          "contributor"
+        ],
+        "shared"
+      ],
+      "error": {
+        "code": "profile_policy_conflict",
+        "detail": "profile_policy_conflict",
+        "status": 422
+      },
+      "name": "validate_policy_model.global_['contributor', 'contributor']",
+      "operation": "validate_policy",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        [
+          "publisher"
+        ],
+        "shared"
+      ],
+      "error": {
+        "code": "profile_policy_conflict",
+        "detail": "profile_policy_conflict",
+        "status": 422
+      },
+      "name": "validate_policy_training.update_['publisher']",
+      "operation": "validate_policy",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "model.global",
+        [
+          "publisher"
+        ],
+        "shared"
+      ],
+      "name": "validate_policy_model.global_['publisher']",
+      "operation": "validate_policy",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "training.update",
+        [
+          "publisher",
+          "contributor"
+        ],
+        "shared"
+      ],
+      "error": {
+        "code": "profile_policy_conflict",
+        "detail": "profile_policy_conflict",
+        "status": 422
+      },
+      "name": "validate_policy_training.update_['publisher', 'contributor']",
+      "operation": "validate_policy",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "model.global",
+        [
+          "publisher",
+          "contributor"
+        ],
+        "shared"
+      ],
+      "error": {
+        "code": "profile_policy_conflict",
+        "detail": "profile_policy_conflict",
+        "status": 422
+      },
+      "name": "validate_policy_model.global_['publisher', 'contributor']",
+      "operation": "validate_policy",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        {},
+        [
+          {
+            "participant": "Alice"
+          }
+        ]
+      ],
+      "name": "bindings_16",
+      "operation": "validate_bindings",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        {
+          "participant": null
+        },
+        [
+          {
+            "participant": "Alice"
+          }
+        ]
+      ],
+      "name": "bindings_17",
+      "operation": "validate_bindings",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        {
+          "participant": ""
+        },
+        [
+          {
+            "participant": "Alice"
+          }
+        ]
+      ],
+      "error": {
+        "code": "invalid_participant",
+        "detail": "invalid_participant",
+        "status": 422
+      },
+      "name": "bindings_18",
+      "operation": "validate_bindings",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        {
+          "participant": 1
+        },
+        [
+          {
+            "participant": "Alice"
+          }
+        ]
+      ],
+      "error": {
+        "code": "invalid_participant",
+        "detail": "invalid_participant",
+        "status": 422
+      },
+      "name": "bindings_19",
+      "operation": "validate_bindings",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        {
+          "participant": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+        },
+        [
+          {
+            "participant": "Alice"
+          }
+        ]
+      ],
+      "name": "bindings_20",
+      "operation": "validate_bindings",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        {
+          "participant": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        },
+        [
+          {
+            "participant": "Alice"
+          }
+        ]
+      ],
+      "error": {
+        "code": "invalid_participant",
+        "detail": "invalid_participant",
+        "status": 422
+      },
+      "name": "bindings_21",
+      "operation": "validate_bindings",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        {
+          "participant": "Alice"
+        },
+        [
+          {
+            "participant": "Alice"
+          }
+        ]
+      ],
+      "error": {
+        "code": "participant_already_bound",
+        "detail": "participant_already_bound",
+        "status": 409
+      },
+      "name": "bindings_22",
+      "operation": "validate_bindings",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "base_record_id": "base"
+        }
+      ],
+      "name": "base_training.update",
+      "operation": "record_base_id",
+      "profile": "fedavg.v1",
+      "result": "base"
+    },
+    {
+      "args": [
+        "model.global",
+        {
+          "base_record_id": "base"
+        }
+      ],
+      "name": "base_model.global",
+      "operation": "record_base_id",
+      "profile": "fedavg.v1",
+      "result": "base"
+    },
+    {
+      "args": [
+        "other",
+        {
+          "base_record_id": "base"
+        }
+      ],
+      "name": "base_other",
+      "operation": "record_base_id",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "base_record_id": "base",
+          "sample_count": 1
+        },
+        {
+          "participant": "Alice"
+        }
+      ],
+      "name": "sample_26",
+      "operation": "validate_record",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "base_record_id": "base",
+          "sample_count": 1.0
+        },
+        {
+          "participant": "Alice"
+        }
+      ],
+      "error": {
+        "code": "invalid_sample_count",
+        "detail": "invalid_sample_count",
+        "status": 422
+      },
+      "name": "sample_27",
+      "operation": "validate_record",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "base_record_id": "base",
+          "sample_count": true
+        },
+        {
+          "participant": "Alice"
+        }
+      ],
+      "error": {
+        "code": "invalid_sample_count",
+        "detail": "invalid_sample_count",
+        "status": 422
+      },
+      "name": "sample_28",
+      "operation": "validate_record",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "base_record_id": "base",
+          "sample_count": 0
+        },
+        {
+          "participant": "Alice"
+        }
+      ],
+      "error": {
+        "code": "invalid_sample_count",
+        "detail": "invalid_sample_count",
+        "status": 422
+      },
+      "name": "sample_29",
+      "operation": "validate_record",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "base_record_id": "base",
+          "sample_count": -1
+        },
+        {
+          "participant": "Alice"
+        }
+      ],
+      "error": {
+        "code": "invalid_sample_count",
+        "detail": "invalid_sample_count",
+        "status": 422
+      },
+      "name": "sample_30",
+      "operation": "validate_record",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "base_record_id": "base",
+          "sample_count": 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+        },
+        {
+          "participant": "Alice"
+        }
+      ],
+      "name": "sample_31",
+      "operation": "validate_record",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "base_record_id": "base",
+          "sample_count": "1"
+        },
+        {
+          "participant": "Alice"
+        }
+      ],
+      "error": {
+        "code": "invalid_sample_count",
+        "detail": "invalid_sample_count",
+        "status": 422
+      },
+      "name": "sample_32",
+      "operation": "validate_record",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        {},
+        {}
+      ],
+      "error": {
+        "code": "participant_binding_required",
+        "detail": "participant_binding_required",
+        "status": 422
+      },
+      "name": "update_invalid_33",
+      "operation": "validate_record",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "base_record_id": "base",
+          "sample_count": 1
+        },
+        {}
+      ],
+      "error": {
+        "code": "participant_binding_required",
+        "detail": "participant_binding_required",
+        "status": 422
+      },
+      "name": "update_invalid_34",
+      "operation": "validate_record",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "base_record_id": "",
+          "sample_count": 1
+        },
+        {
+          "participant": "A"
+        }
+      ],
+      "error": {
+        "code": "round_base_required",
+        "detail": "round_base_required",
+        "status": 422
+      },
+      "name": "update_invalid_35",
+      "operation": "validate_record",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "base_record_id": "base",
+          "participant": null,
+          "sample_count": 1
+        },
+        {
+          "participant": "A"
+        }
+      ],
+      "error": {
+        "code": "participant_is_server_attributed",
+        "detail": "participant_is_server_attributed",
+        "status": 422
+      },
+      "name": "update_invalid_36",
+      "operation": "validate_record",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "model.global",
+        {},
+        {}
+      ],
+      "name": "global_37",
+      "operation": "validate_record",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "model.global",
+        {
+          "inputs": []
+        },
+        {}
+      ],
+      "name": "global_38",
+      "operation": "validate_record",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "model.global",
+        {
+          "inputs": [
+            "a",
+            "b"
+          ]
+        },
+        {}
+      ],
+      "name": "global_39",
+      "operation": "validate_record",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "model.global",
+        {
+          "inputs": [
+            "a",
+            "a"
+          ]
+        },
+        {}
+      ],
+      "error": {
+        "code": "invalid_result_inputs",
+        "detail": "invalid_result_inputs",
+        "status": 422
+      },
+      "name": "global_40",
+      "operation": "validate_record",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "model.global",
+        {
+          "inputs": [
+            ""
+          ]
+        },
+        {}
+      ],
+      "error": {
+        "code": "invalid_result_inputs",
+        "detail": "invalid_result_inputs",
+        "status": 422
+      },
+      "name": "global_41",
+      "operation": "validate_record",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "model.global",
+        {
+          "inputs": null
+        },
+        {}
+      ],
+      "error": {
+        "code": "invalid_result_inputs",
+        "detail": "invalid_result_inputs",
+        "status": 422
+      },
+      "name": "global_42",
+      "operation": "validate_record",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "model.global",
+        {
+          "base_record_id": 1
+        },
+        {}
+      ],
+      "error": {
+        "code": "invalid_round_base",
+        "detail": "invalid_round_base",
+        "status": 422
+      },
+      "name": "global_43",
+      "operation": "validate_record",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "model.global",
+        {
+          "base_record_id": null
+        },
+        {}
+      ],
+      "name": "global_44",
+      "operation": "validate_record",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "base_record_id": "base",
+          "sample_count": 2
+        },
+        {
+          "participant": "Alice"
+        },
+        {
+          "participant": "Alice"
+        }
+      ],
+      "name": "publish_valid",
+      "operation": "validate_publish",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "base_record_id": "base",
+          "sample_count": 2
+        },
+        {
+          "participant": "Alice"
+        },
+        {
+          "participant": "other"
+        }
+      ],
+      "error": {
+        "code": "participant_binding_changed",
+        "detail": "participant_binding_changed",
+        "status": 409
+      },
+      "name": "publish_changed",
+      "operation": "validate_publish",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "base_record_id": "base",
+          "sample_count": 2
+        },
+        {
+          "number": 1,
+          "participant": "Alice"
+        },
+        {
+          "number": 1.0,
+          "participant": "Alice"
+        }
+      ],
+      "name": "publish_numeric_binding_equal",
+      "operation": "validate_publish",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "main",
+        "base"
+      ],
+      "name": "selection_main",
+      "operation": "selection_spec",
+      "profile": "fedavg.v1",
+      "result": {
+        "base_id": "base",
+        "kind": "training.update",
+        "minimum": 2,
+        "minimum_error": "insufficient_participants"
+      }
+    },
+    {
+      "args": [
+        "other",
+        "base"
+      ],
+      "name": "selection_other",
+      "operation": "selection_spec",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        null
+      ],
+      "name": "eligible_50",
+      "operation": "input_eligible",
+      "profile": "fedavg.v1",
+      "result": false
+    },
+    {
+      "args": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        null
+      ],
+      "error": {
+        "code": "input_participant_revoked",
+        "detail": "input_participant_revoked",
+        "status": 409
+      },
+      "name": "current_51",
+      "operation": "validate_input_current",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        {}
+      ],
+      "name": "eligible_52",
+      "operation": "input_eligible",
+      "profile": "fedavg.v1",
+      "result": false
+    },
+    {
+      "args": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        {}
+      ],
+      "error": {
+        "code": "input_participant_revoked",
+        "detail": "input_participant_revoked",
+        "status": 409
+      },
+      "name": "current_53",
+      "operation": "validate_input_current",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        {
+          "bindings": {
+            "participant": "Alice"
+          },
+          "roles": [
+            "reader"
+          ]
+        }
+      ],
+      "name": "eligible_54",
+      "operation": "input_eligible",
+      "profile": "fedavg.v1",
+      "result": false
+    },
+    {
+      "args": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        {
+          "bindings": {
+            "participant": "Alice"
+          },
+          "roles": [
+            "reader"
+          ]
+        }
+      ],
+      "error": {
+        "code": "input_participant_revoked",
+        "detail": "input_participant_revoked",
+        "status": 409
+      },
+      "name": "current_55",
+      "operation": "validate_input_current",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        {
+          "bindings": {
+            "participant": "Alice"
+          },
+          "roles": [
+            "contributor"
+          ]
+        }
+      ],
+      "name": "eligible_56",
+      "operation": "input_eligible",
+      "profile": "fedavg.v1",
+      "result": true
+    },
+    {
+      "args": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        {
+          "bindings": {
+            "participant": "Alice"
+          },
+          "roles": [
+            "contributor"
+          ]
+        }
+      ],
+      "name": "current_57",
+      "operation": "validate_input_current",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        {
+          "bindings": {
+            "participant": "other"
+          },
+          "roles": [
+            "contributor"
+          ]
+        }
+      ],
+      "name": "eligible_58",
+      "operation": "input_eligible",
+      "profile": "fedavg.v1",
+      "result": false
+    },
+    {
+      "args": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        {
+          "bindings": {
+            "participant": "other"
+          },
+          "roles": [
+            "contributor"
+          ]
+        }
+      ],
+      "error": {
+        "code": "input_participant_revoked",
+        "detail": "input_participant_revoked",
+        "status": 409
+      },
+      "name": "current_59",
+      "operation": "validate_input_current",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        {
+          "id": "g",
+          "kind": "model.global",
+          "metadata": {
+            "base_record_id": "base",
+            "inputs": [
+              "a",
+              "b"
+            ]
+          }
+        },
+        null
+      ],
+      "name": "eligible_other",
+      "operation": "input_eligible",
+      "profile": "fedavg.v1",
+      "result": true
+    },
+    {
+      "args": [
+        {
+          "id": "g",
+          "kind": "model.global",
+          "metadata": {
+            "base_record_id": "base",
+            "inputs": [
+              "a",
+              "b"
+            ]
+          }
+        },
+        [
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "a",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 1
+          },
+          {
+            "creator_bindings": {
+              "participant": "Bob"
+            },
+            "id": "b",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 3
+            },
+            "published_at": 2
+          }
+        ],
+        "main"
+      ],
+      "name": "complete_61",
+      "operation": "completion_inputs",
+      "profile": "fedavg.v1",
+      "result": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        {
+          "creator_bindings": {
+            "participant": "Bob"
+          },
+          "id": "b",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 3
+          },
+          "published_at": 2
+        }
+      ]
+    },
+    {
+      "args": [
+        {
+          "metadata": {
+            "inputs": [
+              "b",
+              "a"
+            ]
+          }
+        },
+        [
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "a",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 1
+          },
+          {
+            "creator_bindings": {
+              "participant": "Bob"
+            },
+            "id": "b",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 3
+            },
+            "published_at": 2
+          }
+        ],
+        "main"
+      ],
+      "name": "complete_62",
+      "operation": "completion_inputs",
+      "profile": "fedavg.v1",
+      "result": [
+        {
+          "creator_bindings": {
+            "participant": "Bob"
+          },
+          "id": "b",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 3
+          },
+          "published_at": 2
+        },
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        }
+      ]
+    },
+    {
+      "args": [
+        {
+          "metadata": {
+            "inputs": [
+              "a"
+            ]
+          }
+        },
+        [
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "a",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 1
+          },
+          {
+            "creator_bindings": {
+              "participant": "Bob"
+            },
+            "id": "b",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 3
+            },
+            "published_at": 2
+          }
+        ],
+        "main"
+      ],
+      "error": {
+        "code": "insufficient_participants",
+        "detail": "insufficient_participants",
+        "status": 409
+      },
+      "name": "complete_63",
+      "operation": "completion_inputs",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        {
+          "metadata": {
+            "inputs": [
+              "a",
+              "a"
+            ]
+          }
+        },
+        [
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "a",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 1
+          },
+          {
+            "creator_bindings": {
+              "participant": "Bob"
+            },
+            "id": "b",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 3
+            },
+            "published_at": 2
+          }
+        ],
+        "main"
+      ],
+      "error": {
+        "code": "invalid_result_inputs",
+        "detail": "invalid_result_inputs",
+        "status": 409
+      },
+      "name": "complete_64",
+      "operation": "completion_inputs",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        {
+          "metadata": {
+            "inputs": [
+              "a",
+              "missing"
+            ]
+          }
+        },
+        [
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "a",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 1
+          },
+          {
+            "creator_bindings": {
+              "participant": "Bob"
+            },
+            "id": "b",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 3
+            },
+            "published_at": 2
+          }
+        ],
+        "main"
+      ],
+      "error": {
+        "code": "result_provenance_mismatch",
+        "detail": "result_provenance_mismatch",
+        "status": 409
+      },
+      "name": "complete_65",
+      "operation": "completion_inputs",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        {
+          "metadata": {
+            "inputs": null
+          }
+        },
+        [
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "a",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 1
+          },
+          {
+            "creator_bindings": {
+              "participant": "Bob"
+            },
+            "id": "b",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 3
+            },
+            "published_at": 2
+          }
+        ],
+        "main"
+      ],
+      "error": {
+        "code": "invalid_result_inputs",
+        "detail": "invalid_result_inputs",
+        "status": 409
+      },
+      "name": "complete_66",
+      "operation": "completion_inputs",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        {
+          "metadata": {
+            "inputs": null
+          }
+        },
+        [
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "a",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 1
+          },
+          {
+            "creator_bindings": {
+              "participant": "Bob"
+            },
+            "id": "b",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 3
+            },
+            "published_at": 2
+          }
+        ],
+        "other"
+      ],
+      "name": "complete_nonmain",
+      "operation": "completion_inputs",
+      "profile": "fedavg.v1",
+      "result": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        {
+          "creator_bindings": {
+            "participant": "Bob"
+          },
+          "id": "b",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 3
+          },
+          "published_at": 2
+        }
+      ]
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "type": "object"
+        }
+      ],
+      "name": "type_update_68",
+      "operation": "validate_type",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "properties": {
+            "base_record_id": {
+              "type": "string"
+            },
+            "sample_count": {
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "name": "type_update_69",
+      "operation": "validate_type",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "additionalProperties": false,
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "profile_schema_conflict",
+        "detail": "base_record_id",
+        "status": 422
+      },
+      "name": "type_update_70",
+      "operation": "validate_type",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "properties": {
+            "sample_count": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "profile_schema_conflict",
+        "detail": "sample_count",
+        "status": 422
+      },
+      "name": "type_update_71",
+      "operation": "validate_type",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "allOf": [],
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "profile_schema_conflict",
+        "detail": "profile_schema_conflict",
+        "status": 422
+      },
+      "name": "type_update_72",
+      "operation": "validate_type",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "additionalProperties": {},
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "profile_schema_conflict",
+        "detail": "profile_schema_conflict",
+        "status": 422
+      },
+      "name": "type_update_73",
+      "operation": "validate_type",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "description": "x",
+          "type": "object"
+        }
+      ],
+      "name": "type_update_74",
+      "operation": "validate_type",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "main",
+        {
+          "kind": "model.global",
+          "metadata": {}
+        },
+        [],
+        null
+      ],
+      "name": "reference_75",
+      "operation": "validate_reference",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "main",
+        {
+          "id": "g",
+          "kind": "model.global",
+          "metadata": {
+            "base_record_id": "base",
+            "inputs": [
+              "a",
+              "b"
+            ]
+          }
+        },
+        [
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "a",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 1
+          },
+          {
+            "creator_bindings": {
+              "participant": "Bob"
+            },
+            "id": "b",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 3
+            },
+            "published_at": 2
+          }
+        ],
+        "base"
+      ],
+      "name": "reference_76",
+      "operation": "validate_reference",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "main",
+        {
+          "id": "g",
+          "kind": "model.global",
+          "metadata": {
+            "base_record_id": "base",
+            "inputs": [
+              "a",
+              "b"
+            ]
+          }
+        },
+        [],
+        "base"
+      ],
+      "error": {
+        "code": "coordination_required",
+        "detail": "coordination_required",
+        "status": 409
+      },
+      "name": "reference_77",
+      "operation": "validate_reference",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "main",
+        {
+          "kind": "training.update"
+        },
+        [],
+        null
+      ],
+      "error": {
+        "code": "profile_reference_kind",
+        "detail": "profile_reference_kind",
+        "status": 422
+      },
+      "name": "reference_78",
+      "operation": "validate_reference",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "main",
+        {
+          "kind": "model.global",
+          "metadata": {
+            "inputs": [
+              "a"
+            ]
+          }
+        },
+        [],
+        null
+      ],
+      "error": {
+        "code": "initial_model_has_provenance",
+        "detail": "initial_model_has_provenance",
+        "status": 409
+      },
+      "name": "reference_79",
+      "operation": "validate_reference",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "main",
+        {
+          "id": "g",
+          "kind": "model.global",
+          "metadata": {
+            "base_record_id": "base",
+            "inputs": [
+              "a",
+              "b"
+            ]
+          }
+        },
+        [
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "a",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 1
+          }
+        ],
+        "base"
+      ],
+      "error": {
+        "code": "insufficient_participants",
+        "detail": "insufficient_participants",
+        "status": 409
+      },
+      "name": "reference_80",
+      "operation": "validate_reference",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "main",
+        {
+          "id": "g",
+          "kind": "model.global",
+          "metadata": {
+            "base_record_id": "base",
+            "inputs": [
+              "a",
+              "b"
+            ]
+          }
+        },
+        [
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "a",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 1
+          },
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "a",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 1
+          }
+        ],
+        "base"
+      ],
+      "error": {
+        "code": "invalid_round_inputs",
+        "detail": "invalid_round_inputs",
+        "status": 409
+      },
+      "name": "reference_81",
+      "operation": "validate_reference",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "main",
+        {
+          "kind": "model.global",
+          "metadata": {
+            "base_record_id": "other",
+            "inputs": [
+              "a",
+              "b"
+            ]
+          }
+        },
+        [
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "a",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 1
+          },
+          {
+            "creator_bindings": {
+              "participant": "Bob"
+            },
+            "id": "b",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 3
+            },
+            "published_at": 2
+          }
+        ],
+        "base"
+      ],
+      "error": {
+        "code": "result_provenance_mismatch",
+        "detail": "result_provenance_mismatch",
+        "status": 409
+      },
+      "name": "reference_82",
+      "operation": "validate_reference",
+      "profile": "fedavg.v1"
+    },
+    {
+      "args": [
+        "other",
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        [],
+        null
+      ],
+      "name": "reference_nonmain",
+      "operation": "validate_reference",
+      "profile": "fedavg.v1",
+      "result": null
+    },
+    {
+      "args": [
+        [
+          {
+            "creator_bindings": {
+              "participant": "Bob"
+            },
+            "id": "b",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 3
+            },
+            "published_at": 2
+          },
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "a",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 1
+          },
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "c",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 2
+          },
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "d",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 2
+          },
+          {
+            "creator_bindings": {
+              "participant": "Bob"
+            },
+            "id": "e",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "other"
+            },
+            "published_at": 2
+          },
+          {
+            "creator_bindings": {
+              "participant": "Bob"
+            },
+            "id": "f",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 3
+            },
+            "published_at": 2,
+            "state": "withdrawn"
+          }
+        ],
+        "base"
+      ],
+      "name": "select_latest_sorted",
+      "operation": "select_inputs",
+      "profile": "fedavg.v1",
+      "result": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "d",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 2
+        },
+        {
+          "creator_bindings": {
+            "participant": "Bob"
+          },
+          "id": "b",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 3
+          },
+          "published_at": 2
+        }
+      ]
+    },
+    {
+      "args": [
+        "model.global",
+        [],
+        "private"
+      ],
+      "name": "generic_validate_policy",
+      "operation": "validate_policy",
+      "profile": "generic.v1",
+      "result": null
+    },
+    {
+      "args": [
+        {
+          "participant": 1
+        },
+        []
+      ],
+      "name": "generic_validate_bindings",
+      "operation": "validate_bindings",
+      "profile": "generic.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "training.update",
+        {},
+        {},
+        {}
+      ],
+      "name": "generic_validate_publish",
+      "operation": "validate_publish",
+      "profile": "generic.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "main",
+        "base"
+      ],
+      "name": "generic_selection_spec",
+      "operation": "selection_spec",
+      "profile": "generic.v1",
+      "result": null
+    },
+    {
+      "args": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        null
+      ],
+      "name": "generic_input_eligible",
+      "operation": "input_eligible",
+      "profile": "generic.v1",
+      "result": true
+    },
+    {
+      "args": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        null
+      ],
+      "name": "generic_validate_input_current",
+      "operation": "validate_input_current",
+      "profile": "generic.v1",
+      "result": null
+    },
+    {
+      "args": [
+        {},
+        [
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "a",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 1
+          },
+          {
+            "creator_bindings": {
+              "participant": "Bob"
+            },
+            "id": "b",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 3
+            },
+            "published_at": 2
+          }
+        ],
+        "main"
+      ],
+      "name": "generic_completion_inputs",
+      "operation": "completion_inputs",
+      "profile": "generic.v1",
+      "result": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        {
+          "creator_bindings": {
+            "participant": "Bob"
+          },
+          "id": "b",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 3
+          },
+          "published_at": 2
+        }
+      ]
+    },
+    {
+      "args": [
+        "training.update",
+        {
+          "allOf": []
+        }
+      ],
+      "name": "generic_validate_type",
+      "operation": "validate_type",
+      "profile": "generic.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "training.update",
+        {},
+        {}
+      ],
+      "name": "generic_validate_record",
+      "operation": "validate_record",
+      "profile": "generic.v1",
+      "result": null
+    },
+    {
+      "args": [
+        "main",
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        [],
+        "base"
+      ],
+      "name": "generic_validate_reference",
+      "operation": "validate_reference",
+      "profile": "generic.v1",
+      "result": null
+    },
+    {
+      "args": [
+        [
+          {
+            "creator_bindings": {
+              "participant": "Alice"
+            },
+            "id": "a",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 2
+            },
+            "published_at": 1
+          },
+          {
+            "creator_bindings": {
+              "participant": "Bob"
+            },
+            "id": "b",
+            "kind": "training.update",
+            "metadata": {
+              "base_record_id": "base",
+              "sample_count": 3
+            },
+            "published_at": 2
+          }
+        ],
+        "other"
+      ],
+      "name": "generic_select_inputs",
+      "operation": "select_inputs",
+      "profile": "generic.v1",
+      "result": [
+        {
+          "creator_bindings": {
+            "participant": "Alice"
+          },
+          "id": "a",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 2
+          },
+          "published_at": 1
+        },
+        {
+          "creator_bindings": {
+            "participant": "Bob"
+          },
+          "id": "b",
+          "kind": "training.update",
+          "metadata": {
+            "base_record_id": "base",
+            "sample_count": 3
+          },
+          "published_at": 2
+        }
+      ]
+    }
+  ],
+  "python": "3.11.17"
+}

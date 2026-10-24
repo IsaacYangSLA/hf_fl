@@ -1,0 +1,54 @@
+{
+  "allow_local_http": false,
+  "auth": {
+    "admin_subject": "",
+    "allow_local_http": false,
+    "audience": "exchange",
+    "download_broker_principal_ids": [],
+    "issuer": "",
+    "jwks_cache_seconds": 300,
+    "jwks_timeout": 5,
+    "jwks_url": "",
+    "provisioning_principal_ids": [],
+    "public_key": "",
+    "trusted_backend_secret": "",
+    "workload_audience": "exchange-workload",
+    "workload_issuer": "",
+    "workload_public_key": ""
+  },
+  "coordination_seconds": 300,
+  "database": {
+    "pool_overflow": 10,
+    "pool_recycle": 1800,
+    "pool_size": 5,
+    "pool_timeout": 30,
+    "url": "sqlite:///exchange-v2.db"
+  },
+  "docs_enabled": false,
+  "draft_seconds": 86400,
+  "max_body_bytes": 1048576,
+  "storage": {
+    "access_key": "",
+    "allow_local_http": false,
+    "bucket": "",
+    "endpoint": "",
+    "grant_seconds": 300,
+    "part_size": 8388608,
+    "prefix": "exchange-v2/",
+    "public_endpoint": "",
+    "region": "us-east-1",
+    "secret_key": "",
+    "session_token": ""
+  },
+  "worker": {
+    "batch_size": 32,
+    "cleanup_concurrency": 2,
+    "event_retention_seconds": 2592000,
+    "failure_seconds": 86400,
+    "lease_seconds": 300,
+    "operation_retention_seconds": 864000,
+    "poll_seconds": 1,
+    "recover_after": 30,
+    "verify_concurrency": 2
+  }
+}

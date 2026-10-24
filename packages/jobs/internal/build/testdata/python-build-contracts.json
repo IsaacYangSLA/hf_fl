@@ -1,0 +1,117 @@
+{
+  "config": {
+    "schema_version": 1,
+    "role": "build",
+    "job_id": "job-a",
+    "attempt_id": "attempt-a",
+    "component_id": "build",
+    "epoch": 1,
+    "spec": {
+      "project_id": "project",
+      "name": "Built private plugin",
+      "source_id": "source",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "runtime_image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "plugin": "private_plugin",
+      "options": {},
+      "secret_refs": {},
+      "participants": [
+        {
+          "participant_id": "alice",
+          "dataset_binding": "data-alice",
+          "mode": "external",
+          "component_id": null
+        },
+        {
+          "participant_id": "bob",
+          "dataset_binding": "data-bob",
+          "mode": "external",
+          "component_id": null
+        }
+      ],
+      "components": [
+        {
+          "component_id": "owner",
+          "role": "owner",
+          "resources": {
+            "pool_id": "cpu",
+            "cpu_millicores": 1000,
+            "memory_bytes": 1073741824,
+            "disk_bytes": 1073741824,
+            "gpu_count": 0,
+            "gpu_profile": null,
+            "sandbox_profile": "runsc-cpu-v1"
+          },
+          "participant_id": null
+        },
+        {
+          "component_id": "build",
+          "role": "build",
+          "resources": {
+            "pool_id": "cpu",
+            "cpu_millicores": 1000,
+            "memory_bytes": 1073741824,
+            "disk_bytes": 1073741824,
+            "gpu_count": 0,
+            "gpu_profile": null,
+            "sandbox_profile": "runsc-cpu-v1"
+          },
+          "participant_id": null
+        }
+      ],
+      "target_round": 2,
+      "max_duration_seconds": 3600
+    },
+    "spec_digest": "0edbebcb5c2a337e8cd9fb8f15168e08c4e8fcfc4e3444935607f439c3094fa2",
+    "source_dir": "/job/source",
+    "state_dir": "/job/state",
+    "source_manifest": {
+      "package/\u00e9.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "project_subdir": ".",
+    "approved_dependencies": {
+      "build": "1.6.1",
+      "setuptools": "80.9.0"
+    }
+  },
+  "binding": {
+    "schema_version": 1,
+    "job_id": "job-a",
+    "component_id": "build",
+    "spec_digest": "0edbebcb5c2a337e8cd9fb8f15168e08c4e8fcfc4e3444935607f439c3094fa2",
+    "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_manifest": {
+      "package/\u00e9.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "project_subdir": ".",
+    "approved_dependencies": {
+      "build": "1.6.1",
+      "setuptools": "80.9.0"
+    }
+  },
+  "result": {
+    "schema_version": 1,
+    "status": "completed",
+    "binding": {
+      "schema_version": 1,
+      "job_id": "job-a",
+      "component_id": "build",
+      "spec_digest": "0edbebcb5c2a337e8cd9fb8f15168e08c4e8fcfc4e3444935607f439c3094fa2",
+      "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "source_manifest": {
+        "package/\u00e9.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "project_subdir": ".",
+      "approved_dependencies": {
+        "build": "1.6.1",
+        "setuptools": "80.9.0"
+      }
+    },
+    "wheel": {
+      "filename": "private-0.1-py3-none-any.whl",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "size_bytes": 42
+    }
+  },
+  "spec_digest": "0edbebcb5c2a337e8cd9fb8f15168e08c4e8fcfc4e3444935607f439c3094fa2"
+}

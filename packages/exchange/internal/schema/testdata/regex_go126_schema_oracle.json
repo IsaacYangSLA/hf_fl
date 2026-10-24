@@ -1,0 +1,893 @@
+{
+  "cases": [
+    {
+      "args": [
+        {
+          "v": "ΐ"
+        },
+        {
+          "properties": {
+            "v": {
+              "not": {
+                "pattern": "(?i)^ΐ$"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "0390_1fd3_not_0"
+    },
+    {
+      "args": [
+        {
+          "v": "ί"
+        },
+        {
+          "properties": {
+            "v": {
+              "not": {
+                "pattern": "(?i)^ΐ$"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "name": "0390_1fd3_not_1",
+      "result": 10
+    },
+    {
+      "args": [
+        {
+          "v": "ΐ"
+        },
+        {
+          "properties": {
+            "v": {
+              "else": true,
+              "if": {
+                "pattern": "(?i)^ΐ$"
+              },
+              "then": {
+                "const": "unreachable"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "0390_1fd3_conditional_0"
+    },
+    {
+      "args": [
+        {
+          "v": "ί"
+        },
+        {
+          "properties": {
+            "v": {
+              "else": true,
+              "if": {
+                "pattern": "(?i)^ΐ$"
+              },
+              "then": {
+                "const": "unreachable"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "name": "0390_1fd3_conditional_1",
+      "result": 10
+    },
+    {
+      "args": [
+        {
+          "v": "ΐ"
+        },
+        {
+          "properties": {
+            "v": {
+              "oneOf": [
+                {
+                  "pattern": "(?i)^ΐ$"
+                },
+                {
+                  "const": "ΐ"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "0390_1fd3_oneOf_0"
+    },
+    {
+      "args": [
+        {
+          "v": "ί"
+        },
+        {
+          "properties": {
+            "v": {
+              "oneOf": [
+                {
+                  "pattern": "(?i)^ΐ$"
+                },
+                {
+                  "const": "ΐ"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "0390_1fd3_oneOf_1"
+    },
+    {
+      "args": [
+        {
+          "v": "ΐ"
+        },
+        {
+          "properties": {
+            "v": {
+              "not": {
+                "pattern": "(?i)^ΐ$"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "1fd3_0390_not_0"
+    },
+    {
+      "args": [
+        {
+          "v": "ί"
+        },
+        {
+          "properties": {
+            "v": {
+              "not": {
+                "pattern": "(?i)^ΐ$"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "name": "1fd3_0390_not_1",
+      "result": 10
+    },
+    {
+      "args": [
+        {
+          "v": "ΐ"
+        },
+        {
+          "properties": {
+            "v": {
+              "else": true,
+              "if": {
+                "pattern": "(?i)^ΐ$"
+              },
+              "then": {
+                "const": "unreachable"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "1fd3_0390_conditional_0"
+    },
+    {
+      "args": [
+        {
+          "v": "ί"
+        },
+        {
+          "properties": {
+            "v": {
+              "else": true,
+              "if": {
+                "pattern": "(?i)^ΐ$"
+              },
+              "then": {
+                "const": "unreachable"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "name": "1fd3_0390_conditional_1",
+      "result": 10
+    },
+    {
+      "args": [
+        {
+          "v": "ΐ"
+        },
+        {
+          "properties": {
+            "v": {
+              "oneOf": [
+                {
+                  "pattern": "(?i)^ΐ$"
+                },
+                {
+                  "const": "ΐ"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "1fd3_0390_oneOf_0"
+    },
+    {
+      "args": [
+        {
+          "v": "ί"
+        },
+        {
+          "properties": {
+            "v": {
+              "oneOf": [
+                {
+                  "pattern": "(?i)^ΐ$"
+                },
+                {
+                  "const": "ΐ"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "1fd3_0390_oneOf_1"
+    },
+    {
+      "args": [
+        {
+          "v": "ΰ"
+        },
+        {
+          "properties": {
+            "v": {
+              "not": {
+                "pattern": "(?i)^ΰ$"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "03b0_1fe3_not_0"
+    },
+    {
+      "args": [
+        {
+          "v": "ύ"
+        },
+        {
+          "properties": {
+            "v": {
+              "not": {
+                "pattern": "(?i)^ΰ$"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "name": "03b0_1fe3_not_1",
+      "result": 10
+    },
+    {
+      "args": [
+        {
+          "v": "ΰ"
+        },
+        {
+          "properties": {
+            "v": {
+              "else": true,
+              "if": {
+                "pattern": "(?i)^ΰ$"
+              },
+              "then": {
+                "const": "unreachable"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "03b0_1fe3_conditional_0"
+    },
+    {
+      "args": [
+        {
+          "v": "ύ"
+        },
+        {
+          "properties": {
+            "v": {
+              "else": true,
+              "if": {
+                "pattern": "(?i)^ΰ$"
+              },
+              "then": {
+                "const": "unreachable"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "name": "03b0_1fe3_conditional_1",
+      "result": 10
+    },
+    {
+      "args": [
+        {
+          "v": "ΰ"
+        },
+        {
+          "properties": {
+            "v": {
+              "oneOf": [
+                {
+                  "pattern": "(?i)^ΰ$"
+                },
+                {
+                  "const": "ΰ"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "03b0_1fe3_oneOf_0"
+    },
+    {
+      "args": [
+        {
+          "v": "ύ"
+        },
+        {
+          "properties": {
+            "v": {
+              "oneOf": [
+                {
+                  "pattern": "(?i)^ΰ$"
+                },
+                {
+                  "const": "ΰ"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "03b0_1fe3_oneOf_1"
+    },
+    {
+      "args": [
+        {
+          "v": "ΰ"
+        },
+        {
+          "properties": {
+            "v": {
+              "not": {
+                "pattern": "(?i)^ΰ$"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "1fe3_03b0_not_0"
+    },
+    {
+      "args": [
+        {
+          "v": "ύ"
+        },
+        {
+          "properties": {
+            "v": {
+              "not": {
+                "pattern": "(?i)^ΰ$"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "name": "1fe3_03b0_not_1",
+      "result": 10
+    },
+    {
+      "args": [
+        {
+          "v": "ΰ"
+        },
+        {
+          "properties": {
+            "v": {
+              "else": true,
+              "if": {
+                "pattern": "(?i)^ΰ$"
+              },
+              "then": {
+                "const": "unreachable"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "1fe3_03b0_conditional_0"
+    },
+    {
+      "args": [
+        {
+          "v": "ύ"
+        },
+        {
+          "properties": {
+            "v": {
+              "else": true,
+              "if": {
+                "pattern": "(?i)^ΰ$"
+              },
+              "then": {
+                "const": "unreachable"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "name": "1fe3_03b0_conditional_1",
+      "result": 10
+    },
+    {
+      "args": [
+        {
+          "v": "ΰ"
+        },
+        {
+          "properties": {
+            "v": {
+              "oneOf": [
+                {
+                  "pattern": "(?i)^ΰ$"
+                },
+                {
+                  "const": "ΰ"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "1fe3_03b0_oneOf_0"
+    },
+    {
+      "args": [
+        {
+          "v": "ύ"
+        },
+        {
+          "properties": {
+            "v": {
+              "oneOf": [
+                {
+                  "pattern": "(?i)^ΰ$"
+                },
+                {
+                  "const": "ΰ"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "1fe3_03b0_oneOf_1"
+    },
+    {
+      "args": [
+        {
+          "v": "ﬆ"
+        },
+        {
+          "properties": {
+            "v": {
+              "not": {
+                "pattern": "(?i)^ﬅ$"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "fb05_fb06_not_0"
+    },
+    {
+      "args": [
+        {
+          "v": "st"
+        },
+        {
+          "properties": {
+            "v": {
+              "not": {
+                "pattern": "(?i)^ﬅ$"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "name": "fb05_fb06_not_1",
+      "result": 10
+    },
+    {
+      "args": [
+        {
+          "v": "ﬆ"
+        },
+        {
+          "properties": {
+            "v": {
+              "else": true,
+              "if": {
+                "pattern": "(?i)^ﬅ$"
+              },
+              "then": {
+                "const": "unreachable"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "fb05_fb06_conditional_0"
+    },
+    {
+      "args": [
+        {
+          "v": "st"
+        },
+        {
+          "properties": {
+            "v": {
+              "else": true,
+              "if": {
+                "pattern": "(?i)^ﬅ$"
+              },
+              "then": {
+                "const": "unreachable"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "name": "fb05_fb06_conditional_1",
+      "result": 10
+    },
+    {
+      "args": [
+        {
+          "v": "ﬆ"
+        },
+        {
+          "properties": {
+            "v": {
+              "oneOf": [
+                {
+                  "pattern": "(?i)^ﬅ$"
+                },
+                {
+                  "const": "ﬆ"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "fb05_fb06_oneOf_0"
+    },
+    {
+      "args": [
+        {
+          "v": "st"
+        },
+        {
+          "properties": {
+            "v": {
+              "oneOf": [
+                {
+                  "pattern": "(?i)^ﬅ$"
+                },
+                {
+                  "const": "ﬆ"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "fb05_fb06_oneOf_1"
+    },
+    {
+      "args": [
+        {
+          "v": "ﬅ"
+        },
+        {
+          "properties": {
+            "v": {
+              "not": {
+                "pattern": "(?i)^ﬆ$"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "fb06_fb05_not_0"
+    },
+    {
+      "args": [
+        {
+          "v": "st"
+        },
+        {
+          "properties": {
+            "v": {
+              "not": {
+                "pattern": "(?i)^ﬆ$"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "name": "fb06_fb05_not_1",
+      "result": 10
+    },
+    {
+      "args": [
+        {
+          "v": "ﬅ"
+        },
+        {
+          "properties": {
+            "v": {
+              "else": true,
+              "if": {
+                "pattern": "(?i)^ﬆ$"
+              },
+              "then": {
+                "const": "unreachable"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "fb06_fb05_conditional_0"
+    },
+    {
+      "args": [
+        {
+          "v": "st"
+        },
+        {
+          "properties": {
+            "v": {
+              "else": true,
+              "if": {
+                "pattern": "(?i)^ﬆ$"
+              },
+              "then": {
+                "const": "unreachable"
+              }
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "name": "fb06_fb05_conditional_1",
+      "result": 10
+    },
+    {
+      "args": [
+        {
+          "v": "ﬅ"
+        },
+        {
+          "properties": {
+            "v": {
+              "oneOf": [
+                {
+                  "pattern": "(?i)^ﬆ$"
+                },
+                {
+                  "const": "ﬅ"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "fb06_fb05_oneOf_0"
+    },
+    {
+      "args": [
+        {
+          "v": "st"
+        },
+        {
+          "properties": {
+            "v": {
+              "oneOf": [
+                {
+                  "pattern": "(?i)^ﬆ$"
+                },
+                {
+                  "const": "ﬅ"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "error": {
+        "code": "metadata_schema_mismatch",
+        "detail": "metadata_schema_mismatch",
+        "status": 422
+      },
+      "name": "fb06_fb05_oneOf_1"
+    }
+  ],
+  "python": "3.11"
+}

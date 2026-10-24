@@ -20,6 +20,19 @@ application and Exchange fixes in the current implementation. The
 track resolved and remaining audit findings; historical validation results are
 labeled separately below.
 
+## Select an implementation
+
+Org S can operate the native [Go Exchange API and worker](GO_EXCHANGE.md).
+The Python SDK used by Org P, Alice, and Bob is unchanged. The following
+installation and ASGI-specific launch examples describe the retained Python
+reference server; shared API, identity, storage, and recovery contracts apply
+to both. The beginner Compose stack remains on the reference server.
+
+Go cutover is explicit: stop competing writers/workers, back up state, run
+retained-schema compatibility preflight, and qualify the intended deployment.
+JSON Schema remains Draft 2020-12; unsupported Python regex extensions fail
+closed. See the Go guide before reusing an existing database.
+
 ## Deployment boundary and installation
 
 Use a **fresh database and fresh S3 prefix**. The HTTP API is `/v2`; it does not
@@ -67,7 +80,7 @@ provider-default access token with a different header, audience or scope is
 rejected. Human login and token issuance belong to the identity provider.
 Managed workload tokens use the separate contract below.
 
-S3 uses Boto's normal credential provider chain unless both
+The Python reference S3 adapter uses Boto's normal credential provider chain unless both
 `EXCHANGE_S3_ACCESS_KEY` and `EXCHANGE_S3_SECRET_KEY` are configured. The provider
 chain handles ambient `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
 `AWS_SESSION_TOKEN` together and retains provider-managed refresh for credentials
@@ -348,7 +361,7 @@ positive integer `epoch`, and `cnf: {"x5t#S256": "CERTIFICATE_THUMBPRINT"}`,
 as well as the issuer, audience and timestamps. The token's `jti` identifies
 the persisted workload grant; any explicit `grant_id` must match it.
 
-A managed ASGI app is created with `create_app(..., managed_ingress=True)`.
+In the Python reference, a managed ASGI app is created with `create_app(..., managed_ingress=True)`.
 Place it behind separate trusted mTLS termination and an authenticated private
 backend connection. The terminator supplies signed assertions binding the method,
 request target, Authorization value, certificate thumbprint and timestamp.
@@ -595,7 +608,7 @@ current state under the same space lock used by lifecycle mutations. Work that
 has changed categories since selection is skipped without acquiring a lease, so
 cleanup cannot enter a verification slot (audit B8 is resolved). A cancellation
 after verification lease acquisition remains fenced by the lifecycle checks and
-does not turn that running task into cleanup. Each worker pass still waits for
+does not turn that running task into cleanup. Each Python reference worker pass still waits for
 both selected batches to finish before selecting more work. Slow cleanup can
 therefore delay the next verification batch; the pools do not poll independently.
 

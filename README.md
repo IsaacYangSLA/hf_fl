@@ -26,6 +26,9 @@ using a tiny NumPy model.
 
 Org S deploys the included [Compose stack](examples/first_federation/compose.yaml).
 Org P, Alice, and Bob install client tools; they do not deploy server stacks.
+The supplied Compose stack uses the Python reference Exchange server. Org S can
+separately qualify the [native Go Exchange service](docs/GO_EXCHANGE.md); the
+Python SDK and participant trainers remain unchanged.
 The walkthrough needs no Hugging Face account, Torch, GPU, or external dataset.
 
 A round follows this sequence:
@@ -82,6 +85,7 @@ values.
 
 | Component | Available choices | Where to configure it |
 | --- | --- | --- |
+| **Service implementation** | Native **Go** Exchange/manager or retained **Python reference** services; clients keep the Python SDK. | [Go Exchange](docs/GO_EXCHANGE.md) and [Go manager](docs/GO_JOB_MANAGER.md); qualify cutover before switching retained state. |
 | **Exchange object storage** | Versioned S3-compatible storage. The supplied deployment uses **MinIO**; an optional **patched SeaweedFS** build is available. | [S3 settings](docs/EXCHANGE_V3.md#configure-and-start), including `EXCHANGE_S3_ENDPOINT` and `EXCHANGE_S3_BUCKET`. |
 | **Identity provider** | A provider meeting the documented OIDC/token requirements. The beginner stack supplies **Keycloak**. | [Exchange identity settings](docs/EXCHANGE_V3.md#configure-and-start) and [manager authentication](docs/JOB_MANAGER.md). |
 | **Metadata database** | **PostgreSQL** for deployments; **SQLite** for local development and tests. | `EXCHANGE_DATABASE_URL` and `JOBS_DATABASE_URL`; see the service guides. |
@@ -101,7 +105,9 @@ weighting. Additional algorithms and checkpoint formats require implementation.
 
 ## Install from source
 
-HF²L, Exchange, and the manager require **Python 3.11 or later**.
+HF²L, the Exchange Python SDK/reference server, and the Python reference manager
+require **Python 3.11 or later**. The native [Go Exchange service](docs/GO_EXCHANGE.md)
+and [Go manager](docs/GO_JOB_MANAGER.md) build separately on Linux with Go 1.26 or later.
 The beginner walkthrough uses **Python 3.12** and lists its host prerequisites.
 Python 3.10 is not supported by HF²L. Optional ML dependencies must also support
 your selected Python version.
@@ -123,8 +129,8 @@ needed for your chosen workflow:
 | JFrog integration | `.venv/bin/python -m pip install -e '.[jfrog]'` |
 | Torch and bundled training plugins | `.venv/bin/python -m pip install -e '.[examples]'` |
 | HF²L with Exchange | `.venv/bin/python -m pip install -e ./packages/exchange -e '.[exchange]'` |
-| Exchange service | `.venv/bin/python -m pip install -e './packages/exchange[server]'` |
-| Job manager and dashboard | `.venv/bin/python -m pip install -e './packages/jobs[server]'` |
+| Python reference Exchange service | `.venv/bin/python -m pip install -e './packages/exchange[server]'` |
+| Python reference manager | `.venv/bin/python -m pip install -e './packages/jobs[server]'` |
 
 Installing a package does not deploy its services. Follow the beginner
 walkthrough or the relevant operator guide. Generic Exchange clients can install
@@ -136,6 +142,11 @@ keep credentials out of source control. These development interfaces may be
 newer than published packages, so use an agreed source revision.
 
 ## Managed jobs and dashboard
+
+The native [Go manager](docs/GO_JOB_MANAGER.md) serves the existing dashboard
+and API and implements scheduling, lifecycle, provisioning, and trusted node
+services. The Python implementation remains a compatibility reference and
+rollback option; follow the Go guide before switching a deployment.
 
 The optional manager provides:
 
@@ -165,8 +176,8 @@ contracts, and historical records.
 | Reuse a trainer, configure a backend, or run CLI commands | [Training guide](docs/TRAINING_GUIDE.md) |
 | Run a real CIFAR-10 example with automatic rounds | [Two-client Exchange demo](examples/exchange_cifar10/README.md) |
 | Exchange metadata/files without federated learning | [Generic SDK example](docs/EXCHANGE_V3.md#generic-sdk-example) |
-| Operate Exchange and its storage | [Exchange runbook](docs/EXCHANGE_V3.md) |
-| Operate, deploy, and export managed jobs | [Job manager](docs/JOB_MANAGER.md), [deployment](deploy/jobs/README.md), [exports](docs/JOB_EXPORTS.md) |
+| Operate Exchange and its storage | [Native Go Exchange](docs/GO_EXCHANGE.md), [shared runbook](docs/EXCHANGE_V3.md) |
+| Operate, deploy, and export managed jobs | [Go manager](docs/GO_JOB_MANAGER.md), [operator guide](docs/JOB_MANAGER.md), [deployment](deploy/jobs/README.md), [exports](docs/JOB_EXPORTS.md) |
 | Build packages or run developer checks | [Build](docs/TRAINING_GUIDE.md#build-and-install-the-wheel), [validation](docs/TRAINING_GUIDE.md#local-validation) |
 | Understand component boundaries | [Architecture](docs/ARCHITECTURE_V3.md) and [multi-job design](docs/MULTI_JOB_DESIGN.md) |
 

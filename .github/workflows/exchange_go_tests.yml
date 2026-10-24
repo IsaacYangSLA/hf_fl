@@ -1,0 +1,210 @@
+name: Go Exchange
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go-exchange:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.26.x', '1.27.x']
+    services:
+      postgres:
+        image: postgres@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
+        env:
+          POSTGRES_USER: hf2l_exchange_go_test
+          POSTGRES_PASSWORD: local-test-only
+          POSTGRES_DB: hf2l_exchange_go_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hf2l_exchange_go_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      GOTOOLCHAIN: local
+    defaults:
+      run:
+        working-directory: packages/exchange
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: packages/exchange/go.sum
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Install reference persistence oracle
+        run: |
+          python -m venv "$RUNNER_TEMP/exchange-reference-venv"
+          "$RUNNER_TEMP/exchange-reference-venv/bin/python" -m pip install -e '.[server,test]'
+          "$RUNNER_TEMP/exchange-reference-venv/bin/python" -m pip check
+          printf 'HF2L_EXCHANGE_TEST_PYTHON=%s\n' "$RUNNER_TEMP/exchange-reference-venv/bin/python" >> "$GITHUB_ENV"
+          printf 'HF2L_GO_EXCHANGE_REFERENCE_PYTHON=%s\n' "$RUNNER_TEMP/exchange-reference-venv/bin/python" >> "$GITHUB_ENV"
+      - name: Prepare private temporary directories
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/hf2l-go-tmp"
+          printf 'TMPDIR=%s\nGOTMPDIR=%s\n' "$RUNNER_TEMP/hf2l-go-tmp" "$RUNNER_TEMP/hf2l-go-tmp" >> "$GITHUB_ENV"
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+      - name: Verify dependencies
+        run: go mod verify
+      - name: Vet and build the native Exchange
+        run: |
+          go vet ./...
+          go build -trimpath -o "$RUNNER_TEMP/hf2l-exchange" ./cmd/hf2l-exchange
+          "$RUNNER_TEMP/hf2l-exchange" --help
+      - name: Run SQLite race tests
+        run: go test -race -count=1 ./...
+      - name: Run PostgreSQL compatibility and race tests
+        env:
+          HF2L_GO_EXCHANGE_TEST_DATABASE_URL: postgresql://hf2l_exchange_go_test:local-test-only@127.0.0.1:5432/hf2l_exchange_go_test?sslmode=disable
+          HF2L_EXCHANGE_TEST_DATABASE_URL: postgresql://hf2l_exchange_go_test:local-test-only@127.0.0.1:5432/hf2l_exchange_go_test?sslmode=disable
+          EXCHANGE_GO_GATEWAY_TEST_DATABASE_URL: postgresql://hf2l_exchange_go_test:local-test-only@127.0.0.1:5432/hf2l_exchange_go_test?sslmode=disable
+          HF2L_EXCHANGE_HTTP_TEST_DATABASE_URL: postgresql://hf2l_exchange_go_test:local-test-only@127.0.0.1:5432/hf2l_exchange_go_test?sslmode=disable
+        run: go test -race -count=1 ./...
+
+  python-sdk-native-exchange:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
+        env:
+          POSTGRES_USER: hf2l_exchange_go_test
+          POSTGRES_PASSWORD: local-test-only
+          POSTGRES_DB: hf2l_exchange_go_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hf2l_exchange_go_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.x'
+          cache-dependency-path: packages/exchange/go.sum
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Install the unchanged SDK and reference compatibility tools
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e './packages/exchange[server,test]'
+          .venv/bin/python -m pip check
+      - name: Build the pinned source MinIO image
+        run: docker build -f examples/first_federation/Dockerfile.minio -t hf2l-exchange-go-ci-minio .
+      - name: Build the native Exchange binary
+        run: go -C packages/exchange build -trimpath -o "$RUNNER_TEMP/hf2l-exchange" ./cmd/hf2l-exchange
+      - name: Prepare private integration settings
+        run: |
+          .venv/bin/python - <<'PYTHON'
+          import json
+          import os
+          from pathlib import Path
+          import secrets
+          root = Path(os.environ["RUNNER_TEMP"]) / "hf2l-exchange-go-integration"
+          root.mkdir(mode=0o700)
+          (root / "tmp").mkdir(mode=0o700)
+          storage = {
+              "endpoint": "http://127.0.0.1:9000",
+              "access_key": "hf2l_exchange_go_test",
+              "secret_key": secrets.token_urlsafe(32),
+              "region": "us-east-1",
+          }
+          values = {
+              "storage.json": json.dumps(storage),
+              "database.json": json.dumps({"databases": {"sdk":
+                  "postgresql+psycopg://hf2l_exchange_go_test:local-test-only@127.0.0.1:5432/hf2l_exchange_go_test",
+                  "reference": "postgresql+psycopg://hf2l_exchange_go_test:local-test-only@127.0.0.1:5432/hf2l_exchange_go_test"}}),
+              "minio.env": "MINIO_ROOT_USER=" + storage["access_key"] + "\nMINIO_ROOT_PASSWORD=" + storage["secret_key"] + "\n",
+          }
+          for name, content in values.items():
+              path = root / name
+              path.write_text(content)
+              path.chmod(0o600)
+          config = {
+              "go_binary": str(Path(os.environ["RUNNER_TEMP"]) / "hf2l-exchange"),
+              "database_config": str(root / "database.json"),
+              "storage_config": str(root / "storage.json"),
+              "root": str(root / "sdk"), "database_key": "sdk",
+          }
+          (root / "sdk").mkdir(mode=0o700)
+          (root / "retained").mkdir(mode=0o700)
+          for filename, value in (("sdk.json", config),
+                                  ("retained.json", {**config, "root": str(root / "retained"),
+                                                     "database_key": "reference"})):
+              path = root / filename
+              path.write_text(json.dumps(value))
+              path.chmod(0o600)
+          with open(os.environ["GITHUB_ENV"], "a") as target:
+              target.write("HF2L_GO_EXCHANGE_STORAGE_CONFIG=" + str(root / "storage.json") + "\n")
+              target.write("HF2L_GO_REQUIRE_STORAGE_INTEGRATION=1\n")
+              target.write("HF2L_GO_EXCHANGE_SDK_PYTHON=" + str(Path(".venv/bin/python").absolute()) + "\n")
+              target.write("HF2L_GO_EXCHANGE_SDK_CONFIG=" + str(root / "sdk.json") + "\n")
+              target.write("HF2L_GO_EXCHANGE_RETAINED_PYTHON=" + str(Path(".venv/bin/python").absolute()) + "\n")
+              target.write("HF2L_GO_EXCHANGE_RETAINED_CONFIG=" + str(root / "retained.json") + "\n")
+              target.write("TMPDIR=" + str(root / "tmp") + "\n")
+              target.write("GOTMPDIR=" + str(root / "tmp") + "\n")
+          PYTHON
+      - name: Start the disposable object store
+        run: |
+          docker run -d --name hf2l-exchange-go-ci-minio --cpus 2 --memory 1g --pids-limit 256 \
+            --read-only --tmpfs /data:rw,nosuid,nodev,size=1073741824,mode=0777 \
+            --tmpfs /tmp:rw,nosuid,nodev,size=67108864 \
+            --env-file "$RUNNER_TEMP/hf2l-exchange-go-integration/minio.env" \
+            -p 127.0.0.1:9000:9000 hf2l-exchange-go-ci-minio server /data \
+            --address :9000 --console-address :9001
+          .venv/bin/python - <<'PYTHON'
+          import time
+          import urllib.request
+          for _ in range(100):
+              try:
+                  with urllib.request.urlopen("http://127.0.0.1:9000/minio/health/ready", timeout=1) as response:
+                      if response.status == 200:
+                          break
+              except OSError:
+                  time.sleep(.2)
+          else:
+              raise SystemExit("Disposable object store did not become ready")
+          PYTHON
+      - name: Verify the actual versioned S3 provider
+        run: go -C packages/exchange test -race -count=1 -run '^TestRealS3MultipartStore$' -v ./internal/storage
+      - name: Verify Python SDK against native HTTPS Exchange and S3
+        env:
+          PYTHONPATH: ${{ github.workspace }}/packages/exchange/src
+        run: |
+          go -C packages/exchange test -list '^TestPythonSDKAgainstNativeGoExchange$' ./integration | grep -Fx TestPythonSDKAgainstNativeGoExchange
+          go -C packages/exchange test -race -count=1 -timeout=20m -run '^TestPythonSDKAgainstNativeGoExchange$' -v ./integration
+      - name: Verify retained state across implementations
+        env:
+          PYTHONPATH: ${{ github.workspace }}/packages/exchange/src
+        run: |
+          go -C packages/exchange test -list '^TestRetainedStatePythonAndGo$' ./integration | grep -Fx TestRetainedStatePythonAndGo
+          go -C packages/exchange test -race -count=1 -timeout=20m -run '^TestRetainedStatePythonAndGo$' -v ./integration
+      - name: Stop the owned object store
+        if: always()
+        run: |
+          if docker container inspect hf2l-exchange-go-ci-minio > /dev/null 2>&1; then
+            docker rm -f hf2l-exchange-go-ci-minio
+          fi

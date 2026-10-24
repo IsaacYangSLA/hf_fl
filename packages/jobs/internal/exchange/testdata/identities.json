@@ -1,0 +1,34 @@
+[
+  {
+    "issuer": "https://workloads.example.test",
+    "job": "job-a",
+    "component": "owner",
+    "participant": null,
+    "subject": "job:02040f06c62465b419e9656ebc7f02c4812ec474b0a26c6197c042a0ec90bed1",
+    "principal": "118740e27f50bba234b3aaba9d9d8d13b14e09565616fca62b3c5e01949acf8f"
+  },
+  {
+    "issuer": "https://workloads.example.test",
+    "job": "job-a",
+    "component": "alice",
+    "participant": "alice",
+    "subject": "job:c9acb1816ad05252654460928be7f34fd93ba824dcddd03626fbe2bd9a74021b",
+    "principal": "adeccdd7760705c814e4b47aadd6552b04b8cd7cacee9e29ac67a973405d4224"
+  },
+  {
+    "issuer": "https://workloads.example.test",
+    "job": "job-b",
+    "component": "alice",
+    "participant": "alice",
+    "subject": "job:c0e218045e879a467011eee412283d5c0f23bb2ef5674c7234e0595da43e46c5",
+    "principal": "36caa9c805a5e7906865852103bdb26ba7bf4900289dd5e98a7c89a8dfc59914"
+  },
+  {
+    "issuer": "https://id.example/名<>&",
+    "job": "job-a",
+    "component": "alice",
+    "participant": "alice",
+    "subject": "job:c9acb1816ad05252654460928be7f34fd93ba824dcddd03626fbe2bd9a74021b",
+    "principal": "21dca8ce78c82248748be11f85246eb34c5d4eb8fd859209e1b17aad5f8e0eec"
+  }
+]

@@ -1,0 +1,44 @@
+{
+  "producer": "hf2l_jobs.pagination.CursorSigner from reference implementation",
+  "secret": "ssssssssssssssssssssssssssssssss",
+  "cases": [
+    {
+      "principal": "owner",
+      "kind": "jobs",
+      "filters": {
+        "view": "queued"
+      },
+      "position": {
+        "created_at": "2026-01-02T03:04:05Z",
+        "id": "job-a"
+      },
+      "now": 1767323045,
+      "cursor": "eyJleHAiOjE3NjczMjY2NDUsInBvc2l0aW9uIjp7ImNyZWF0ZWRfYXQiOiIyMDI2LTAxLTAyVDAzOjA0OjA1WiIsImlkIjoiam9iLWEifSwic2NvcGUiOiI5ZmU5NmZhZTkyZjc4NWQ4ZDk2MTlhOTI0ODNiMmQyYjU1NDc5MzhjMWYwMTdkYTk5NDY5NmRmYTFmYWYyYjVhIiwidiI6MX3Pl3sjYCUSPcNivvMCEkcWBX8GJv3LOj2iTPr7oczPqg"
+    },
+    {
+      "principal": "Org 雪 <&>",
+      "kind": "events",
+      "filters": {
+        "job_id": "项目-α"
+      },
+      "position": 37,
+      "now": 1767323045,
+      "cursor": "eyJleHAiOjE3NjczMjY2NDUsInBvc2l0aW9uIjozNywic2NvcGUiOiJlY2Y0NDU3YmU2YTA4ZWY2ZTRkZWUwZWUwYjcxYjZhYWMwMDg2ZTQ4NjMyYjAyM2JkMTA3ZWRmNzM3ZGUzODY5IiwidiI6MX1NQPfegz_5qJknUyzmEw2AqLH3j5wl9b-MYkUHX_7ZQg"
+    },
+    {
+      "principal": "owner",
+      "kind": "logs",
+      "filters": {
+        "job_id": "job-a",
+        "component": null,
+        "attempt": null
+      },
+      "position": {
+        "created_at": "2026-01-02T03:04:05.123456Z",
+        "id": "log-a"
+      },
+      "now": 1767323045,
+      "cursor": "eyJleHAiOjE3NjczMjY2NDUsInBvc2l0aW9uIjp7ImNyZWF0ZWRfYXQiOiIyMDI2LTAxLTAyVDAzOjA0OjA1LjEyMzQ1NloiLCJpZCI6ImxvZy1hIn0sInNjb3BlIjoiYzRjMGZjNmNiNDdjMmJmODhiZTY3ZjYwYmFkMjE5YzkwMmJkOWIzOGQzZDVmNTIwNTUwYjAzNTZkZDZlMzczOSIsInYiOjF9BPlXmam2aYsMkCp12WTMl1VWFuI-LSweE-UE2xhhlPY"
+    }
+  ]
+}

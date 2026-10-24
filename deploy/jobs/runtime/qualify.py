@@ -37,6 +37,14 @@ job, foreign, host_pid, host_secret, foreign_source, foreign_state, foreign_sock
 checks = []
 def add(name, passed, **detail):
     checks.append(dict(name=name, passed=bool(passed), **detail))
+def source_traversal_path(host_secret):
+    # Traversal stays in the guest namespace. Probe the unique host-only canary,
+    # not the image's legitimate /root directory.
+    if (not isinstance(host_secret, str) or not host_secret.startswith("/")
+            or host_secret == "/" or "\x00" in host_secret
+            or any(part in ("", ".", "..") for part in host_secret.split("/")[1:])):
+        raise ValueError("Host-only canary must be a canonical absolute path")
+    return "/job/source/../.." + host_secret
 def rejected_read(name, path):
     try:
         with open(path, "rb") as handle:
@@ -82,7 +90,7 @@ for name, path in [
     else:
         add(name, False)
 for name, path in [
-    ("source_traversal", "/job/source/../../root"),
+    ("source_traversal", source_traversal_path(host_secret)),
     ("foreign_proxy_path", foreign_socket),
 ]:
     add(name, not os.path.exists(path), path=path)

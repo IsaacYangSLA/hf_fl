@@ -2,20 +2,25 @@
 
 **Status:** implemented CPU v1 runbook; runtime qualification is required for each deployment.
 
+For the native Go binary, use the [Go build and cutover guide](GO_JOB_MANAGER.md).
+The API, authorization, lifecycle, and resource policies below are shared.
+The Python installation instructions apply to the retained reference manager;
+the Go guide also specifies its private Exchange transfer-backend integration.
+
 The job manager runs independent managed FedAvg jobs in one deployment. Each job has an immutable specification, authorized source snapshot, separate Exchange space, workload identities, state, logs, and artifacts. Resource availability determines admission from the durable queue.
 
 The packaged dashboard is served at `/dashboard/`; the API base is `/api/jobs/v1`. Node.js is not required. PostgreSQL is the deployment database. The [deployment guide](../deploy/jobs/README.md) describes the trusted service boundaries, and the [design](MULTI_JOB_DESIGN.md) specifies the isolation contract.
 
 ## 1. Install and initialize
 
-Install the application, Exchange server, and manager into the deployment's dedicated Python environment:
+For the Python reference manager, install the application, Exchange server, and manager into the deployment's dedicated Python environment:
 
 ```sh
 python -m pip install -e 'packages/exchange[server]' -e '.[examples]' -e 'packages/jobs[server]'
 hf2l-jobs --help
 ```
 
-The manager requires Python 3.11 or later. CI checks clean manager/server wheels on Python 3.11–3.14; functional cohorts and exact patch versions are recorded in the validation report. The deployment image builder separately targets CPython 3.14; its image must be qualified on the intended runtime. Manager processes do not import job training plugins. The approved runtime image must contain the FL dependencies needed by its jobs. Managed execution currently uses CPU `runsc-cpu-v1`; the executor refuses nonzero GPU limits. Standalone native GPU training does not qualify managed GPU execution.
+The Python reference manager requires Python 3.11 or later. CI checks clean Python manager/server wheels on Python 3.11–3.14; functional cohorts and exact patch versions are recorded in the validation report. The deployment image builder separately targets CPython 3.14; its image must be qualified on the intended runtime. Manager processes do not import job training plugins. The approved runtime image must contain the FL dependencies needed by its jobs. Managed execution currently uses CPU `runsc-cpu-v1`; the executor refuses nonzero GPU limits. Standalone native GPU training does not qualify managed GPU execution.
 
 Configure `HF2L_JOBS_DATABASE_URL` for a dedicated manager PostgreSQL database. Initialize a new database with `hf2l-jobs init-db`; apply upgrades with `hf2l-jobs migrate-db`. Services check the schema instead of silently changing it at startup. The current manager revision is `0003_administrative_audit`; upgrades preserve the original ledger, trusted artifact locators and log-storage charges, and add sanitized trusted-administration audit records. Legacy artifacts without a trusted locator remain metadata-only until a trusted collector supplies one; arbitrary old locator strings are not parsed as paths. SQLite is an isolated test backend.
 

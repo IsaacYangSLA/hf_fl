@@ -5,8 +5,9 @@ the useful application boundaries proposed in the current checkout's
 [architecture review](history/ARCHITECTURE_REVIEW.md). It is an integration and
 maintenance design for this repository, not a third incompatible wire protocol.
 The Exchange HTTP API remains `/v2`; existing HF²L manifest versions, filenames
-and command aliases remain readable. The current distributions require Python
-3.11 or later.
+and command aliases remain readable. The Python distributions require Python
+3.11 or later. The native Go Exchange service and manager are separate Linux builds requiring
+Go 1.26 or later.
 
 This document records the accepted design integrated at `60e4bf8`, subsequent
 application and Exchange fixes, the shared client/owner listeners, and the
@@ -101,13 +102,39 @@ does not claim every lower-priority suggestion in every theme was implemented.
 
 ## Component boundaries
 
-Three distributions define the installation boundaries:
+Three Python distributions define the installation boundaries:
 
 | Distribution | Code and command | Responsibility |
 |---|---|---|
 | `hf2l` | `hf2l/`; `hf2l` | FL documents, checkpoint operations, four model backends, client training and owner aggregation, durable polling |
-| `hf2l-exchange` | `packages/exchange/src/hf2l_exchange/`; `hf2l-exchange` | Generic authenticated metadata, blob transfer and coordination; independently usable SDK and optional server dependencies |
-| `hf2l-jobs` | `packages/jobs/src/hf2l_jobs/`; `hf2l-jobs` | Optional managed multi-job control plane, resource admission, lifecycle, dashboard and trusted Linux execution components |
+| `hf2l-exchange` | `packages/exchange/src/hf2l_exchange/`; `hf2l-exchange` | Unchanged Python SDK plus reference server for authenticated metadata, blob transfer and coordination |
+| `hf2l-jobs` | `packages/jobs/src/hf2l_jobs/`; `hf2l-jobs` | Reference manager implementation and retained sandboxed FL application adapters |
+
+The native Go Exchange is built from `packages/exchange/cmd/hf2l-exchange`
+using `packages/exchange/go.mod`. Its API, authorization, persistence,
+versioned-S3 transfer lifecycle, worker, repair tooling, managed ingress, and
+private gateway backend are native Go; it uses no Python Exchange bridge and
+executes no ML code. The Python SDK stays independently usable by Org P and
+participants. The [Go Exchange guide](GO_EXCHANGE.md) covers build, TLS,
+Draft 2020-12 schema/regex compatibility preflight, and explicit cutover.
+Shared protocol/schema compatibility does not automatically qualify a deployment.
+
+The native Go manager is built from `packages/jobs/cmd/hf2l-jobs` using
+`packages/jobs/go.mod`. Its `internal/` packages implement the trusted control
+plane: HTTP/OIDC, persistence and administration, scheduling, lifecycle,
+provisioning, qualified execution/node services, participant services,
+gateways/proxies, collection, and retention. It embeds the existing browser
+assets; it does not delegate manager policy or lifecycle to a Python RPC/API.
+The independent Exchange service stays a separate deployment. Existing
+sandboxed Python training/build adapters retain their application validation
+and fixed worker-command contract.
+
+Go and reference Python implementations share the current manager schema and
+external contracts. Select one controller and reconcile retained state before
+cutover; cross-language unit/SQL compatibility does not establish a new
+deployment's runtime qualification. See the [Go manager guide](GO_JOB_MANAGER.md)
+for build, private transfer-backend integration, verification, and rollback
+boundaries.
 
 The core FL workflows can run against Hugging Face, JFrog or LocalStore without
 deploying Exchange or the job manager. The root's `exchange` extra installs the
@@ -563,7 +590,7 @@ the requested category against the refreshed attempt state while acquiring its
 lease under the same space lock used by lifecycle mutations. A category mismatch
 is skipped without acquiring a lease, so a cancellation between selection and
 dispatch cannot move cleanup into a verification slot. Cancellation after lease
-acquisition remains subject to existing lifecycle fencing. The worker still
+acquisition remains subject to existing lifecycle fencing. The Python reference worker still
 waits for both selected batches before its next pass; slow cleanup can delay
 subsequent verification batches.
 

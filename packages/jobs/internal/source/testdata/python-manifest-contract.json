@@ -1,0 +1,10 @@
+{
+  "manifest": {
+    "plain.py": "627f27f962fcfef4524fda987ec956ba2db8de9ce016bd8c7d6baa9b2c6fde35",
+    "package/\u00e9.py": "38cbe4e48c5a60d2b2743cbb6bdf15ec638bd8740782b9ca22d23dbfe79b637b",
+    "<tag>&.py": "5dc1e6c4a53606ad88623b5d45e79d92ae934ea2c9d2703962879ffed80b3ada",
+    "\ud83d\ude00.py": "d40b9a0dbf9179c81fd066c18d89ab3199f94c6cd5ce76275e7784f41d2a1aad",
+    "separator\u2028.py": "ae1ae283772ed8388b80deab8e388ca9163a14fedd19502494b35bc01bd8b194"
+  },
+  "digest": "401a6186042d7bdedd22ff74a695d6a0688ffe399f6a5f9790fc497c98d9913d"
+}

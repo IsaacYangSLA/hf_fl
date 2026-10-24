@@ -19,10 +19,12 @@ you run today.
 
 | Goal | Guide |
 | --- | --- |
+| Build and operate the native Exchange server/worker | [Go Exchange](GO_EXCHANGE.md) |
 | Deploy Exchange and use its API or SDK | [Exchange runbook](EXCHANGE_V3.md) |
 | Understand Exchange service responsibilities | [Service overview](EXCHANGE_SERVICE.md) |
 | Install the standalone Exchange package | [Exchange package](../packages/exchange/README.md) |
 | Qualify the optional patched S3 implementation | [SeaweedFS deployment](../deploy/seaweedfs/README.md) |
+| Build and operate the native manager | [Go job manager](GO_JOB_MANAGER.md) |
 | Configure the manager, dashboard, and runtime | [Job manager](JOB_MANAGER.md), [deployment](../deploy/jobs/README.md) |
 | Install the standalone manager package | [Jobs package](../packages/jobs/README.md) |
 | Export managed job results | [Job exports](JOB_EXPORTS.md) |

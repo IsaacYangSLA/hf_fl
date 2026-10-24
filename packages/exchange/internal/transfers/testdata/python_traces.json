@@ -1,0 +1,739 @@
+{
+  "status": "PASS",
+  "reference_python": "3.11.17",
+  "reference_inputs_sha256": {
+    "packages/exchange/tests/test_transfers.py": "ab4ab89be6d7b8a50de09e1933555746c02b2a6d9ba6e6f5be7e32ed404910d5",
+    "packages/exchange/src/hf2l_exchange/transfers.py": "8c3d00734ec26d00f331a17b74772ab603e9efdfefe9c37999e2f093703cbb61",
+    "packages/exchange/src/hf2l_exchange/worker.py": "72a5610db7fa58a1d92360513b009f7a1140217b037028b0a39aab2de8ee707a",
+    "packages/exchange/src/hf2l_exchange/storage.py": "3301087318083ba7df0b346f81adc2fb48c73fe5d7b55f084b70f30803a1d3ce",
+    "packages/exchange/src/hf2l_exchange/application.py": "96b34199d1f83c100ca97b7bd6f710513913d543f195e39b3f5f923fc44de54f",
+    "packages/exchange/src/hf2l_exchange/models.py": "c4fc8f14a7e88ca30f48b3553658c875ae0701f8e1e0321b8bed01d7c890453b",
+    "packages/exchange/src/hf2l_exchange/config.py": "2e950f4e39b9ab18c1c1b299487df3eadc7b9cc09760a7f8a8f3a187ce643b78"
+  },
+  "controlled_fixture": {
+    "grant_seconds": 2,
+    "clock_control": "The unit fixture explicitly sets all relevant capability/due timestamps to0 only for cleanup due steps. No uncertain provider marker is removed except selected offline repair with both assertions. Actual deployment acceptance retains normal300s TTL."
+  },
+  "snapshots": {
+    "normal": [
+      {
+        "step": "initial",
+        "record_state": "draft",
+        "blob_state": "reserved",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": []
+      },
+      {
+        "step": "initiate",
+        "record_state": "draft",
+        "blob_state": "uploading",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "uploading",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": false
+          }
+        ]
+      },
+      {
+        "step": "complete",
+        "record_state": "draft",
+        "blob_state": "verifying",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "verifying",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": true
+          }
+        ]
+      },
+      {
+        "step": "verify",
+        "record_state": "draft",
+        "blob_state": "verified",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": true,
+        "attempts": [
+          {
+            "state": "verified",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": true
+          }
+        ],
+        "worker_outcomes": {
+          "verified": 1,
+          "failed": 0,
+          "recovered": 0,
+          "cleaned": 0,
+          "retry": 0,
+          "skipped": 0,
+          "invalid_parts": 0,
+          "expired": 0
+        }
+      },
+      {
+        "step": "publish",
+        "record_state": "published",
+        "blob_state": "verified",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": true,
+        "attempts": [
+          {
+            "state": "verified",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": true
+          }
+        ]
+      },
+      {
+        "step": "download",
+        "record_state": "published",
+        "blob_state": "verified",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": true,
+        "attempts": [
+          {
+            "state": "verified",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": true
+          }
+        ]
+      },
+      {
+        "step": "withdraw",
+        "record_state": "withdrawn",
+        "blob_state": "verified",
+        "allocated": 0,
+        "reclaiming": 3,
+        "has_object_version": true,
+        "attempts": [
+          {
+            "state": "cleanup",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": true
+          }
+        ]
+      },
+      {
+        "step": "cleanup_before_grant_expiry",
+        "record_state": "withdrawn",
+        "blob_state": "verified",
+        "allocated": 0,
+        "reclaiming": 3,
+        "has_object_version": true,
+        "attempts": [
+          {
+            "state": "cleanup",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": true
+          }
+        ],
+        "worker_outcomes": {
+          "verified": 0,
+          "failed": 0,
+          "recovered": 0,
+          "cleaned": 0,
+          "retry": 0,
+          "skipped": 0,
+          "invalid_parts": 0,
+          "expired": 0
+        }
+      },
+      {
+        "step": "cleanup_after_capabilities_due",
+        "record_state": "withdrawn",
+        "blob_state": "cleaned",
+        "allocated": 0,
+        "reclaiming": 0,
+        "has_object_version": true,
+        "attempts": [
+          {
+            "state": "cleaned",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": false,
+            "has_version": false
+          }
+        ],
+        "worker_outcomes": {
+          "verified": 0,
+          "failed": 0,
+          "recovered": 0,
+          "cleaned": 1,
+          "retry": 0,
+          "skipped": 0,
+          "invalid_parts": 0,
+          "expired": 0
+        }
+      },
+      {
+        "step": "purge",
+        "record_state": "absent",
+        "blob_state": "absent",
+        "allocated": 0,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": []
+      }
+    ],
+    "uncertain_initiation": [
+      {
+        "step": "uncertain_initiate",
+        "record_state": "draft",
+        "blob_state": "initiating",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "initiating",
+            "mutation_count": 1,
+            "lease_present": false,
+            "retry_count": 1,
+            "last_error": "storage_unavailable",
+            "has_upload_handle": false,
+            "has_version": false
+          }
+        ]
+      },
+      {
+        "step": "recovery_fenced",
+        "record_state": "draft",
+        "blob_state": "reserved",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "cleanup",
+            "mutation_count": 1,
+            "lease_present": false,
+            "retry_count": 1,
+            "last_error": "storage_mutation_uncertain",
+            "has_upload_handle": false,
+            "has_version": false
+          }
+        ],
+        "worker_outcomes": {
+          "verified": 0,
+          "failed": 0,
+          "recovered": 0,
+          "cleaned": 0,
+          "retry": 0,
+          "skipped": 1,
+          "invalid_parts": 0,
+          "expired": 0
+        }
+      },
+      {
+        "step": "new_initiation_denied",
+        "record_state": "draft",
+        "blob_state": "reserved",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "cleanup",
+            "mutation_count": 1,
+            "lease_present": false,
+            "retry_count": 1,
+            "last_error": "storage_mutation_uncertain",
+            "has_upload_handle": false,
+            "has_version": false
+          }
+        ],
+        "error_code": "storage_mutation_uncertain"
+      },
+      {
+        "step": "withdraw",
+        "record_state": "cancelled",
+        "blob_state": "reserved",
+        "allocated": 0,
+        "reclaiming": 3,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "cleanup",
+            "mutation_count": 1,
+            "lease_present": false,
+            "retry_count": 1,
+            "last_error": "storage_mutation_uncertain",
+            "has_upload_handle": false,
+            "has_version": false
+          }
+        ]
+      },
+      {
+        "step": "repair_dry_run",
+        "record_state": "cancelled",
+        "blob_state": "reserved",
+        "allocated": 0,
+        "reclaiming": 3,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "cleanup",
+            "mutation_count": 1,
+            "lease_present": false,
+            "retry_count": 1,
+            "last_error": "storage_mutation_uncertain",
+            "has_upload_handle": false,
+            "has_version": false
+          }
+        ]
+      },
+      {
+        "step": "repair_applied",
+        "record_state": "cancelled",
+        "blob_state": "reserved",
+        "allocated": 0,
+        "reclaiming": 3,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "cleanup",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 1,
+            "last_error": null,
+            "has_upload_handle": false,
+            "has_version": false
+          }
+        ]
+      },
+      {
+        "step": "cleanup",
+        "record_state": "cancelled",
+        "blob_state": "cleaned",
+        "allocated": 0,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "cleaned",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": false,
+            "has_version": false
+          }
+        ],
+        "worker_outcomes": {
+          "verified": 0,
+          "failed": 0,
+          "recovered": 0,
+          "cleaned": 1,
+          "retry": 0,
+          "skipped": 0,
+          "invalid_parts": 0,
+          "expired": 0
+        }
+      }
+    ],
+    "invalid_parts": [
+      {
+        "step": "initiate",
+        "record_state": "draft",
+        "blob_state": "uploading",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "uploading",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": false
+          }
+        ]
+      },
+      {
+        "step": "invalid_parts",
+        "record_state": "draft",
+        "blob_state": "uploading",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "uploading",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": false
+          }
+        ],
+        "error_code": "invalid_parts"
+      },
+      {
+        "step": "corrected_complete",
+        "record_state": "draft",
+        "blob_state": "verifying",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "verifying",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": true
+          }
+        ]
+      },
+      {
+        "step": "verify",
+        "record_state": "draft",
+        "blob_state": "verified",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": true,
+        "attempts": [
+          {
+            "state": "verified",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": true
+          }
+        ],
+        "worker_outcomes": {
+          "verified": 1,
+          "failed": 0,
+          "recovered": 0,
+          "cleaned": 0,
+          "retry": 0,
+          "skipped": 0,
+          "invalid_parts": 0,
+          "expired": 0
+        }
+      }
+    ],
+    "verification_missing": [
+      {
+        "step": "complete",
+        "record_state": "draft",
+        "blob_state": "verifying",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "verifying",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": true
+          }
+        ]
+      },
+      {
+        "step": "verification_failed",
+        "record_state": "failed",
+        "blob_state": "verifying",
+        "allocated": 0,
+        "reclaiming": 3,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "cleanup",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": "storage_missing",
+            "has_upload_handle": true,
+            "has_version": true
+          }
+        ],
+        "worker_outcomes": {
+          "verified": 0,
+          "failed": 1,
+          "recovered": 0,
+          "cleaned": 0,
+          "retry": 0,
+          "skipped": 0,
+          "invalid_parts": 0,
+          "expired": 0
+        }
+      },
+      {
+        "step": "cleanup_retry",
+        "record_state": "failed",
+        "blob_state": "verifying",
+        "allocated": 0,
+        "reclaiming": 3,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "cleanup",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 1,
+            "last_error": "storage_missing",
+            "has_upload_handle": true,
+            "has_version": true
+          }
+        ],
+        "worker_outcomes": {
+          "verified": 0,
+          "failed": 0,
+          "recovered": 0,
+          "cleaned": 0,
+          "retry": 1,
+          "skipped": 0,
+          "invalid_parts": 0,
+          "expired": 0
+        }
+      },
+      {
+        "step": "cleanup",
+        "record_state": "failed",
+        "blob_state": "cleaned",
+        "allocated": 0,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "cleaned",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": false,
+            "has_version": false
+          }
+        ],
+        "worker_outcomes": {
+          "verified": 0,
+          "failed": 0,
+          "recovered": 0,
+          "cleaned": 1,
+          "retry": 0,
+          "skipped": 0,
+          "invalid_parts": 0,
+          "expired": 0
+        }
+      }
+    ],
+    "uncertain_completion": [
+      {
+        "step": "initiate",
+        "record_state": "draft",
+        "blob_state": "uploading",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "uploading",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": false
+          }
+        ]
+      },
+      {
+        "step": "uncertain_complete",
+        "record_state": "draft",
+        "blob_state": "completing",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "completing",
+            "mutation_count": 1,
+            "lease_present": false,
+            "retry_count": 1,
+            "last_error": "storage_unavailable",
+            "has_upload_handle": true,
+            "has_version": false
+          }
+        ]
+      },
+      {
+        "step": "recovery_fenced",
+        "record_state": "draft",
+        "blob_state": "completing",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "completing",
+            "mutation_count": 1,
+            "lease_present": false,
+            "retry_count": 1,
+            "last_error": "storage_mutation_uncertain",
+            "has_upload_handle": true,
+            "has_version": false
+          }
+        ],
+        "worker_outcomes": {
+          "verified": 0,
+          "failed": 0,
+          "recovered": 0,
+          "cleaned": 0,
+          "retry": 0,
+          "skipped": 1,
+          "invalid_parts": 0,
+          "expired": 0
+        }
+      },
+      {
+        "step": "repair_dry_run",
+        "record_state": "draft",
+        "blob_state": "completing",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "completing",
+            "mutation_count": 1,
+            "lease_present": false,
+            "retry_count": 1,
+            "last_error": "storage_mutation_uncertain",
+            "has_upload_handle": true,
+            "has_version": false
+          }
+        ]
+      },
+      {
+        "step": "repair_applied",
+        "record_state": "draft",
+        "blob_state": "completing",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "completing",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 1,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": false
+          }
+        ]
+      },
+      {
+        "step": "completion_recovered",
+        "record_state": "draft",
+        "blob_state": "verifying",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": false,
+        "attempts": [
+          {
+            "state": "verifying",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": true
+          }
+        ],
+        "worker_outcomes": {
+          "verified": 0,
+          "failed": 0,
+          "recovered": 1,
+          "cleaned": 0,
+          "retry": 0,
+          "skipped": 0,
+          "invalid_parts": 0,
+          "expired": 0
+        }
+      },
+      {
+        "step": "verify",
+        "record_state": "draft",
+        "blob_state": "verified",
+        "allocated": 3,
+        "reclaiming": 0,
+        "has_object_version": true,
+        "attempts": [
+          {
+            "state": "verified",
+            "mutation_count": 0,
+            "lease_present": false,
+            "retry_count": 0,
+            "last_error": null,
+            "has_upload_handle": true,
+            "has_version": true
+          }
+        ],
+        "worker_outcomes": {
+          "verified": 1,
+          "failed": 0,
+          "recovered": 0,
+          "cleaned": 0,
+          "retry": 0,
+          "skipped": 0,
+          "invalid_parts": 0,
+          "expired": 0
+        }
+      }
+    ]
+  }
+}

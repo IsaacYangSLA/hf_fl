@@ -1,0 +1,1333 @@
+{
+  "revision": "0003_workload_grants",
+  "tables": [
+    {
+      "name": "v2_operations",
+      "columns": [
+        {
+          "name": "space_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "principal_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "scope",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "key",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "request_hash",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "response",
+          "kind": "json",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "now"
+          }
+        }
+      ]
+    },
+    {
+      "name": "v2_spaces",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "name",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "profile",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": "generic.v1"
+          }
+        },
+        {
+          "name": "generation",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 1
+          }
+        },
+        {
+          "name": "quota_bytes",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 107374182400
+          }
+        },
+        {
+          "name": "principal_quota_bytes",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 107374182400
+          }
+        },
+        {
+          "name": "allocated",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 0
+          }
+        },
+        {
+          "name": "reclaiming",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 0
+          }
+        },
+        {
+          "name": "quota_records",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 100000
+          }
+        },
+        {
+          "name": "record_count",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 0
+          }
+        },
+        {
+          "name": "quota_metadata_bytes",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 1073741824
+          }
+        },
+        {
+          "name": "metadata_bytes",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 0
+          }
+        },
+        {
+          "name": "event_floor",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "v2_events",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": true,
+          "auto": true,
+          "default": null
+        },
+        {
+          "name": "space_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "record_id",
+          "kind": "string",
+          "nullable": true,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "type",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "principal_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "payload",
+          "kind": "json",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "map"
+          }
+        },
+        {
+          "name": "created_at",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "now"
+          }
+        }
+      ]
+    },
+    {
+      "name": "v2_kind_policies",
+      "columns": [
+        {
+          "name": "space_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "kind",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "publish_roles",
+          "kind": "json",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "list"
+          }
+        },
+        {
+          "name": "visibility",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": "shared"
+          }
+        },
+        {
+          "name": "generation",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 1
+          }
+        }
+      ]
+    },
+    {
+      "name": "v2_managed_spaces",
+      "columns": [
+        {
+          "name": "space_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "job_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "now"
+          }
+        },
+        {
+          "name": "retired_at",
+          "kind": "float",
+          "nullable": true,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "v2_members",
+      "columns": [
+        {
+          "name": "space_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "principal_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "subject",
+          "kind": "string",
+          "nullable": true,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "roles",
+          "kind": "json",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "list"
+          }
+        },
+        {
+          "name": "bindings",
+          "kind": "json",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "map"
+          }
+        }
+      ]
+    },
+    {
+      "name": "v2_schema_revisions",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "space_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "kind",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "revision",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "schema",
+          "kind": "json",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "profile_version",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": "generic.v1"
+          }
+        },
+        {
+          "name": "dialect",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": "https://json-schema.org/draft/2020-12/schema"
+          }
+        },
+        {
+          "name": "digest",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": ""
+          }
+        },
+        {
+          "name": "created_at",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "now"
+          }
+        }
+      ]
+    },
+    {
+      "name": "v2_workload_revocations",
+      "columns": [
+        {
+          "name": "space_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "attempt_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "revoked_at",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "v2_records",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "space_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "kind",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "schema_revision_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "creator",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "creator_bindings",
+          "kind": "json",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "map"
+          }
+        },
+        {
+          "name": "base_record_id",
+          "kind": "string",
+          "nullable": true,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "metadata_json",
+          "kind": "json",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "map"
+          }
+        },
+        {
+          "name": "state",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": "draft"
+          }
+        },
+        {
+          "name": "shared",
+          "kind": "bool",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": false
+          }
+        },
+        {
+          "name": "generation",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 1
+          }
+        },
+        {
+          "name": "declared_bytes",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 0
+          }
+        },
+        {
+          "name": "metadata_bytes",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 0
+          }
+        },
+        {
+          "name": "created_at",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "now"
+          }
+        },
+        {
+          "name": "published_at",
+          "kind": "float",
+          "nullable": true,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "expires_at",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "v2_workload_grants",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "space_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "principal_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "subject",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "job_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "attempt_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "component_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "epoch",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "roles",
+          "kind": "json",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "bindings",
+          "kind": "json",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "certificate_thumbprint",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "expires_at",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "enabled",
+          "kind": "bool",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": true
+          }
+        },
+        {
+          "name": "created_at",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "now"
+          }
+        },
+        {
+          "name": "revoked_at",
+          "kind": "float",
+          "nullable": true,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "v2_blobs",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "space_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "record_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "path",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "size",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "sha256",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "media_type",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": "application/octet-stream"
+          }
+        },
+        {
+          "name": "state",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": "reserved"
+          }
+        },
+        {
+          "name": "object_key",
+          "kind": "string",
+          "nullable": true,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "object_version",
+          "kind": "string",
+          "nullable": true,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "verified_size",
+          "kind": "integer",
+          "nullable": true,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "verified_sha256",
+          "kind": "string",
+          "nullable": true,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "part_size",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 8388608
+          }
+        },
+        {
+          "name": "grant_expires_at",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 0.0
+          }
+        },
+        {
+          "name": "pending_deletion",
+          "kind": "bool",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": false
+          }
+        },
+        {
+          "name": "expires_at",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "v2_references",
+      "columns": [
+        {
+          "name": "space_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "name",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "record_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "generation",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 1
+          }
+        },
+        {
+          "name": "fence",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "v2_coordinations",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "space_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "reference_name",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "expected_generation",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "holder",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "fence",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "state",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": "active"
+          }
+        },
+        {
+          "name": "lease_until",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "result_record_id",
+          "kind": "string",
+          "nullable": true,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "created_at",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "now"
+          }
+        }
+      ]
+    },
+    {
+      "name": "v2_transfer_attempts",
+      "columns": [
+        {
+          "name": "id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "blob_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "operation",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": "upload"
+          }
+        },
+        {
+          "name": "object_key",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "state",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": "initiating"
+          }
+        },
+        {
+          "name": "token",
+          "kind": "string",
+          "nullable": true,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "lease_until",
+          "kind": "float",
+          "nullable": true,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "retry_count",
+          "kind": "integer",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 0
+          }
+        },
+        {
+          "name": "next_attempt",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 0.0
+          }
+        },
+        {
+          "name": "last_error",
+          "kind": "string",
+          "nullable": true,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "upload_handle",
+          "kind": "json",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "map"
+          }
+        },
+        {
+          "name": "mutation_tokens",
+          "kind": "json",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "list"
+          }
+        },
+        {
+          "name": "grant_expires_at",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "value",
+            "value": 0.0
+          }
+        },
+        {
+          "name": "created_at",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "now"
+          }
+        },
+        {
+          "name": "updated_at",
+          "kind": "float",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": {
+            "kind": "now"
+          }
+        }
+      ]
+    },
+    {
+      "name": "v2_coordination_inputs",
+      "columns": [
+        {
+          "name": "attempt_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "record_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": true,
+          "auto": false,
+          "default": null
+        },
+        {
+          "name": "space_id",
+          "kind": "string",
+          "nullable": false,
+          "primary_key": false,
+          "auto": false,
+          "default": null
+        }
+      ]
+    }
+  ],
+  "sqlite_baseline": [
+    "CREATE TABLE v2_operations (\n\tspace_id VARCHAR(64) NOT NULL, \n\tprincipal_id VARCHAR(64) NOT NULL, \n\tscope VARCHAR(256) NOT NULL, \n\t\"key\" VARCHAR(128) NOT NULL, \n\trequest_hash VARCHAR(64) NOT NULL, \n\tresponse JSON NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\tPRIMARY KEY (space_id, principal_id, scope, \"key\")\n)",
+    "CREATE TABLE v2_spaces (\n\tid VARCHAR(64) NOT NULL, \n\tname VARCHAR(128) NOT NULL, \n\tprofile VARCHAR(64) NOT NULL, \n\tgeneration INTEGER NOT NULL, \n\tquota_bytes BIGINT NOT NULL, \n\tprincipal_quota_bytes BIGINT NOT NULL, \n\tallocated BIGINT NOT NULL, \n\treclaiming BIGINT NOT NULL, \n\tquota_records BIGINT NOT NULL, \n\trecord_count BIGINT NOT NULL, \n\tquota_metadata_bytes BIGINT NOT NULL, \n\tmetadata_bytes BIGINT NOT NULL, \n\tevent_floor BIGINT NOT NULL, \n\tPRIMARY KEY (id)\n)",
+    "CREATE TABLE v2_events (\n\tid INTEGER NOT NULL, \n\tspace_id VARCHAR(64) NOT NULL, \n\trecord_id VARCHAR(64), \n\ttype VARCHAR(64) NOT NULL, \n\tprincipal_id VARCHAR(64) NOT NULL, \n\tpayload JSON NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(space_id) REFERENCES v2_spaces (id)\n)",
+    "CREATE TABLE v2_kind_policies (\n\tspace_id VARCHAR(64) NOT NULL, \n\tkind VARCHAR(128) NOT NULL, \n\tpublish_roles JSON NOT NULL, \n\tvisibility VARCHAR(24) NOT NULL, \n\tgeneration INTEGER NOT NULL, \n\tPRIMARY KEY (space_id, kind), \n\tFOREIGN KEY(space_id) REFERENCES v2_spaces (id)\n)",
+    "CREATE TABLE v2_members (\n\tspace_id VARCHAR(64) NOT NULL, \n\tprincipal_id VARCHAR(64) NOT NULL, \n\tsubject VARCHAR(256), \n\troles JSON NOT NULL, \n\tbindings JSON NOT NULL, \n\tPRIMARY KEY (space_id, principal_id), \n\tFOREIGN KEY(space_id) REFERENCES v2_spaces (id)\n)",
+    "CREATE TABLE v2_schema_revisions (\n\tid VARCHAR(64) NOT NULL, \n\tspace_id VARCHAR(64) NOT NULL, \n\tkind VARCHAR(128) NOT NULL, \n\trevision INTEGER NOT NULL, \n\tschema JSON NOT NULL, \n\tprofile_version VARCHAR(64) NOT NULL, \n\tdialect VARCHAR(256) NOT NULL, \n\tdigest VARCHAR(64) NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(space_id) REFERENCES v2_spaces (id), \n\tUNIQUE (space_id, kind, revision), \n\tUNIQUE (space_id, id)\n)",
+    "CREATE TABLE v2_records (\n\tid VARCHAR(64) NOT NULL, \n\tspace_id VARCHAR(64) NOT NULL, \n\tkind VARCHAR(128) NOT NULL, \n\tschema_revision_id VARCHAR(64) NOT NULL, \n\tcreator VARCHAR(64) NOT NULL, \n\tcreator_bindings JSON NOT NULL, \n\tbase_record_id VARCHAR(64), \n\tmetadata_json JSON NOT NULL, \n\tstate VARCHAR(24) NOT NULL, \n\tshared BOOLEAN NOT NULL, \n\tgeneration INTEGER NOT NULL, \n\tdeclared_bytes BIGINT NOT NULL, \n\tmetadata_bytes BIGINT NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\tpublished_at FLOAT, \n\texpires_at FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (space_id, id), \n\tFOREIGN KEY(space_id) REFERENCES v2_spaces (id), \n\tFOREIGN KEY(space_id, schema_revision_id) REFERENCES v2_schema_revisions (space_id, id), \n\tFOREIGN KEY(space_id, base_record_id) REFERENCES v2_records (space_id, id)\n)",
+    "CREATE TABLE v2_blobs (\n\tid VARCHAR(64) NOT NULL, \n\tspace_id VARCHAR(64) NOT NULL, \n\trecord_id VARCHAR(64) NOT NULL, \n\tpath VARCHAR(256) NOT NULL, \n\tsize BIGINT NOT NULL, \n\tsha256 VARCHAR(64) NOT NULL, \n\tmedia_type VARCHAR(256) NOT NULL, \n\tstate VARCHAR(24) NOT NULL, \n\tobject_key VARCHAR(1024), \n\tobject_version VARCHAR(512), \n\tverified_size BIGINT, \n\tverified_sha256 VARCHAR(64), \n\tpart_size BIGINT NOT NULL, \n\tgrant_expires_at FLOAT NOT NULL, \n\tpending_deletion BOOLEAN NOT NULL, \n\texpires_at FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (record_id, path), \n\tFOREIGN KEY(space_id, record_id) REFERENCES v2_records (space_id, id)\n)",
+    "CREATE TABLE v2_references (\n\tspace_id VARCHAR(64) NOT NULL, \n\tname VARCHAR(128) NOT NULL, \n\trecord_id VARCHAR(64) NOT NULL, \n\tgeneration INTEGER NOT NULL, \n\tfence INTEGER NOT NULL, \n\tPRIMARY KEY (space_id, name), \n\tFOREIGN KEY(space_id, record_id) REFERENCES v2_records (space_id, id)\n)",
+    "CREATE TABLE v2_coordinations (\n\tid VARCHAR(64) NOT NULL, \n\tspace_id VARCHAR(64) NOT NULL, \n\treference_name VARCHAR(128) NOT NULL, \n\texpected_generation INTEGER NOT NULL, \n\tholder VARCHAR(64) NOT NULL, \n\tfence INTEGER NOT NULL, \n\tstate VARCHAR(24) NOT NULL, \n\tlease_until FLOAT NOT NULL, \n\tresult_record_id VARCHAR(64), \n\tcreated_at FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (space_id, id), \n\tFOREIGN KEY(space_id, reference_name) REFERENCES v2_references (space_id, name), \n\tFOREIGN KEY(space_id, result_record_id) REFERENCES v2_records (space_id, id)\n)",
+    "CREATE TABLE v2_transfer_attempts (\n\tid VARCHAR(64) NOT NULL, \n\tblob_id VARCHAR(64) NOT NULL, \n\toperation VARCHAR(24) NOT NULL, \n\tobject_key VARCHAR(1024) NOT NULL, \n\tstate VARCHAR(24) NOT NULL, \n\ttoken VARCHAR(64), \n\tlease_until FLOAT, \n\tretry_count INTEGER NOT NULL, \n\tnext_attempt FLOAT NOT NULL, \n\tlast_error VARCHAR(256), \n\tupload_handle JSON NOT NULL, \n\tmutation_tokens JSON NOT NULL, \n\tgrant_expires_at FLOAT NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\tupdated_at FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(blob_id) REFERENCES v2_blobs (id), \n\tUNIQUE (object_key)\n)",
+    "CREATE TABLE v2_coordination_inputs (\n\tattempt_id VARCHAR(64) NOT NULL, \n\trecord_id VARCHAR(64) NOT NULL, \n\tspace_id VARCHAR(64) NOT NULL, \n\tPRIMARY KEY (attempt_id, record_id), \n\tFOREIGN KEY(space_id, attempt_id) REFERENCES v2_coordinations (space_id, id), \n\tFOREIGN KEY(space_id, record_id) REFERENCES v2_records (space_id, id)\n)",
+    "CREATE INDEX ix_v2_operation_retention ON v2_operations (created_at)",
+    "CREATE INDEX ix_v2_events_retention ON v2_events (created_at, id)",
+    "CREATE INDEX ix_v2_events_space_cursor ON v2_events (space_id, id)",
+    "CREATE INDEX ix_v2_records_creator_state ON v2_records (space_id, creator, state)",
+    "CREATE INDEX ix_v2_records_discovery ON v2_records (space_id, kind, state, published_at, id)",
+    "CREATE INDEX ix_v2_records_expiry ON v2_records (state, expires_at, id)",
+    "CREATE INDEX ix_v2_blobs_cleanup ON v2_blobs (state, expires_at, id)",
+    "CREATE INDEX ix_v2_blobs_record ON v2_blobs (record_id, id)",
+    "CREATE INDEX ix_v2_coord_reference ON v2_coordinations (space_id, reference_name, state)",
+    "CREATE INDEX ix_v2_attempt_blob ON v2_transfer_attempts (blob_id, state)",
+    "CREATE INDEX ix_v2_attempt_scheduler ON v2_transfer_attempts (state, next_attempt, lease_until, id)"
+  ],
+  "postgresql_baseline": [
+    "CREATE TABLE v2_operations (\n\tspace_id VARCHAR(64) NOT NULL, \n\tprincipal_id VARCHAR(64) NOT NULL, \n\tscope VARCHAR(256) NOT NULL, \n\tkey VARCHAR(128) NOT NULL, \n\trequest_hash VARCHAR(64) NOT NULL, \n\tresponse JSONB NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\tPRIMARY KEY (space_id, principal_id, scope, key)\n)",
+    "CREATE TABLE v2_spaces (\n\tid VARCHAR(64) NOT NULL, \n\tname VARCHAR(128) NOT NULL, \n\tprofile VARCHAR(64) NOT NULL, \n\tgeneration INTEGER NOT NULL, \n\tquota_bytes BIGINT NOT NULL, \n\tprincipal_quota_bytes BIGINT NOT NULL, \n\tallocated BIGINT NOT NULL, \n\treclaiming BIGINT NOT NULL, \n\tquota_records BIGINT NOT NULL, \n\trecord_count BIGINT NOT NULL, \n\tquota_metadata_bytes BIGINT NOT NULL, \n\tmetadata_bytes BIGINT NOT NULL, \n\tevent_floor BIGINT NOT NULL, \n\tPRIMARY KEY (id)\n)",
+    "CREATE TABLE v2_events (\n\tid BIGSERIAL NOT NULL, \n\tspace_id VARCHAR(64) NOT NULL, \n\trecord_id VARCHAR(64), \n\ttype VARCHAR(64) NOT NULL, \n\tprincipal_id VARCHAR(64) NOT NULL, \n\tpayload JSONB NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(space_id) REFERENCES v2_spaces (id)\n)",
+    "CREATE TABLE v2_kind_policies (\n\tspace_id VARCHAR(64) NOT NULL, \n\tkind VARCHAR(128) NOT NULL, \n\tpublish_roles JSONB NOT NULL, \n\tvisibility VARCHAR(24) NOT NULL, \n\tgeneration INTEGER NOT NULL, \n\tPRIMARY KEY (space_id, kind), \n\tFOREIGN KEY(space_id) REFERENCES v2_spaces (id)\n)",
+    "CREATE TABLE v2_members (\n\tspace_id VARCHAR(64) NOT NULL, \n\tprincipal_id VARCHAR(64) NOT NULL, \n\tsubject VARCHAR(256), \n\troles JSONB NOT NULL, \n\tbindings JSONB NOT NULL, \n\tPRIMARY KEY (space_id, principal_id), \n\tFOREIGN KEY(space_id) REFERENCES v2_spaces (id)\n)",
+    "CREATE TABLE v2_schema_revisions (\n\tid VARCHAR(64) NOT NULL, \n\tspace_id VARCHAR(64) NOT NULL, \n\tkind VARCHAR(128) NOT NULL, \n\trevision INTEGER NOT NULL, \n\tschema JSONB NOT NULL, \n\tprofile_version VARCHAR(64) NOT NULL, \n\tdialect VARCHAR(256) NOT NULL, \n\tdigest VARCHAR(64) NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(space_id) REFERENCES v2_spaces (id), \n\tUNIQUE (space_id, kind, revision), \n\tUNIQUE (space_id, id)\n)",
+    "CREATE TABLE v2_records (\n\tid VARCHAR(64) NOT NULL, \n\tspace_id VARCHAR(64) NOT NULL, \n\tkind VARCHAR(128) NOT NULL, \n\tschema_revision_id VARCHAR(64) NOT NULL, \n\tcreator VARCHAR(64) NOT NULL, \n\tcreator_bindings JSONB NOT NULL, \n\tbase_record_id VARCHAR(64), \n\tmetadata_json JSONB NOT NULL, \n\tstate VARCHAR(24) NOT NULL, \n\tshared BOOLEAN NOT NULL, \n\tgeneration INTEGER NOT NULL, \n\tdeclared_bytes BIGINT NOT NULL, \n\tmetadata_bytes BIGINT NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\tpublished_at FLOAT, \n\texpires_at FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (space_id, id), \n\tFOREIGN KEY(space_id) REFERENCES v2_spaces (id), \n\tFOREIGN KEY(space_id, schema_revision_id) REFERENCES v2_schema_revisions (space_id, id), \n\tFOREIGN KEY(space_id, base_record_id) REFERENCES v2_records (space_id, id)\n)",
+    "CREATE TABLE v2_blobs (\n\tid VARCHAR(64) NOT NULL, \n\tspace_id VARCHAR(64) NOT NULL, \n\trecord_id VARCHAR(64) NOT NULL, \n\tpath VARCHAR(256) NOT NULL, \n\tsize BIGINT NOT NULL, \n\tsha256 VARCHAR(64) NOT NULL, \n\tmedia_type VARCHAR(256) NOT NULL, \n\tstate VARCHAR(24) NOT NULL, \n\tobject_key VARCHAR(1024), \n\tobject_version VARCHAR(512), \n\tverified_size BIGINT, \n\tverified_sha256 VARCHAR(64), \n\tpart_size BIGINT NOT NULL, \n\tgrant_expires_at FLOAT NOT NULL, \n\tpending_deletion BOOLEAN NOT NULL, \n\texpires_at FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (record_id, path), \n\tFOREIGN KEY(space_id, record_id) REFERENCES v2_records (space_id, id)\n)",
+    "CREATE TABLE v2_references (\n\tspace_id VARCHAR(64) NOT NULL, \n\tname VARCHAR(128) NOT NULL, \n\trecord_id VARCHAR(64) NOT NULL, \n\tgeneration INTEGER NOT NULL, \n\tfence INTEGER NOT NULL, \n\tPRIMARY KEY (space_id, name), \n\tFOREIGN KEY(space_id, record_id) REFERENCES v2_records (space_id, id)\n)",
+    "CREATE TABLE v2_coordinations (\n\tid VARCHAR(64) NOT NULL, \n\tspace_id VARCHAR(64) NOT NULL, \n\treference_name VARCHAR(128) NOT NULL, \n\texpected_generation INTEGER NOT NULL, \n\tholder VARCHAR(64) NOT NULL, \n\tfence INTEGER NOT NULL, \n\tstate VARCHAR(24) NOT NULL, \n\tlease_until FLOAT NOT NULL, \n\tresult_record_id VARCHAR(64), \n\tcreated_at FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (space_id, id), \n\tFOREIGN KEY(space_id, reference_name) REFERENCES v2_references (space_id, name), \n\tFOREIGN KEY(space_id, result_record_id) REFERENCES v2_records (space_id, id)\n)",
+    "CREATE TABLE v2_transfer_attempts (\n\tid VARCHAR(64) NOT NULL, \n\tblob_id VARCHAR(64) NOT NULL, \n\toperation VARCHAR(24) NOT NULL, \n\tobject_key VARCHAR(1024) NOT NULL, \n\tstate VARCHAR(24) NOT NULL, \n\ttoken VARCHAR(64), \n\tlease_until FLOAT, \n\tretry_count INTEGER NOT NULL, \n\tnext_attempt FLOAT NOT NULL, \n\tlast_error VARCHAR(256), \n\tupload_handle JSONB NOT NULL, \n\tmutation_tokens JSONB NOT NULL, \n\tgrant_expires_at FLOAT NOT NULL, \n\tcreated_at FLOAT NOT NULL, \n\tupdated_at FLOAT NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(blob_id) REFERENCES v2_blobs (id), \n\tUNIQUE (object_key)\n)",
+    "CREATE TABLE v2_coordination_inputs (\n\tattempt_id VARCHAR(64) NOT NULL, \n\trecord_id VARCHAR(64) NOT NULL, \n\tspace_id VARCHAR(64) NOT NULL, \n\tPRIMARY KEY (attempt_id, record_id), \n\tFOREIGN KEY(space_id, attempt_id) REFERENCES v2_coordinations (space_id, id), \n\tFOREIGN KEY(space_id, record_id) REFERENCES v2_records (space_id, id)\n)",
+    "CREATE INDEX ix_v2_operation_retention ON v2_operations (created_at)",
+    "CREATE INDEX ix_v2_events_retention ON v2_events (created_at, id)",
+    "CREATE INDEX ix_v2_events_space_cursor ON v2_events (space_id, id)",
+    "CREATE INDEX ix_v2_records_creator_state ON v2_records (space_id, creator, state)",
+    "CREATE INDEX ix_v2_records_discovery ON v2_records (space_id, kind, state, published_at, id)",
+    "CREATE INDEX ix_v2_records_expiry ON v2_records (state, expires_at, id)",
+    "CREATE INDEX ix_v2_blobs_cleanup ON v2_blobs (state, expires_at, id)",
+    "CREATE INDEX ix_v2_blobs_record ON v2_blobs (record_id, id)",
+    "CREATE INDEX ix_v2_coord_reference ON v2_coordinations (space_id, reference_name, state)",
+    "CREATE INDEX ix_v2_attempt_blob ON v2_transfer_attempts (blob_id, state)",
+    "CREATE INDEX ix_v2_attempt_scheduler ON v2_transfer_attempts (state, next_attempt, lease_until, id)"
+  ]
+}

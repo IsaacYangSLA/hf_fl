@@ -1,0 +1,1217 @@
+{
+  "fixtures": [
+    {
+      "durable_binding": {
+        "component_id": "owner",
+        "dataset_bindings": {},
+        "job_id": "job",
+        "participant_id": null,
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "role": "owner",
+        "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335"
+      },
+      "input": {
+        "attempt_id": "new-attempt",
+        "component_id": "owner",
+        "epoch": 2,
+        "job_id": "job",
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "role": "owner",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec": {
+          "components": [
+            {
+              "component_id": "owner",
+              "participant_id": null,
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "owner"
+            },
+            {
+              "component_id": "alice-component",
+              "participant_id": "alice",
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "participant"
+            }
+          ],
+          "max_duration_seconds": 3600,
+          "name": "Compatibility π <&>",
+          "options": {
+            "learning_rate": 0.01
+          },
+          "participants": [
+            {
+              "component_id": "alice-component",
+              "dataset_binding": "alice-data",
+              "mode": "managed",
+              "participant_id": "alice"
+            },
+            {
+              "component_id": null,
+              "dataset_binding": "bob-data",
+              "mode": "external",
+              "participant_id": "bob"
+            }
+          ],
+          "plugin": "lenet",
+          "project_id": "research",
+          "runtime_image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "secret_refs": {
+            "rate": "rate-ref"
+          },
+          "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_id": "approved",
+          "target_round": 2
+        },
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335"
+      },
+      "name": "owner",
+      "normalized": {
+        "attempt_id": "new-attempt",
+        "build_dir": "/job/build",
+        "built_artifacts": {},
+        "component_id": "owner",
+        "dataset_bindings": {},
+        "deadline_at": null,
+        "epoch": 2,
+        "exchange_endpoint": "http://proxy",
+        "job_id": "job",
+        "max_backoff": 30.0,
+        "participant_id": null,
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "poll_interval": 2.0,
+        "proxy_socket": "/run/hf2l/proxy.sock",
+        "reconciliation": [],
+        "role": "owner",
+        "schema_version": 1,
+        "secret_option_names": [],
+        "secret_options_file": null,
+        "source_dir": "/job/source",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec": {
+          "components": [
+            {
+              "component_id": "owner",
+              "participant_id": null,
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "owner"
+            },
+            {
+              "component_id": "alice-component",
+              "participant_id": "alice",
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "participant"
+            }
+          ],
+          "max_duration_seconds": 3600,
+          "name": "Compatibility π <&>",
+          "options": {
+            "learning_rate": 0.01
+          },
+          "participants": [
+            {
+              "component_id": "alice-component",
+              "dataset_binding": "alice-data",
+              "mode": "managed",
+              "participant_id": "alice"
+            },
+            {
+              "component_id": null,
+              "dataset_binding": "bob-data",
+              "mode": "external",
+              "participant_id": "bob"
+            }
+          ],
+          "plugin": "lenet",
+          "project_id": "research",
+          "runtime_image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "secret_refs": {
+            "rate": "rate-ref"
+          },
+          "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_id": "approved",
+          "target_round": 2
+        },
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335",
+        "state_dir": "/job/state"
+      },
+      "source_identity": "hf2l-managed-source-v1:sha256:0d7ac6d74b6ab7d19eee31c490214cb190f60f1c40ae23068b87af3105db46f7"
+    },
+    {
+      "durable_binding": {
+        "component_id": "owner",
+        "dataset_bindings": {},
+        "job_id": "job",
+        "participant_id": null,
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "role": "owner",
+        "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335"
+      },
+      "input": {
+        "attempt_id": "new-attempt",
+        "component_id": "owner",
+        "epoch": 2,
+        "job_id": "job",
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "role": "init",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec": {
+          "components": [
+            {
+              "component_id": "owner",
+              "participant_id": null,
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "owner"
+            },
+            {
+              "component_id": "alice-component",
+              "participant_id": "alice",
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "participant"
+            }
+          ],
+          "max_duration_seconds": 3600,
+          "name": "Compatibility π <&>",
+          "options": {
+            "learning_rate": 0.01
+          },
+          "participants": [
+            {
+              "component_id": "alice-component",
+              "dataset_binding": "alice-data",
+              "mode": "managed",
+              "participant_id": "alice"
+            },
+            {
+              "component_id": null,
+              "dataset_binding": "bob-data",
+              "mode": "external",
+              "participant_id": "bob"
+            }
+          ],
+          "plugin": "lenet",
+          "project_id": "research",
+          "runtime_image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "secret_refs": {
+            "rate": "rate-ref"
+          },
+          "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_id": "approved",
+          "target_round": 2
+        },
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335"
+      },
+      "name": "init",
+      "normalized": {
+        "attempt_id": "new-attempt",
+        "build_dir": "/job/build",
+        "built_artifacts": {},
+        "component_id": "owner",
+        "dataset_bindings": {},
+        "deadline_at": null,
+        "epoch": 2,
+        "exchange_endpoint": "http://proxy",
+        "job_id": "job",
+        "max_backoff": 30.0,
+        "participant_id": null,
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "poll_interval": 2.0,
+        "proxy_socket": "/run/hf2l/proxy.sock",
+        "reconciliation": [],
+        "role": "init",
+        "schema_version": 1,
+        "secret_option_names": [],
+        "secret_options_file": null,
+        "source_dir": "/job/source",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec": {
+          "components": [
+            {
+              "component_id": "owner",
+              "participant_id": null,
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "owner"
+            },
+            {
+              "component_id": "alice-component",
+              "participant_id": "alice",
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "participant"
+            }
+          ],
+          "max_duration_seconds": 3600,
+          "name": "Compatibility π <&>",
+          "options": {
+            "learning_rate": 0.01
+          },
+          "participants": [
+            {
+              "component_id": "alice-component",
+              "dataset_binding": "alice-data",
+              "mode": "managed",
+              "participant_id": "alice"
+            },
+            {
+              "component_id": null,
+              "dataset_binding": "bob-data",
+              "mode": "external",
+              "participant_id": "bob"
+            }
+          ],
+          "plugin": "lenet",
+          "project_id": "research",
+          "runtime_image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "secret_refs": {
+            "rate": "rate-ref"
+          },
+          "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_id": "approved",
+          "target_round": 2
+        },
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335",
+        "state_dir": "/job/state"
+      },
+      "source_identity": "hf2l-managed-source-v1:sha256:0d7ac6d74b6ab7d19eee31c490214cb190f60f1c40ae23068b87af3105db46f7"
+    },
+    {
+      "durable_binding": {
+        "component_id": "alice-component",
+        "dataset_bindings": {
+          "alice-data": {
+            "kind": "synthetic",
+            "path": null
+          }
+        },
+        "job_id": "job",
+        "participant_id": "alice",
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "role": "client",
+        "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335"
+      },
+      "input": {
+        "attempt_id": "new-attempt",
+        "component_id": "alice-component",
+        "dataset_bindings": {
+          "alice-data": {
+            "kind": "synthetic"
+          }
+        },
+        "epoch": 2,
+        "job_id": "job",
+        "participant_id": "alice",
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "role": "client",
+        "secret_option_names": [
+          "rate"
+        ],
+        "secret_options_file": "/run/hf2l/secrets.json",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec": {
+          "components": [
+            {
+              "component_id": "owner",
+              "participant_id": null,
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "owner"
+            },
+            {
+              "component_id": "alice-component",
+              "participant_id": "alice",
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "participant"
+            }
+          ],
+          "max_duration_seconds": 3600,
+          "name": "Compatibility π <&>",
+          "options": {
+            "learning_rate": 0.01
+          },
+          "participants": [
+            {
+              "component_id": "alice-component",
+              "dataset_binding": "alice-data",
+              "mode": "managed",
+              "participant_id": "alice"
+            },
+            {
+              "component_id": null,
+              "dataset_binding": "bob-data",
+              "mode": "external",
+              "participant_id": "bob"
+            }
+          ],
+          "plugin": "lenet",
+          "project_id": "research",
+          "runtime_image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "secret_refs": {
+            "rate": "rate-ref"
+          },
+          "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_id": "approved",
+          "target_round": 2
+        },
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335"
+      },
+      "name": "managed-client",
+      "normalized": {
+        "attempt_id": "new-attempt",
+        "build_dir": "/job/build",
+        "built_artifacts": {},
+        "component_id": "alice-component",
+        "dataset_bindings": {
+          "alice-data": {
+            "kind": "synthetic",
+            "path": null
+          }
+        },
+        "deadline_at": null,
+        "epoch": 2,
+        "exchange_endpoint": "http://proxy",
+        "job_id": "job",
+        "max_backoff": 30.0,
+        "participant_id": "alice",
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "poll_interval": 2.0,
+        "proxy_socket": "/run/hf2l/proxy.sock",
+        "reconciliation": [],
+        "role": "client",
+        "schema_version": 1,
+        "secret_option_names": [
+          "rate"
+        ],
+        "secret_options_file": "/run/hf2l/secrets.json",
+        "source_dir": "/job/source",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec": {
+          "components": [
+            {
+              "component_id": "owner",
+              "participant_id": null,
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "owner"
+            },
+            {
+              "component_id": "alice-component",
+              "participant_id": "alice",
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "participant"
+            }
+          ],
+          "max_duration_seconds": 3600,
+          "name": "Compatibility π <&>",
+          "options": {
+            "learning_rate": 0.01
+          },
+          "participants": [
+            {
+              "component_id": "alice-component",
+              "dataset_binding": "alice-data",
+              "mode": "managed",
+              "participant_id": "alice"
+            },
+            {
+              "component_id": null,
+              "dataset_binding": "bob-data",
+              "mode": "external",
+              "participant_id": "bob"
+            }
+          ],
+          "plugin": "lenet",
+          "project_id": "research",
+          "runtime_image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "secret_refs": {
+            "rate": "rate-ref"
+          },
+          "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_id": "approved",
+          "target_round": 2
+        },
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335",
+        "state_dir": "/job/state"
+      },
+      "source_identity": "hf2l-managed-source-v1:sha256:27ba3523e0ab297cce696140e0bcb9517badb13a4563c00764dfc64c4e7ba8d3"
+    },
+    {
+      "durable_binding": {
+        "component_id": "external-bob",
+        "dataset_bindings": {
+          "bob-data": {
+            "kind": "npz",
+            "path": "/job/data/data.npz"
+          }
+        },
+        "job_id": "job",
+        "participant_id": "bob",
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "role": "client",
+        "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335"
+      },
+      "input": {
+        "attempt_id": "new-attempt",
+        "component_id": "external-bob",
+        "dataset_bindings": {
+          "bob-data": {
+            "kind": "npz",
+            "path": "/job/data/data.npz"
+          }
+        },
+        "epoch": 2,
+        "job_id": "job",
+        "participant_id": "bob",
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "role": "client",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec": {
+          "components": [
+            {
+              "component_id": "owner",
+              "participant_id": null,
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "owner"
+            },
+            {
+              "component_id": "alice-component",
+              "participant_id": "alice",
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "participant"
+            }
+          ],
+          "max_duration_seconds": 3600,
+          "name": "Compatibility π <&>",
+          "options": {
+            "learning_rate": 0.01
+          },
+          "participants": [
+            {
+              "component_id": "alice-component",
+              "dataset_binding": "alice-data",
+              "mode": "managed",
+              "participant_id": "alice"
+            },
+            {
+              "component_id": null,
+              "dataset_binding": "bob-data",
+              "mode": "external",
+              "participant_id": "bob"
+            }
+          ],
+          "plugin": "lenet",
+          "project_id": "research",
+          "runtime_image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "secret_refs": {
+            "rate": "rate-ref"
+          },
+          "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_id": "approved",
+          "target_round": 2
+        },
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335"
+      },
+      "name": "external-client",
+      "normalized": {
+        "attempt_id": "new-attempt",
+        "build_dir": "/job/build",
+        "built_artifacts": {},
+        "component_id": "external-bob",
+        "dataset_bindings": {
+          "bob-data": {
+            "kind": "npz",
+            "path": "/job/data/data.npz"
+          }
+        },
+        "deadline_at": null,
+        "epoch": 2,
+        "exchange_endpoint": "http://proxy",
+        "job_id": "job",
+        "max_backoff": 30.0,
+        "participant_id": "bob",
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "poll_interval": 2.0,
+        "proxy_socket": "/run/hf2l/proxy.sock",
+        "reconciliation": [],
+        "role": "client",
+        "schema_version": 1,
+        "secret_option_names": [],
+        "secret_options_file": null,
+        "source_dir": "/job/source",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec": {
+          "components": [
+            {
+              "component_id": "owner",
+              "participant_id": null,
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "owner"
+            },
+            {
+              "component_id": "alice-component",
+              "participant_id": "alice",
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "participant"
+            }
+          ],
+          "max_duration_seconds": 3600,
+          "name": "Compatibility π <&>",
+          "options": {
+            "learning_rate": 0.01
+          },
+          "participants": [
+            {
+              "component_id": "alice-component",
+              "dataset_binding": "alice-data",
+              "mode": "managed",
+              "participant_id": "alice"
+            },
+            {
+              "component_id": null,
+              "dataset_binding": "bob-data",
+              "mode": "external",
+              "participant_id": "bob"
+            }
+          ],
+          "plugin": "lenet",
+          "project_id": "research",
+          "runtime_image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "secret_refs": {
+            "rate": "rate-ref"
+          },
+          "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_id": "approved",
+          "target_round": 2
+        },
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335",
+        "state_dir": "/job/state"
+      },
+      "source_identity": "hf2l-managed-source-v1:sha256:044f15524f185b62f38604497852ca3fb767f1095f5c1c2de12b6c198b03baaa"
+    },
+    {
+      "durable_binding": {
+        "component_id": "owner",
+        "dataset_bindings": {},
+        "job_id": "job",
+        "participant_id": null,
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "role": "owner",
+        "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335"
+      },
+      "input": {
+        "attempt_id": "new-attempt",
+        "component_id": "owner",
+        "epoch": 2,
+        "job_id": "job",
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "reconciliation": [
+          {
+            "action": "absent",
+            "grants_revoked": true,
+            "intent_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "old_attempt_id": "old-attempt",
+            "old_epoch": 1,
+            "revocation_operation_id": "revoke",
+            "role": "owner",
+            "termination_confirmed": true,
+            "termination_operation_id": "stop"
+          }
+        ],
+        "role": "owner",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec": {
+          "components": [
+            {
+              "component_id": "owner",
+              "participant_id": null,
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "owner"
+            },
+            {
+              "component_id": "alice-component",
+              "participant_id": "alice",
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "participant"
+            }
+          ],
+          "max_duration_seconds": 3600,
+          "name": "Compatibility π <&>",
+          "options": {
+            "learning_rate": 0.01
+          },
+          "participants": [
+            {
+              "component_id": "alice-component",
+              "dataset_binding": "alice-data",
+              "mode": "managed",
+              "participant_id": "alice"
+            },
+            {
+              "component_id": null,
+              "dataset_binding": "bob-data",
+              "mode": "external",
+              "participant_id": "bob"
+            }
+          ],
+          "plugin": "lenet",
+          "project_id": "research",
+          "runtime_image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "secret_refs": {
+            "rate": "rate-ref"
+          },
+          "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_id": "approved",
+          "target_round": 2
+        },
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335"
+      },
+      "name": "recovered-owner",
+      "normalized": {
+        "attempt_id": "new-attempt",
+        "build_dir": "/job/build",
+        "built_artifacts": {},
+        "component_id": "owner",
+        "dataset_bindings": {},
+        "deadline_at": null,
+        "epoch": 2,
+        "exchange_endpoint": "http://proxy",
+        "job_id": "job",
+        "max_backoff": 30.0,
+        "participant_id": null,
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "poll_interval": 2.0,
+        "proxy_socket": "/run/hf2l/proxy.sock",
+        "reconciliation": [
+          {
+            "acquisition_id": null,
+            "action": "absent",
+            "grants_revoked": true,
+            "intent_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "old_attempt_id": "old-attempt",
+            "old_epoch": 1,
+            "record_id": null,
+            "revocation_operation_id": "revoke",
+            "role": "owner",
+            "termination_confirmed": true,
+            "termination_operation_id": "stop"
+          }
+        ],
+        "role": "owner",
+        "schema_version": 1,
+        "secret_option_names": [],
+        "secret_options_file": null,
+        "source_dir": "/job/source",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec": {
+          "components": [
+            {
+              "component_id": "owner",
+              "participant_id": null,
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "owner"
+            },
+            {
+              "component_id": "alice-component",
+              "participant_id": "alice",
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "participant"
+            }
+          ],
+          "max_duration_seconds": 3600,
+          "name": "Compatibility π <&>",
+          "options": {
+            "learning_rate": 0.01
+          },
+          "participants": [
+            {
+              "component_id": "alice-component",
+              "dataset_binding": "alice-data",
+              "mode": "managed",
+              "participant_id": "alice"
+            },
+            {
+              "component_id": null,
+              "dataset_binding": "bob-data",
+              "mode": "external",
+              "participant_id": "bob"
+            }
+          ],
+          "plugin": "lenet",
+          "project_id": "research",
+          "runtime_image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "secret_refs": {
+            "rate": "rate-ref"
+          },
+          "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_id": "approved",
+          "target_round": 2
+        },
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335",
+        "state_dir": "/job/state"
+      },
+      "source_identity": "hf2l-managed-source-v1:sha256:0d7ac6d74b6ab7d19eee31c490214cb190f60f1c40ae23068b87af3105db46f7"
+    },
+    {
+      "durable_binding": {
+        "built_artifacts": {
+          "example-1.0-py3-none-any.whl": {
+            "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "size_bytes": 23
+          }
+        },
+        "component_id": "owner",
+        "dataset_bindings": {},
+        "job_id": "job",
+        "participant_id": null,
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "role": "owner",
+        "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335"
+      },
+      "input": {
+        "attempt_id": "new-attempt",
+        "built_artifacts": {
+          "example-1.0-py3-none-any.whl": {
+            "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "size_bytes": 23
+          }
+        },
+        "component_id": "owner",
+        "epoch": 2,
+        "job_id": "job",
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "role": "owner",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec": {
+          "components": [
+            {
+              "component_id": "owner",
+              "participant_id": null,
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "owner"
+            },
+            {
+              "component_id": "alice-component",
+              "participant_id": "alice",
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "participant"
+            }
+          ],
+          "max_duration_seconds": 3600,
+          "name": "Compatibility π <&>",
+          "options": {
+            "learning_rate": 0.01
+          },
+          "participants": [
+            {
+              "component_id": "alice-component",
+              "dataset_binding": "alice-data",
+              "mode": "managed",
+              "participant_id": "alice"
+            },
+            {
+              "component_id": null,
+              "dataset_binding": "bob-data",
+              "mode": "external",
+              "participant_id": "bob"
+            }
+          ],
+          "plugin": "lenet",
+          "project_id": "research",
+          "runtime_image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "secret_refs": {
+            "rate": "rate-ref"
+          },
+          "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_id": "approved",
+          "target_round": 2
+        },
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335"
+      },
+      "name": "built-owner",
+      "normalized": {
+        "attempt_id": "new-attempt",
+        "build_dir": "/job/build",
+        "built_artifacts": {
+          "example-1.0-py3-none-any.whl": {
+            "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "size_bytes": 23
+          }
+        },
+        "component_id": "owner",
+        "dataset_bindings": {},
+        "deadline_at": null,
+        "epoch": 2,
+        "exchange_endpoint": "http://proxy",
+        "job_id": "job",
+        "max_backoff": 30.0,
+        "participant_id": null,
+        "participant_principals": {
+          "alice": "1e450e2e6a9b4f74a9fd4261953cf9ff61220036ce45442ed21510016402b460",
+          "bob": "6e86595e6c351759278e02150287064d75850db1317d5af9b5f905eb8dbe588c"
+        },
+        "poll_interval": 2.0,
+        "proxy_socket": "/run/hf2l/proxy.sock",
+        "reconciliation": [],
+        "role": "owner",
+        "schema_version": 1,
+        "secret_option_names": [],
+        "secret_options_file": null,
+        "source_dir": "/job/source",
+        "source_manifest": {
+          "plugin.py": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        "space_id": "space",
+        "spec": {
+          "components": [
+            {
+              "component_id": "owner",
+              "participant_id": null,
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "owner"
+            },
+            {
+              "component_id": "alice-component",
+              "participant_id": "alice",
+              "resources": {
+                "cpu_millicores": 1000,
+                "disk_bytes": 1048576,
+                "gpu_count": 0,
+                "gpu_profile": null,
+                "memory_bytes": 1048576,
+                "pool_id": "cpu",
+                "sandbox_profile": "runsc-cpu-v1"
+              },
+              "role": "participant"
+            }
+          ],
+          "max_duration_seconds": 3600,
+          "name": "Compatibility π <&>",
+          "options": {
+            "learning_rate": 0.01
+          },
+          "participants": [
+            {
+              "component_id": "alice-component",
+              "dataset_binding": "alice-data",
+              "mode": "managed",
+              "participant_id": "alice"
+            },
+            {
+              "component_id": null,
+              "dataset_binding": "bob-data",
+              "mode": "external",
+              "participant_id": "bob"
+            }
+          ],
+          "plugin": "lenet",
+          "project_id": "research",
+          "runtime_image": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "secret_refs": {
+            "rate": "rate-ref"
+          },
+          "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "source_id": "approved",
+          "target_round": 2
+        },
+        "spec_digest": "61b6d3478201deb120c358a1f2b22dfc5866825d5a67bc07ee4b591dac331335",
+        "state_dir": "/job/state"
+      },
+      "source_identity": "hf2l-managed-source-v1:sha256:017305e168842de8fd814698e30986fa7faa604b6dbf170e6ba1d056e5ad9dc4"
+    }
+  ],
+  "reference": "hf2l_jobs.workflow.RuntimeConfig",
+  "source_revision": "abba4636da1b7cfad1d6125bbf807bb87acf48d3"
+}

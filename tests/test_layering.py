@@ -170,6 +170,12 @@ LAYERS: tuple[Layer, ...] = (
           ("hf2l_exchange.application", "hf2l_exchange.auth", "hf2l_exchange.config",
            "hf2l_exchange.domain", "hf2l_exchange.migrations", "hf2l_exchange.storage",
            "hf2l_exchange.transfers", "hf2l_exchange.managed_transfers", "hf2l_exchange.vocabulary")),
+    # This private process composes existing Exchange policy and storage; it
+    # must not acquire a dependency on either the FL application or manager.
+    Layer("exchange private gateway HTTP composition", ("hf2l_exchange.gateway_api",),
+          ("hf2l_exchange.api", "hf2l_exchange.application", "hf2l_exchange.auth",
+           "hf2l_exchange.config", "hf2l_exchange.domain", "hf2l_exchange.migrations",
+           "hf2l_exchange.storage", "hf2l_exchange.transfers")),
     Layer("exchange CLI composition", ("hf2l_exchange.cli",), ("hf2l_exchange",)),
     Layer("exchange contract export", ("hf2l_exchange.contracts",),
           ("hf2l_exchange.api", "hf2l_exchange.config", "hf2l_exchange.vocabulary")),

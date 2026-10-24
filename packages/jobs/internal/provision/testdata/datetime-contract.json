@@ -1,0 +1,20 @@
+{
+  "fixtures": [
+    {
+      "datetime": "2026-10-23T12:34:56.000002+00:00",
+      "legacy_nanos_seconds": 1792758896.0000021,
+      "unix_seconds": 1792758896.000002
+    },
+    {
+      "datetime": "2026-10-23T12:34:56.000008+00:00",
+      "legacy_nanos_seconds": 1792758896.0000079,
+      "unix_seconds": 1792758896.000008
+    },
+    {
+      "datetime": "2026-10-23T12:34:56.000019+00:00",
+      "legacy_nanos_seconds": 1792758896.0000188,
+      "unix_seconds": 1792758896.000019
+    }
+  ],
+  "reference": "Python datetime.timestamp(), source datetime has microsecond precision"
+}
