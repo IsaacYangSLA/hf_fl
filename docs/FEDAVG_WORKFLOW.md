@@ -4,7 +4,10 @@ This HF-specific integration remains supported by [architecture v3](ARCHITECTURE
 The unified owner command and the existing `hf2l.owner_fedavg` entry point use the
 same runner. `readiness.json` remains the workflow handoff contract; a design
 revision does not rename it. For the independent Exchange service and fenced
-coordination, see [its runbook](EXCHANGE_V3.md).
+coordination, see [its runbook](EXCHANGE_V3.md). This relay schedules only
+Hugging Face PRs. [Client and owner polling listeners](CLIENT_LISTENER.md)
+provide automation across all four backends, with each backend's own
+publication and authorization guarantees.
 
 The [GitHub workflow](../.github/workflows/fed_avg.yml) starts its `fed_avg`
 job when at least two open HF PRs from distinct approved participants declare
@@ -46,8 +49,11 @@ For example, the allowlist secret can contain:
 The model repository must already be initialized with HF2L, and participants
 must upload complete submissions using the client workflow in the README.
 The workflow publishes automatically after checkpoint validation; it does not
-run an evaluation plugin. Add trusted owner evaluation options to the final
-owner command if required for your model. Python stdout from plugin imports
+run an evaluation plugin or pause for human approval. Add trusted owner
+evaluation options to the final owner command if required for your model;
+evaluation returns metadata and is not a built-in accuracy acceptance threshold.
+Add an explicit check or external approval process if publication must depend
+on a metric or human decision. Python stdout from plugin imports
 and evaluation is routed to stderr, so `--plugin lenet --json` keeps the command
 result separate from evaluator diagnostics. The workflow reads its readiness
 file and does not depend on parsing evaluation output.
@@ -142,6 +148,11 @@ The relay does not persist webhook delivery IDs. Duplicate/replayed events
 can start extra checks, but serialized workflows and the updated base prevent
 repeated publication of a completed round. API/network errors remain failures;
 they are not treated as an insufficient-PR result.
+
+The workflow installs CPU PyTorch, but the owner CLI still defaults to NumPy.
+For BF16 checkpoints, add `--array-backend torch` to the final aggregation
+command; installing Torch alone does not select it. Both paths require the
+[documented SafeTensors checkpoint contract](TRAINING_GUIDE.md#2-train-with-any-local-code).
 
 The default CPU GitHub runner is suitable for small models. For large models,
 change `fed_avg.runs-on` and its timeout to fit checkpoint memory, disk, and

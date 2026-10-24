@@ -1,5 +1,13 @@
 # Colossus test results — 2026-10-08
 
+> **Historical record.** Completion below applies to the recorded October 8
+> source snapshot and gates. Python 3.10 results, dependency versions, service
+> substitutions, development locations, and cleanup describe that run; they do
+> not establish current support, environment availability, or regression results.
+> The referenced evidence is external task material, not included in this report.
+> Consult [current package requirements](../../pyproject.toml) and the
+> [Exchange runbook](../EXCHANGE_V3.md) for current installation and validation.
+
 **Status: complete.** All functional compatibility, live-service,
 packaging, contract, workflow, and supplemental coverage gates passed.
 MinIO used the documented source-build substitution below. No production

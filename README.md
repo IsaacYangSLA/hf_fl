@@ -35,6 +35,11 @@ A round follows this sequence:
 3. Each uploads an update and its training sample count.
 4. Org P validates the updates, runs FedAvg, and publishes the next checkpoint.
 
+Org P shares the agreed trainer revision, model configuration, and dependencies.
+Alice and Bob install and run that code themselves; Org P and Org S do not need
+access to participant machines. Formal human approval is an optional external
+process; Exchange authentication and project membership are still required.
+
 To adapt your own trainer, start with
 [Use your existing training job](examples/first_federation/README.md#use-your-existing-training-job).
 
@@ -48,8 +53,9 @@ To adapt your own trainer, start with
 | **Managed jobs** | Schedule multiple projects/jobs with permissions, capacity limits, and isolated CPU execution. | [Job manager](docs/JOB_MANAGER.md) |
 
 Manual, plugin, and listener workflows support all four model-store backends
-below. Managed jobs currently use Exchange-backed FedAvg and a separately
-qualified CPU runtime.
+below. Participant-controlled native trainers can use their own CPUs or GPUs.
+Managed jobs currently use Exchange-backed FedAvg and a separately qualified
+CPU runtime.
 
 For sequential training, there is also an explicit
 [cyclic handoff workflow](docs/TRAINING_GUIDE.md#cyclic-federated-learning-without-fedavg).
@@ -80,7 +86,7 @@ values.
 | **Identity provider** | A provider meeting the documented OIDC/token requirements. The beginner stack supplies **Keycloak**. | [Exchange identity settings](docs/EXCHANGE_V3.md#configure-and-start) and [manager authentication](docs/JOB_MANAGER.md). |
 | **Metadata database** | **PostgreSQL** for deployments; **SQLite** for local development and tests. | `EXCHANGE_DATABASE_URL` and `JOBS_DATABASE_URL`; see the service guides. |
 | **Model and training code** | Your existing trainer or a trusted local Python plugin. Bundled examples include **LeNet** and **VGG/CIFAR-10**. | [Training and evaluation hooks](docs/TRAINING_GUIDE.md#plugin-interface), using `--plugin` and `--plugin-arg`. |
-| **Checkpoint array processing** | **NumPy** or optional **Torch**. BF16 processing requires Torch. | `--array-backend numpy` or `--array-backend torch`; [checkpoint handling](docs/TRAINING_GUIDE.md#large-models). |
+| **Checkpoint array processing** | **NumPy** or optional **Torch**. BF16 aggregation requires explicitly selecting Torch. | `--array-backend numpy` or `--array-backend torch`; [checkpoint handling](docs/TRAINING_GUIDE.md#large-models). |
 
 **MinIO and SeaweedFS are storage underneath Exchange.** Both use the same S3
 adapter; neither is a separate model-store backend. The
@@ -97,7 +103,8 @@ weighting. Additional algorithms and checkpoint formats require implementation.
 
 HF²L, Exchange, and the manager require **Python 3.11 or later**.
 The beginner walkthrough uses **Python 3.12** and lists its host prerequisites.
-Python 3.10 is [no longer supported by Python](https://peps.python.org/pep-0619/#3-10-lifespan).
+Python 3.10 is not supported by HF²L. Optional ML dependencies must also support
+your selected Python version.
 
 From the repository root:
 
@@ -148,6 +155,9 @@ managed Exchange, OIDC, and database configuration the manager requires; see
 [using the beginner Compose stack](docs/JOB_MANAGER.md#using-the-beginner-compose-stack).
 
 ## Guides and examples
+
+See the [documentation index](docs/README.md) for current guides, generated
+contracts, and historical records.
 
 | Goal | Read |
 | --- | --- |

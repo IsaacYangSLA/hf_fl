@@ -1,5 +1,12 @@
 # Repository remediation — 2026-10-08
 
+> **Historical record.** These remediation results and reproduction commands
+> describe the October 8 working tree and macOS run. They are not current test
+> results or instructions to choose a present validation host. Original temporary
+> evidence locations are retained as provenance; their availability is not
+> established by this report. Use the [current Exchange runbook](../EXCHANGE_V3.md)
+> and [package requirements](../../pyproject.toml) for current setup.
+
 Validation covered the working tree based on
 `38a3d4121b6796cbfdd7f354645157852393a18a`, before committing the changes.
 The commands below ran locally on macOS with Python 3.12.10. Database and object

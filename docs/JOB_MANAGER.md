@@ -15,11 +15,11 @@ python -m pip install -e 'packages/exchange[server]' -e '.[examples]' -e 'packag
 hf2l-jobs --help
 ```
 
-The manager requires Python 3.11 or later. CI checks clean manager/server wheels on Python 3.11–3.14; functional cohorts and exact patch versions are recorded in the validation report. The qualified default training image is separately pinned to CPython 3.14. Manager processes do not import job training plugins. The approved runtime image must contain the FL dependencies needed by its jobs.
+The manager requires Python 3.11 or later. CI checks clean manager/server wheels on Python 3.11–3.14; functional cohorts and exact patch versions are recorded in the validation report. The deployment image builder separately targets CPython 3.14; its image must be qualified on the intended runtime. Manager processes do not import job training plugins. The approved runtime image must contain the FL dependencies needed by its jobs. Managed execution currently uses CPU `runsc-cpu-v1`; the executor refuses nonzero GPU limits. Standalone native GPU training does not qualify managed GPU execution.
 
 Configure `HF2L_JOBS_DATABASE_URL` for a dedicated manager PostgreSQL database. Initialize a new database with `hf2l-jobs init-db`; apply upgrades with `hf2l-jobs migrate-db`. Services check the schema instead of silently changing it at startup. The current manager revision is `0003_administrative_audit`; upgrades preserve the original ledger, trusted artifact locators and log-storage charges, and add sanitized trusted-administration audit records. Legacy artifacts without a trusted locator remain metadata-only until a trusted collector supplies one; arbitrary old locator strings are not parsed as paths. SQLite is an isolated test backend.
 
-Trusted operational settings use `hf2l-jobs <command> --config /etc/hf2l/jobs.json`, or `HF2L_JOBS_OPERATIONAL_CONFIG_FILE`. The configuration's sections are `executor`, `node`, `provisioner`, `service`, `gateway`, `proxy`, `retention`, `boundaries`, `controller`, `secrets`, `nodes`, and `participants`. Job requests cannot replace this trusted configuration.
+Trusted operational settings use `hf2l-jobs <command> --config /etc/hf2l/jobs.json`, or `HF2L_JOBS_OPERATIONAL_CONFIG_FILE`. The configuration's top-level sections are `executor`, `node`, `provisioner`, `service`, `gateway`, `proxy`, `retention`, `boundaries`, `controller`, `secrets`, `nodes`, and `participants`. Each command validates its required section fields; the deployment examples are fragments to merge into that command's complete configuration. Job requests cannot replace this trusted configuration.
 
 The manager gives open HTTP requests and dashboard event streams 15 seconds to finish during shutdown, then cancels outstanding request tasks so the process can exit. Set `HF2L_JOBS_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS` (or the `JOBS_` alias) to an integer from 1 to 60 seconds. The trusted `service.graceful_shutdown_timeout_seconds` setting overrides that environment value with the same bounds. Keep the process supervisor stop deadline above this grace period so the manager can finish shutdown. An API restart preserves durable jobs and sessions; clients reconnect their streams after restart. Stopping the API does not terminate training executions or release their allocations.
 
@@ -169,7 +169,7 @@ Create `bob-dataset.json` with the same shape, changing `id` to `bob-mnist`, `pa
 
 Fetch `GET /api/jobs/v1/catalog` to discover the caller's authorized project/source/image/dataset choices. Use the dashboard creation form or `POST /api/jobs/v1/jobs` with an immutable specification and a unique `Idempotency-Key`.
 
-A specification contains `project_id`, `name`, `source_id`, `source_commit`, `runtime_image`, `plugin`, finite JSON `options`, approved `secret_refs`, `participants`, `components`, an absolute `target_round`, and `max_duration_seconds`. Exactly one component is the owner. Each component requests a pool, CPU millicores, memory bytes, disk bytes, and the approved sandbox profile. Inline credentials, arbitrary commands, host mounts, executor flags, and unknown fields are rejected.
+The [immutable input schema](../packages/jobs/src/hf2l_jobs/domain.py) defines the accepted fields and bounds. A specification contains `project_id`, `name`, `source_id`, `source_commit`, `runtime_image`, `plugin`, finite JSON `options`, approved `secret_refs`, `participants`, `components`, an absolute `target_round`, and `max_duration_seconds`. Exactly one component is the owner. Each component requests a pool, CPU millicores, memory bytes, disk bytes, and the approved sandbox profile. Inline credentials, arbitrary commands, host mounts, executor flags, and unknown fields are rejected. `source_commit` must be a full 40- or 64-hex Git object ID; `target_round` is 1–1,000,000 and `max_duration_seconds` is 1–2,592,000 (30 days). These input bounds do not guarantee that requested resources or storage fit the approved pools.
 
 Successful creation returns HTTP 202, the queued job, and its detail URL. Repeating the same idempotency key with the same specification returns the same job only while the caller still has current project/job authorization; changing the body conflicts. Revoked membership does not regain access through idempotency replay. To change source, training options, participants, or limits, create another job.
 
@@ -278,7 +278,7 @@ Actual assignment, source transfer, short-lived credentials, heartbeat, and conf
 
 ## 5. Lifecycle operations
 
-Read a job immediately before a mutation and send its quoted integer version in `If-Match`, plus a fresh `Idempotency-Key`. A stale version conflicts. Session clients also send the CSRF header.
+Read a job immediately before a mutation and send its quoted integer version in `If-Match`, plus a fresh `Idempotency-Key`. A stale version conflicts. Session clients also send the CSRF header and matching same-origin `Origin`.
 
 - `POST /jobs/{id}/cancel`: fences writes, requests termination, reconciles publication outcomes, and releases compute only after termination/fencing is confirmed.
 - `POST /jobs/{id}/retry`: creates a new infrastructure attempt of an eligible failed job with the same immutable specification. A deadline-expired job returns `409 job_deadline_expired`.
@@ -361,6 +361,8 @@ Unresolved provider writes retain cleanup/accounting fences. URL/JWT/lease expir
 Cancellation before dispatch confirms cleanup only after the controller proves that the current attempt has no reservations, provisioning effects, resources, assigned node, or unfinished dispatch. Historical attempts must already be fenced, and unknown operations require their exact authoritative closure. The proof is durable and audited, so restart can safely complete previously interrupted queued cancellation. Uncertain external effects retain cleanup and accounting fences. Stopping an execution proxy that never started does not create new resource directories. Legacy empty proxy directories can be removed only for a proven initial attempt with no effects; removal checks ownership, permissions, mount identity, allowed directory names, and emptiness, and never adopts a marker or deletes a file. Retry cleanup continues through ordinary ownership-marker validation.
 
 A terminal result and `cleanup_status` are independent. Failed cleanup remains visible and keeps affected resources charged or quarantined. Cleanup only deletes resources recorded as owned by the job/attempt/component. On restart, the controller reconciles durable operations and resource ownership rather than assuming absence or replaying unknown work.
+
+Runtime setup launches transient systemd units; it does not install persistent boot services for the daemons or application stack. The operator must provide supervision, restart ordering, and post-restart qualification/health checks before enabling admission. See the deployment guide's [services and shutdown](../deploy/jobs/README.md#services-and-shutdown) section.
 
 For operational readiness and executed tests, consult the [implementation validation record](validation/2026-10-09-multi-job-implementation.md).
 

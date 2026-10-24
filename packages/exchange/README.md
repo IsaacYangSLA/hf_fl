@@ -54,7 +54,21 @@ The package uses a `src` layout with public imports under `hf2l_exchange`.
 Domain values and the SDK do not import the HF²L application or server adapters.
 The server owns authorization, publication, and storage lifecycle invariants.
 An optional trusted FedAvg profile adds application constraints without making
-them requirements for generic spaces.
+them requirements for generic spaces. Opt-in managed spaces add persisted,
+certificate-bound workload grants, a separate authenticated ingress, and
+structured transfer descriptors for a trusted gateway. The SDK's
+`ExchangeClient.for_execution(proxy_socket, space=...)` uses an assigned Unix
+socket and carries no upstream credentials. The standalone package does not
+provision that proxy, gateway or runtime isolation; see the
+[managed-workload contract](../../docs/EXCHANGE_V3.md#managed-workloads-and-transfers)
+and [job-manager deployment guide](../../docs/JOB_MANAGER.md).
+
+Public API tokens must be RS256 access JWTs with `typ=at+jwt`, the configured
+issuer/audience, required subject/timestamps and the `exchange` scope. An OIDC
+provider must explicitly supply that contract. Workload tokens use a separate
+issuer, configured audience and certificate binding and are rejected by public ingress.
+Roles and bindings come from current space membership and persisted grants,
+not from caller-selected token roles.
 
 The `/v2` service uses a fresh database and storage prefix. It does not reinterpret
 legacy records or provide a v1 API compatibility layer. The v3 architecture
@@ -103,5 +117,16 @@ tests does not establish deployment throughput or backup/restore performance,
 or demonstrate that the known implementation limitations are absent. Recorded
 local test results in the operator guide are historical. The
 [October 8 remediation record](../../docs/validation/2026-10-08-repository-remediation.md)
-reports the latest local source, package, and workflow checks; remote CI execution
+records historical local source, package, and workflow checks; remote CI execution
 was not part of that validation.
+
+The generated [HTTP contract](../../docs/generated/exchange-api.json),
+[error inventory](../../docs/generated/exchange-errors.json), and
+[environment table](../../docs/generated/exchange-environment.md) can be refreshed
+from the installed source without starting services:
+
+```sh
+.venv/bin/hf2l-exchange export-contract --output-dir docs/generated
+```
+
+Run the command from the repository root with the server extra installed.

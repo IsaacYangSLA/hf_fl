@@ -9,8 +9,8 @@ and command aliases remain readable. The current distributions require Python
 3.11 or later.
 
 This document records the accepted design integrated at `60e4bf8`, subsequent
-application and Exchange fixes, and the shared client/owner listeners in the
-current implementation.
+application and Exchange fixes, the shared client/owner listeners, and the
+separately packaged job manager in the current implementation.
 The [current implementation limitations](#current-implementation-limitations)
 track audit findings and distinguish resolved findings from remaining gaps.
 The associated
@@ -81,7 +81,7 @@ smaller application boundary. V3 selects the following combination.
 | Structured, generated contracts and dependency tests | Accept | Generate API/error/environment artifacts from implemented Exchange sources; verify package and import boundaries |
 | Drop Python 3.10 for `StrEnum` | Superseded | The current runtime minimum is Python 3.11; this policy change does not require rewriting existing enums |
 | Delete old hardening tests before replacement | Reject | Keep regression oracles and map changed expectations explicitly |
-| Additional blob providers, multi-issuer configuration, brokers, push delivery | Defer | These need distinct requirements and provider/deployment evidence |
+| Additional blob adapters, multiple public identity issuers, general event brokers and push delivery | Defer | One S3 adapter and one configured public identity issuer are implemented; managed workload identities and download brokers have narrower, implemented authorization paths |
 
 These decisions merge concepts rather than combine every class and module from
 both proposals. The historical document's open questions and estimated rewrite
@@ -100,6 +100,23 @@ suites; documentation to this comparison and current generated artifacts. V3
 does not claim every lower-priority suggestion in every theme was implemented.
 
 ## Component boundaries
+
+Three distributions define the installation boundaries:
+
+| Distribution | Code and command | Responsibility |
+|---|---|---|
+| `hf2l` | `hf2l/`; `hf2l` | FL documents, checkpoint operations, four model backends, client training and owner aggregation, durable polling |
+| `hf2l-exchange` | `packages/exchange/src/hf2l_exchange/`; `hf2l-exchange` | Generic authenticated metadata, blob transfer and coordination; independently usable SDK and optional server dependencies |
+| `hf2l-jobs` | `packages/jobs/src/hf2l_jobs/`; `hf2l-jobs` | Optional managed multi-job control plane, resource admission, lifecycle, dashboard and trusted Linux execution components |
+
+The core FL workflows can run against Hugging Face, JFrog or LocalStore without
+deploying Exchange or the job manager. The root's `exchange` extra installs the
+independent SDK; server dependencies are optional. Managed jobs compose the FL
+application and Exchange with their own control-plane database, per-job spaces,
+workload identities and execution state. The diagram below expands the FL and
+Exchange paths; it does not depict the job manager's service topology. See the
+[job manager guide](JOB_MANAGER.md) and [deployment topology](../deploy/jobs/README.md)
+for that separately configured boundary.
 
 ```mermaid
 flowchart TB
@@ -169,6 +186,24 @@ its server extra adds database, web, storage and identity libraries.
 
 ### Metadata, policy and coordination
 
+Public Exchange requests authenticate an access token from the configured
+external OIDC identity provider. The validator requires an RS256 `at+jwt`
+token, verifies its issuer, audience, signature, expiry and required claims,
+and requires the `exchange` scope. A stable principal derives from issuer and
+subject; a caller-supplied participant string does not establish identity.
+In a `fedavg.v1` space, administrators bind memberships to participant IDs,
+and the service attributes updates from that binding. The FL adapter verifies
+the requested participant and downloaded manifest against the server binding.
+
+Managed workload authentication is a separate ingress path: a trusted TLS
+terminator authenticates the client certificate and signs a short-lived backend
+assertion. The service validates that assertion, the workload JWT and its
+certificate binding, then checks the current persisted grant, roles, space,
+job, attempt and epoch. The public ingress rejects workload tokens. Managed
+download brokers have explicit authorization and an effective reader role;
+their allowlist does not grant space membership. See the [Exchange runbook](EXCHANGE_V3.md)
+for deployment requirements and managed transfer routing.
+
 A space is the authorization and quota boundary. `reader`, `contributor`,
 `publisher` and `admin` are explicit roles; administration alone does not grant
 content access. Revocation blocks new content access and signed grants. It does
@@ -202,6 +237,15 @@ may implement the optional `validate_input` hook; their reduction policy remains
 their responsibility.
 
 ### Blob transfer and recovery
+
+The Exchange storage seam is `BlobStore` in
+[storage.py](../packages/exchange/src/hf2l_exchange/storage.py); the shipped
+implementation is `S3BlobStore` with the `s3-multipart-v1` protocol.
+AWS S3, MinIO and compatible services are deployment choices for that adapter,
+not three independent storage implementations. They must supply the required
+versioning, multipart, signing and deletion semantics. Compatibility evidence
+for one service or version does not qualify another. The
+[Exchange runbook](EXCHANGE_V3.md) records provider-specific requirements.
 
 1. Reserve declared metadata and capacity before provider I/O. A size/hash
    declaration is not verification; publication requires the exact verified
@@ -291,6 +335,25 @@ rules remain explicit. Numeric goldens and streaming tests verify behavior;
 NumPy/Torch differences require measured tolerance rather than an unqualified
 bit-identity claim across CPUs.
 
+The four implementations share `ModelStore`, but their capabilities differ:
+
+| Backend | Aggregate publication precondition | Coordination and submission behavior |
+|---|---|---|
+| Hugging Face | Conditional commit against the expected parent | Commit ancestry and pull-request submissions; a configured owner allowlist maps authors to participants |
+| JFrog | Preflight comparison only; one publishing coordinator required | Named submission revisions; server overwrite restrictions remain necessary |
+| Exchange | Atomic reference-generation update during acquisition completion | Renewable fenced acquisitions and server-bound participants; publication requires coordination |
+| LocalStore | Atomic reference comparison under a POSIX advisory lock | Named immutable snapshots and an explicit local principal; trusted single-host filesystem |
+
+Backend replacement therefore requires matching the workflow's required
+capabilities, identity configuration and submission selection. Automatic discovery
+without an allowlist on a backend that does not bind participants emits a warning
+and accepts compatible submissions; the shipped HF webhook workflow requires an
+allowlist. Shared download,
+training, listener and runner interfaces do not establish identical concurrency
+or authorization guarantees. See
+[ports.py](../hf2l/core/ports.py) and the
+[installed registry](../hf2l/backends/factory.py) for the capability and factory contracts.
+
 The local backend is a single-host POSIX implementation with immutable artifact
 snapshots and atomic reference checks under an advisory filesystem lock. An
 explicit local principal provides participant attribution; it is not remote
@@ -355,6 +418,47 @@ prompt readiness checks, or schedule `--once` invocations that reuse its state.
 
 See [the listener guide](CLIENT_LISTENER.md) for commands, state identity,
 bounded execution, the Python extension API, and uncertain-publication recovery.
+
+### Training plugins, data and approval boundaries
+
+Standalone `hf2l train` and the client listener load trusted local
+Python plugins. The training entry point is
+`train_model(base_dir, output_dir, options)`: it writes a compatible checkpoint
+to `output_dir` and returns a JSON metadata dictionary with a positive integer
+`num_examples`. Dataset access belongs to the plugin and its local configuration.
+The owner can optionally invoke the plugin's evaluation entry point.
+See the [training guide](TRAINING_GUIDE.md) for complete callable contracts.
+
+The FL application transfers model checkpoints, manifests and declared metadata;
+it does not automatically upload a participant's raw dataset. Standalone plugins
+run with the invoking process's filesystem, credentials and network access.
+The workflow does not sandbox that code or prevent a plugin from placing sensitive
+data into a checkpoint, metadata or logs. Checkpoint exchange alone also does not
+provide differential privacy, secure aggregation or model-poisoning resistance.
+
+Managed execution adds a separate qualified Linux CPU sandbox profile,
+`runsc-cpu-v1`. Job specifications cannot choose arbitrary mounts, networking,
+runtimes or flags; the executor checks the qualified runtime and resource limits,
+uses network isolation with a mediated local proxy, and authorizes each participant's
+dataset binding. These controls require the documented deployment setup and
+qualification; installing the package alone does not establish isolation.
+GPU and Kubernetes execution need separate qualification. A dataset's local
+mount and network restrictions do not prove that training outputs reveal no
+information about that dataset.
+
+Native client and owner listeners automate polling, training, readiness and
+aggregation. The Hugging Face [webhook workflow](../.github/workflows/fed_avg.yml)
+offers another owner trigger: `repository_dispatch` with `hf-pr-update`, or a
+manual workflow dispatch, followed by readiness checks and conditional publication.
+An external webhook receiver must arrange the repository dispatch. Exchange does
+not send that trigger.
+
+Public HF²L commands do not implement `approve`, `--require-approval`, or
+human approval receipts before training or publication. A deployment can add
+an external human approval step. That step is separate from mandatory
+authorization: Exchange memberships and policy, configured owner participant allowlists,
+and managed source, image, dataset and workload grants still apply when automated
+execution is enabled.
 
 ## Current implementation limitations
 
@@ -533,8 +637,8 @@ is routed to stderr, with the concurrency and direct-I/O limits described in
 | Backend behavior | Local/HF/JFrog/Exchange capabilities, publication preconditions, confirmed primary plus failed tag |
 | Shared listeners | All-backend client/owner polling, metadata readiness on unchanged bases, pinned-round validation, stale-job refusal, restart deduplication, state exclusion, retry backoff, and uncertain-publication recovery |
 | Numeric behavior | Existing goldens, finite/non-floating rules, NumPy/Torch comparison and bounded shard streaming |
-| Packaging | Fresh minimal root/SDK/server environments, lazy optional imports, both wheels and dependency checks |
-| Integration | Root regression suite plus independent Exchange suite with SQLite/Moto and PostgreSQL/MinIO |
+| Packaging | Fresh minimal root/SDK/server/manager environments, lazy optional imports, all three distributions and dependency checks |
+| Integration | Root regression suite plus independent Exchange suite with SQLite/Moto and PostgreSQL/MinIO; separate jobs suite, packaging gates and qualified CPU execution evidence |
 | Documentation | Generated contracts match implemented sources; commands/examples execute; historical claims are labeled |
 
 The table records required evidence, not a claim that every intended guarantee

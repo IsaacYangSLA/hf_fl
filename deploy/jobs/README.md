@@ -1,6 +1,6 @@
 # Job manager deployment
 
-Deploy the HF²L manager, its PostgreSQL database, controller, trusted node agent, shared Exchange service, transfer gateway, and per-execution proxies. Read the [operator guide](../../docs/JOB_MANAGER.md) for configuration, catalog approvals, job creation, and lifecycle actions.
+Use this runbook to configure the HF²L manager, its PostgreSQL database, controller, trusted node agent, shared Exchange service, transfer gateway, and per-execution proxies. The repository provides runtime helpers and service commands; it does not provide a complete production stack installer. Read the [operator guide](../../docs/JOB_MANAGER.md) for configuration, catalog approvals, job creation, and lifecycle actions.
 
 ## Trusted service boundaries
 
@@ -874,6 +874,10 @@ hf2l-jobs gateway --config /etc/hf2l/gateway.json
 hf2l-jobs exchange-edge --config /etc/hf2l/exchange-edge.json
 ```
 
+The runtime helper's `systemd-run --collect` units are transient. Install/start does not enable them at boot, and the repository supplies no persistent systemd units for this application stack. Provide operator-owned service definitions with private configuration/environment files, an explicit service UID, dependency ordering, bounded resources, and restart/stop policies. Keep the manager stop timeout longer than its configured graceful shutdown period.
+
+After a reboot or daemon restart, start the owned runtime with its existing CPU policy, check the current isolation and backing-I/O evidence against the active runtime, and restore the private Exchange backend/edge, gateway, cleanup worker, node callback listener, and required agents. Keep pools unhealthy until their qualification and capacity checks succeed; then run the controller and expose the manager. Persist PostgreSQL, ownership ledgers, qualified profiles, source snapshots, and retained worker volumes across service restarts. A service restart is not permission to release reservations or delete retained bytes.
+
 The controller creates and supervises per-execution proxy sockets automatically. The separate `hf2l-jobs proxy --config` command serves an explicitly assigned trusted proxy configuration when operating it independently. Use per-service trusted configuration and private key permissions. A per-execution proxy is not a shared browser ingress. The controller records intended operations before external side effects; the node enforces a local monotonic execution watchdog.
 
 To shut down, stop admission, cancel/fence active jobs through the manager, confirm runtime termination and owned-container cleanup, then stop the owned daemon:
@@ -886,6 +890,6 @@ The helper refuses daemon stop while containers are running and preserves owned 
 
 ## Deployment limits and evidence
 
-CPU `runsc-cpu-v1` is the initial managed profile. GPU and Kubernetes execution require separate implementation/qualification. Participant training and raw datasets remain at participant machines; managed participant pools and dataset bindings require local approval.
+CPU `runsc-cpu-v1` is the implemented managed profile. The executor refuses nonzero GPU limits; GPU fields in resource schemas and scheduling ledgers do not provide a GPU runtime. GPU and Kubernetes execution require separate implementation and qualification. Standalone native GPU training remains a separate workflow. Participant training and raw datasets remain at participant machines; managed participant pools and dataset bindings require local approval.
 
 The [implementation validation record](../../docs/validation/2026-10-09-multi-job-implementation.md) records exact tested versions, runtime provenance, service topology, test results, and cleanup. Production OIDC/provider, TLS certificates, private storage, and service supervision remain operator-supplied deployment configuration.

@@ -1,5 +1,12 @@
 # Colossus test plan — 2026-10-08
 
+> **Historical plan.** This is the October 8 execution plan; its expected
+> counts, Python range, service images, and host instructions belong to that
+> snapshot. Observed outcomes and the actual MinIO substitution are recorded in
+> the [results](2026-10-08-colossus-results.md). Refer to
+> [current package requirements](../../pyproject.toml) and the
+> [Exchange runbook](../EXCHANGE_V3.md) before reproducing checks on current code.
+
 ## Objective and scope
 
 Execute the current HF²L working tree on the available `ipp1-3414` machine,

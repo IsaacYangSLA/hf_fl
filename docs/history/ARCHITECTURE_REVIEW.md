@@ -1,5 +1,11 @@
 # Architecture review: hf2l at 714fd66
 
+> **Historical snapshot.** Pre-cutover review and proposed rewrite at `714fd66`.
+> References to HEAD, source line numbers, counts, findings and planned work below belong to that baseline; proposed work is not a completion claim.
+> Current guidance: [architecture](../ARCHITECTURE_V3.md),
+> [Exchange operations](../EXCHANGE_V3.md), and [training](../TRAINING_GUIDE.md).
+> See the [archive index](README.md) for historical context.
+
 Principal-engineer review of the `hf2l` repository (Hugging Face / JFrog / custom-exchange federated-learning proof of concept), commit `714fd66`. Lens: how to make the codebase more general (new FL algorithms, model frameworks and checkpoint formats, storage backends, identity providers, deployment shapes) and easier to maintain (layering, small stable interfaces, no duplicated logic, consistent error/config/logging conventions, testability, docs that match code). Sections 5-8 (design, plan, alternatives, open questions) were rewritten after the owner removed the backward-compatibility and migration constraint (see Method); sections 3-4 are unchanged from the first revision. References to "step 1" in sections 3-4 predate the plan rewrite and correspond to WP1, which deletes `hf2l/hub_helpers.py`, the target of all three inverted imports.
 
 All `path:line` references were checked against HEAD while writing this document. Counts (tests, routes, error codes, print sites) were derived from the tree, not copied from earlier notes.

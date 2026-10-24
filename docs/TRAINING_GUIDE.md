@@ -26,9 +26,10 @@ python3 -m venv .venv
 ```
 
 For JFrog, use `.venv/bin/python -m pip install -e '.[jfrog,examples]'`.
-Torch alone is available through `.[torch]`; it is required for BF16 checkpoints
-and Torch training. These integration changes are unreleased; earlier published
-packages do not necessarily expose the interfaces described here.
+Torch alone is available through `.[torch]`; it is required for Torch training
+and BF16 aggregation. BF16 owners must also select `--array-backend torch`;
+installing Torch does not change the CLI's NumPy default. These integration
+changes are unreleased; earlier published packages do not necessarily expose the interfaces described here.
 
 The independent Exchange SDK and server are separate installations:
 
@@ -123,9 +124,26 @@ The JFrog adapter rejects the reserved mutable aliases `main`, `master`, `HEAD`,
 tags before provider operations. Generated client-command names use detached
 revisions. Server permissions must still enforce immutability and owner access.
 
+### Exchange
+
+Install the independent Exchange server and the HF²L adapter as shown above,
+then configure `EXCHANGE_ENDPOINT` and a separate `EXCHANGE_TOKEN` for each
+actor. A renewable `EXCHANGE_TOKEN_FILE` can supply the credential instead.
+Use `--backend exchange --repo-id SPACE_ID`; `--endpoint` and `--token` override
+the corresponding environment settings. The service must have a FedAvg-profile
+space and appropriate participant and owner permissions.
+
+Exchange binds updates to authenticated participants and requires fenced claims
+for owner publication. A manual owner uses `--claim-submissions --publish`
+with a durable `--run-state` path; an owner listener handles claims itself.
+The service's event feed is separate from the HF webhook relay, and listeners
+use polling. See the [Exchange runbook](EXCHANGE_V3.md) for space setup,
+token scopes, claim recovery, and deployment limits.
+
 ## Owner: initialize a repository
 
-Initialize from any intentional, local HF-style model export:
+Initialize from an intentional, local HF-style model export containing
+`config.json` and SafeTensors weights:
 
 ```bash
 .venv/bin/python -m hf2l.init_repo \
@@ -228,10 +246,21 @@ Your trainer is entirely independent of these scripts. It must load
   --dataset /private/alice-data
 ```
 
-Do not overwrite `base_model`. Save with the same config and SafeTensors shard
-layout. For example, a Transformers trainer can load from the input directory
-and call `save_pretrained(output_dir, safe_serialization=True)` using the same
-`max_shard_size` as the base checkpoint.
+Do not overwrite `base_model`. Write the complete model, rather than a delta or
+an adapter-only export. The checkpoint contract requires the same JSON config
+values, tensor names, shapes, dtypes, shard filenames, and tensor-to-shard
+mapping as the base. For a Transformers trainer,
+`save_pretrained(output_dir, safe_serialization=True)` is a starting point:
+use the base's `max_shard_size`, preserve its config and dtype, and check the
+resulting layout. A matching shard-size limit alone does not guarantee a
+compatible export.
+
+Supported checkpoint layouts are `model.safetensors`, or
+`model.safetensors.index.json` plus its SafeTensors shards, with `config.json`.
+Pickled PyTorch checkpoints, GGUF, and adapter-only checkpoints are not supported
+by the built-in checkpoint implementation. Integer and Boolean tensors must
+retain the base values in every accepted update; buffers such as changing
+integer training counters need a compatible export policy.
 
 Optionally create a non-secret metadata object:
 
@@ -329,6 +358,29 @@ For custom training, pass the path to a reviewed local Python file, such as
 `--plugin /private/alice_plugin.py`. Plugins are ordinary Python and execute
 with the caller's permissions; the commands never load code from a remote
 submission.
+
+### Hand training code to participants
+
+The organizer supplies the model repository and base revision, a chosen plugin
+and its dependencies, and agreed training options. Each participant reviews
+and installs that code in its own environment, supplies its private dataset
+path, and runs `hf2l train` or `hf2l listen` locally. The organizer does not need
+SSH access to a participant machine. Native HF²L commands load the explicitly
+chosen local plugin; they do not automatically install or execute training code
+from a model repository. In the three-step workflow, the participant can
+instead run its own trainer between download and upload.
+
+Native client commands and listeners can use a GPU available to that local
+trainer. Both bundled plugins accept `--plugin-arg device=auto` (the default),
+`device=cpu`, or `device=cuda`; `auto` chooses CUDA when available and otherwise
+CPU. The separately managed [job runtime](JOB_MANAGER.md) has its own CPU-only
+execution constraints.
+
+A deployment may require a human to review code or aggregate results before
+running the corresponding command. Arrange that review in the organization's
+process or an external wrapper. Native `hf2l train` and `hf2l listen` begin
+trusted local training when invoked or ready; they have no built-in
+`approve` command or `--require-approval` option.
 
 ### Plugin interface
 
@@ -593,8 +645,8 @@ theta_next = sum(num_examples_i * theta_i) / sum(num_examples_i)
 ```
 
 Use `--weighting uniform` only when equal client weighting is intended. Integer
-and Boolean tensors are copied only when every client value is unchanged;
-differing non-floating state is rejected because an arithmetic mean is not
+and Boolean tensors are copied from the base only when every client matches
+that base value; differing non-floating state is rejected because an arithmetic mean is not
 well-defined.
 
 Evaluation is optional and must come from an owner-trusted local plugin:
@@ -671,7 +723,12 @@ the base, every selected submission snapshot, and the aggregate.
 
 Checkpoint discovery reads SafeTensors headers without Torch. Use
 `--array-backend numpy` for supported non-BF16 checkpoints or
-`--array-backend torch` with the Torch extra. Both execute the same averaging
+`--array-backend torch` with the Torch extra. BF16 aggregation requires the
+latter explicitly in the owner CLI and listener. Header discovery can recognize
+BF16 and some float8 encodings without supporting their arithmetic; neither
+built-in reduction backend currently supports float8. Both reduction backends
+support Float16, Float32, Float64, Boolean, and the signed/unsigned integer
+dtypes declared by their implementations, and execute the same averaging
 policy through their array operations. `--weighting examples` is the default;
 `--weighting uniform` gives each accepted participant equal weight. Algorithm
 strategy injection is a library interface; FedProx is not implemented by merely

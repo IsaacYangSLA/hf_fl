@@ -271,6 +271,34 @@ the named groups indexed at the end of the file.
 | S-249 | test_hf_webhook_relay::test_dispatch_failure_returns_retryable_error_without_details | relay | A `URLError` from `dispatch` -> "502 Bad Gateway" whose body contains neither the error text nor the token. | legacy: `tests/test_hf_webhook_relay.py::test_dispatch_failure_returns_retryable_error_without_details` |
 | S-250 | test_hf_webhook_relay::test_github_request_uses_fixed_event_and_authentication | relay | `dispatch(repo, token)` POSTs to `https://api.github.com/repos/<repo>/dispatches` with `Authorization: Bearer <token>`, body {"event_type": "hf-pr-update"} and `timeout` 15. | legacy: `tests/test_hf_webhook_relay.py::test_github_request_uses_fixed_event_and_authentication` |
 
+## Current evidence and use
+
+This inventory is regression evidence, not a CLI tutorial. Commands and API names inside S-001 through S-250 describe
+the frozen tests, including commands that the current CLI no longer accepts. Use the current [training guide](../../docs/TRAINING_GUIDE.md),
+[FedAvg workflow](../../docs/FEDAVG_WORKFLOW.md), [listener guide](../../docs/CLIENT_LISTENER.md), and
+[exchange service guide](../../docs/EXCHANGE_SERVICE.md) for executable examples.
+
+From the repository root, with the application dependencies installed, check the inventory references and frozen
+numeric fixture hashes with:
+
+```bash
+python -m unittest tests.test_architecture_v3 -v
+```
+
+That gate checks row completeness, reference existence, and committed fixture hashes. It does not execute every
+behavior in the table or prove the descriptions still match the current service. The legacy tests and the current
+implementation tests must be run separately with their required optional dependencies.
+
+Current application behavior also has executable evidence outside this historical inventory:
+
+| Current behavior | Executable evidence |
+|---|---|
+| SafeTensors shape/dtype compatibility, non-floating base values, and explicit BF16 backend support | `tests/test_checkpoint_v3.py::test_nonfloat_policy_checks_base_not_just_clients`; `tests/test_checkpoint_v3.py::test_bfloat16_backend_error_is_actionable` |
+| Current listener CLI defaults and role-specific argument validation | `tests/test_listener_cli.py::test_registry_choices_and_defaults`; `tests/test_owner_listener_cli.py::test_invalid_role_combinations_are_rejected_before_effects` |
+| Evaluation and validated manifest reach the publication callback before one publication | `tests/test_runner_publication_hook.py::test_hook_observes_evaluated_validated_manifest_before_single_publication` |
+| Device login, renewable private profiles, and child-command credential boundaries | `tests/test_first_federation_auth.py::test_device_poll_pending_and_slow_down_then_success`; `tests/test_first_federation_auth.py::test_run_refreshes_before_child_and_returns_exit_status` |
+| CIFAR-10 client and owner listeners follow current `main` with separate credentials | `tests/test_exchange_cifar10_listener.py::test_watches_main_with_real_dataset_and_private_credentials`; `tests/test_exchange_cifar10_owner_listener.py::test_watches_main_and_aggregates_two_clients_with_private_credentials` |
+
 ## V3 interpretation
 
 The S-001 through S-250 descriptions above are frozen observations of the original implementation. References to

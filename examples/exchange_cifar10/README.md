@@ -15,6 +15,24 @@ It uses real images and a reduced-width VGG-11-style network adapted to 32×32
 inputs. This is a workflow demonstration, not an accuracy benchmark. One short
 round is not expected to produce a useful classifier.
 
+For a deployment with separate organizations, begin with
+[your first federation](../first_federation/README.md): Org S deploys services
+and accounts and provisions the project; Org P administers enrollment,
+initializes the model, evaluates, and publishes; Alice in Org A and Bob in Org B
+train locally using their own credentials. The temporary service and
+`setup_federation.py` here combine service bootstrap and project ownership in
+one trusted operator's workflow. That setup script requires a bootstrap
+administrator who can create spaces; it is not the delegated Org P setup flow.
+
+When distributing this model to separate organizations, agree on one reviewed
+source revision, VGG width/configuration, CIFAR-10 label order and preprocessing,
+checkpoint layout, dependencies, and evaluation protocol. Each participant
+installs the source and starts its own trainer/listener on its own machine.
+The `vgg-cifar10` plugin is bundled local Python code, executed with that
+actor's process permissions. The round descriptor supplies model coordinates;
+it does not distribute trainer code or credentials. Neither Org P nor Org S
+needs SSH access to a participant's machine.
+
 | Actor | Input | Exchange permissions | Output |
 | --- | --- | --- | --- |
 | Owner | Initial model, held-out evaluation data | Bootstrap administrator; publisher with coordination capability in its space | Global model and round descriptor |
@@ -28,8 +46,10 @@ Private updates are accessible to their author and the authorized owner.
 
 ## 1. Install in the source checkout
 
-Run every command below from the repository root using the project `.venv`.
-Create it if it does not exist:
+Use Python 3.11 or later. Run every command below from the repository root
+using the project `.venv`. In this quick start, terminals A–D are on the
+same trusted operator's machine and share this installation. Create it if it
+does not exist:
 
 ```bash
 python3 -m venv .venv
@@ -179,6 +199,12 @@ Each job performs one local epoch with batch size 64, SGD learning rate 0.01,
 CPU execution, and two computation threads. Override `--epochs`, `--batch-size`,
 `--learning-rate`, `--device cuda:0`, or `--threads` as appropriate. The submitted
 sample count is the shard size, not the number of epoch visits.
+
+These listeners run natively on each actor's machine. `--device cuda:0`
+requires a compatible local GPU, driver, and CUDA-enabled PyTorch installation;
+the CPU wheel installed above cannot use CUDA. This is separate from the
+managed job runner's CPU-only sandbox; see
+[the job manager guide](../../docs/JOB_MANAGER.md).
 
 Clients immediately train the initialized round and report `submitted` for
 `source_round: 0`. The owner discovers those updates and reports `published`
@@ -384,7 +410,19 @@ to the corresponding listener or manual training command. Give each client only
 its own token, its local data, and the shared round descriptor. The demonstration's local
 token directory is for a single trusted operator, not filesystem isolation
 between different users. For remote clients, both the API and the granted blob
-URLs must be reachable over HTTPS.
+URLs must be reachable over HTTPS. With an OIDC issuer, the participant's
+authentication client must also reach its discovery/token endpoints, and
+the browser used for device login must reach the verification URL with
+trusted DNS and CA configuration. Follow the
+[first-federation connection and trust setup](../first_federation/README.md#accounts-and-connection-checks)
+and its device-login instructions rather than exposing the temporary
+loopback fixture as a deployment.
+
+An organization can require a human review before starting a local job or
+publishing a result. This is an optional organizational procedure; these
+wrappers provide no `approve` command or `--require-approval` gate.
+Authentication, space membership, participant bindings, and checkpoint
+validation are required.
 
 ## Failure handling and shutdown
 

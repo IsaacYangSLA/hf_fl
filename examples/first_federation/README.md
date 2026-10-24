@@ -21,7 +21,9 @@ dataset download is required.
 Org S and Org P use **separate accounts, credential profiles, and workspaces**.
 Org S operates the shared services and identity accounts. Org P retains
 project-level participant enrollment and controls aggregation; only Alice and
-Bob contribute training updates.
+Bob contribute training updates. Each participant initiates its own HTTPS
+requests to Org S's services; neither Org S nor Org P needs SSH access to
+Alice's or Bob's training machine.
 
 The existing technical names remain unchanged: `bootstrap-admin` is Org S's
 service administrator; `owner` is Org P's aggregator account. Commands and
@@ -61,6 +63,19 @@ meanings, participant IDs `alice` and `bob`, and two contributors per round.
 Alice uses 64 unique training examples and Bob 96: FedAvg coefficients are
 **0.4 and 0.6**. Org P generates a separate 200-example evaluation dataset.
 Each round starts from one immutable common base.
+
+The supplied trainer and evaluator implement a fixed two-feature, two-label
+linear classifier, with float32 tensors named `weight` (2×2) and `bias` (2).
+Its `config.json` also fixes feature order, label order, and preprocessing.
+Use this contract throughout the tutorial. See [use your existing training
+job](#use-your-existing-training-job) for the additional work needed to adopt
+another model.
+
+Org P hands off the reviewed source revision and model/data contract before
+training. Alice and Bob obtain that source independently and review the code
+they will run locally. A custom trainer/plugin and its dependency versions
+must be distributed through an agreed source channel; an Exchange invitation
+does not deliver or install executable code.
 
 ### Prerequisites
 
@@ -503,8 +518,13 @@ participant bindings to its copy of `project.json`. A private sibling
 Never transfer an authentication profile or use a shared runtime to make
 this check pass.
 
-Enrollment uses trusted Keycloak subjects and approved participant bindings.
+Enrollment uses trusted Keycloak subjects and agreed participant bindings.
 Do not accept an unverified JWT payload or arbitrary participant-supplied ID.
+Org P's `enroll` command grants the required `reader`/`contributor` roles and
+participant binding. Any formal human approval of participation, code, or
+publication is an optional organizational procedure. HF²L has no `hf2l approve`
+command or built-in `--require-approval` gate; authentication, membership checks,
+and checkpoint validation still apply to every workflow.
 
 An invitation contains endpoints, participant ID, exact source revision, model
 agreement and **immutable base revision**. It contains no credentials, private
@@ -711,7 +731,9 @@ After the manual rounds, `hf2l listen` can run further rounds on the same
 space without invitations. See the [listener guide](../../docs/CLIENT_LISTENER.md).
 `model.py` provides the owner's `evaluate_model` hook but not the
 `train_model(base_dir, output_dir, options)` hook a client listener calls.
-Each participant writes a small adapter outside the checkout. The listener
+Each participant writes and reviews a small adapter outside the checkout.
+A local `--plugin` file is imported and executed with that participant's own
+process permissions; it is trusted local code, not a sandbox. The listener
 adds a `participant` entry to `options`; the adapter passes only the dataset
 to `model.py`:
 
@@ -751,7 +773,8 @@ the same `--state-dir`. Reuse each state directory on every restart.
 
 ## Use your existing training job
 
-Keep the download/upload commands and replace only the middle step:
+For an existing job that already implements the tutorial's exact model
+contract, keep the download/upload commands and replace the middle step:
 
 ~~~bash
 python your_existing_train.py \
@@ -761,8 +784,10 @@ python your_existing_train.py \
 ~~~
 
 These flags are an adapter convention: map them onto your framework or scheduler.
-HF²L does not execute code received from another organization. Review your
-organization's local code and data permissions.
+Exchange transfers model artifacts; it does not install or launch a trainer
+on a participant machine. Each organization reviews, installs, and starts its
+own job. A trainer or local plugin supplied through a separate source handoff
+executes with that organization's process permissions.
 
 | Input/output | Contract |
 | --- | --- |
@@ -776,9 +801,27 @@ and layout. Write `model.safetensors`, or a valid SafeTensors index and every
 referenced shard. Nonfloating values must remain unchanged. An optimizer
 snapshot is not a complete model checkpoint.
 
-Architecture, feature/label or layout changes require a new agreement and
-compatible initial model. Schema validation cannot establish model quality or
-safety.
+For a different architecture or feature/label/preprocessing contract, Org P
+and the participants first agree on the model, serialization layout, local
+input format, dependency versions, sample-count meaning, and evaluation.
+Org P supplies a compatible initial checkpoint and replaces the tutorial's
+`model.py` evaluation plugin; its loader deliberately rejects other model
+configurations and tensor layouts. Each participant adapts its own trainer and
+private-data loader, and adapts `train_model` if using a listener. The invitation's
+generic `model_agreement` does not capture all of these application details;
+send the full agreement separately with the reviewed source revision.
+
+Start a new project for a different model contract rather than mixing
+incompatible updates into this tutorial's history. The core download/upload
+and FedAvg interfaces can carry other compatible SafeTensors checkpoints;
+they do not supply a trainer, data adapter, or evaluation recipe for every
+model. Schema validation cannot establish model quality or safety.
+
+These manual commands and listeners run natively on each organization's
+machine. A framework-specific trainer can use its local GPU when its
+dependencies and driver support it; this NumPy trainer uses CPU. The separate
+managed job runner has its own CPU-only sandbox and deployment requirements;
+see [the job manager guide](../../docs/JOB_MANAGER.md).
 
 ## Troubleshooting and recovery
 

@@ -4,7 +4,9 @@ The independent Exchange service exchanges bounded JSON metadata and immutable f
 The API authorizes control requests, PostgreSQL stores metadata, and clients move
 file bytes directly to private versioned S3. Generic usage requires no model,
 training round, participant identifier or ML library. An optional `fedavg.v1`
-profile supplies the HF²L application rules.
+profile supplies the HF²L application rules. Managed spaces additionally use
+certificate-bound workload identities and a trusted transfer gateway; see
+[managed workloads](#managed-workloads-and-transfers).
 
 The HTTP protocol remains `/v2`; architecture v3 is not a wire-version bump.
 See the [v3 architecture and integration decisions](ARCHITECTURE_V3.md)
@@ -59,8 +61,11 @@ export EXCHANGE_S3_ENDPOINT='https://objects.example.com'
 Choose exactly one trusted key source: `EXCHANGE_JWKS_URL` or the RSA public PEM
 value in `EXCHANGE_JWT_PUBLIC_KEY`. The service validates RS256 access tokens with
 `typ=at+jwt`, the configured issuer/audience, `sub`, `iat`, `exp`, and the
-`exchange` scope. It does not issue tokens. Human login and workload identity
-provisioning belong to the identity provider.
+`exchange` scope. It does not issue tokens. An OIDC provider such as Keycloak
+must be configured to issue this access-token format; an ID token or a
+provider-default access token with a different header, audience or scope is
+rejected. Human login and token issuance belong to the identity provider.
+Managed workload tokens use the separate contract below.
 
 S3 uses Boto's normal credential provider chain unless both
 `EXCHANGE_S3_ACCESS_KEY` and `EXCHANGE_S3_SECRET_KEY` are configured. The provider
@@ -269,17 +274,22 @@ record metadata. `get_membership` reports the caller's principal ID and roles. I
 administration environment, the trusted subject can be enrolled as follows:
 
 ```python
-from hf2l_exchange.auth import principal_id
+from hf2l_exchange.domain import principal_id
 
 alice = principal_id(os.environ["EXCHANGE_ISSUER"], "alice-subject")
 with ExchangeClient(os.environ["EXCHANGE_ENDPOINT"], os.environ["EXCHANGE_TOKEN"]) as admin:
     admin.set_member(space_id, alice, ["contributor"], subject="alice-subject")
 ```
 
-`auth` is a server module, used here only by the administrator. The SDK itself
-requires no JWT verifier or server dependencies. An administrator can revoke
-membership by assigning an empty roles list; the last administrator cannot remove
-its own final administrative role.
+The principal-ID helper uses only the standard library; this enrollment
+example needs no server dependencies. It hashes the exact issuer and subject,
+so changing the issuer changes the principal ID. Supplying `subject` records
+the roster label; it does not derive or validate the supplied principal ID.
+Use the helper with the trusted issuer/subject pair.
+An administrator can revoke membership by assigning an empty roles list.
+The last administrator cannot be demoted or removed. The v2 service has no
+bootstrap membership-recovery exception: retain a second administrator and a
+recovery plan for lost identity-provider subjects.
 
 ## HTTP contract
 
@@ -311,6 +321,79 @@ Errors contain `error.code`, `error.detail` and `error.request_id`; responses al
 carry `X-Request-ID`. Treat stable codes as machine-readable results. SDK retries
 transient transport/status failures with bounded delays and honors `Retry-After`.
 A publication/coordination retry must retain its original operation identity.
+The complete [generated HTTP contract](generated/exchange-api.json),
+[error inventory](generated/exchange-errors.json) and
+[server/worker environment table](generated/exchange-environment.md) are exported
+from the source with `hf2l-exchange export-contract`. The error inventory marks
+dynamic forwarding explicitly; it is not a promise that every SDK error is an
+HTTP response.
+
+## Managed workloads and transfers
+
+Managed mode is an opt-in deployment boundary used by the
+[job manager](JOB_MANAGER.md#exchange-managed-configuration). Ordinary spaces
+continue to use the human/service access-token contract and direct signed S3
+transfers described above. Enabling workload configuration does not turn the
+public `hf2l-exchange serve` listener into a managed ingress.
+
+Configure a separate `EXCHANGE_WORKLOAD_ISSUER`, its RSA PEM verification key in
+`EXCHANGE_WORKLOAD_PUBLIC_KEY`, and the intended `EXCHANGE_WORKLOAD_AUDIENCE`
+(default `exchange-workload`). The issuer must differ from `EXCHANGE_ISSUER`.
+The manager's Exchange-audience default is `exchange-managed`, so deployments
+must explicitly configure the same audience on both sides. Exchange holds only
+the public key. The external workload issuer signs RS256 `at+jwt` tokens with
+`exp - iat` greater than zero and no more than 300 seconds. Required claims
+include `sub`, `jti`, `space_id`, `job_id`, `attempt_id`, `component_id`,
+positive integer `epoch`, and `cnf: {"x5t#S256": "CERTIFICATE_THUMBPRINT"}`,
+as well as the issuer, audience and timestamps. The token's `jti` identifies
+the persisted workload grant; any explicit `grant_id` must match it.
+
+A managed ASGI app is created with `create_app(..., managed_ingress=True)`.
+Place it behind separate trusted mTLS termination and an authenticated private
+backend connection. The terminator supplies signed assertions binding the method,
+request target, Authorization value, certificate thumbprint and timestamp.
+`EXCHANGE_TRUSTED_BACKEND_SECRET` must contain at least 32 bytes; keep it with
+the trusted terminator and backend. Assertions expire outside a 30-second clock
+window. Arbitrary forwarded certificate headers do not establish workload
+identity, and the public app rejects workload tokens even when they are valid.
+The manager deployment supplies the corresponding ingress/gateway/proxy
+integration; the standalone Exchange CLI does not provision it.
+
+`EXCHANGE_PROVISIONING_PRINCIPAL_IDS` is a required comma-separated allowlist
+of canonical principal IDs when workloads are enabled.
+`EXCHANGE_DOWNLOAD_BROKER_PRINCIPAL_IDS` optionally permits trusted download
+brokers. Both lists use the human/service issuer's principal IDs and still
+require space membership. Provisioners need the relevant space roles; managed
+administration requires `admin`. A broker outside the provisioner list is
+restricted to its `reader` role even if its membership accidentally includes
+other roles. Other human/service identities cannot enter a managed space.
+
+Provisioning first binds the space to a job and enrolls each workload identity,
+then creates grants restricted to that membership's roles and profile bindings.
+Every operation checks the active grant, space/job/attempt/component, epoch,
+certificate, expiry and current membership. Effective roles are the intersection
+of grant and membership roles. Revoke the prior attempt before issuing grants
+for a successor attempt or epoch; expiry alone does not authorize takeover,
+and a revoked attempt cannot be reopened. Retirement requires all grants to be revoked, schedules record cleanup
+through the worker, and retains membership, provenance and revocation history.
+It does not terminate an external runtime.
+
+The additional routes under `/v2/spaces/{space}` are `PUT/GET /managed`,
+`POST /managed/retire`, `POST /workload-grants`,
+`GET /workload-grants/{grant}`, `POST /workload-grants/verify`, and
+`POST /workload-grants/revoke`. Managed enablement/retirement, grant creation
+and revocation require idempotency keys.
+
+For managed spaces, upload grants and download descriptors carry the
+`hf2l-managed-v1` protocol and structured space/record/attachment operations;
+they never contain or mint origin S3 URLs. Trusted gateway code performs the
+raw storage operations after authorization. A sandboxed SDK uses
+`ExchangeClient.for_execution(proxy_socket, space=space_id)` with its assigned
+absolute Unix socket, no token argument, and no caller-supplied credentials.
+The execution proxy owns upstream credentials and mTLS identity. The standalone
+SDK does not create that proxy or establish sandbox isolation. Those deployment
+requirements, dashboard ACL checks and the brokered download flow are described in the
+[job-manager guide](JOB_MANAGER.md).
 
 ## Coordination and optional FedAvg
 
@@ -527,7 +610,10 @@ the previous one remains uncertain. Ordinary verification is read-only and can
 resume after a worker restart without this operator assertion.
 
 The SDK keeps confirmed multipart progress, local upload state and interrupted
-downloads. Upload and verification time budgets are separate. State files identify
+downloads. Download bodies stream to a partial file in 1 MiB chunks, resume with
+validated byte ranges, and replace the destination only after size and SHA-256
+checks. Uploads buffer one negotiated multipart part at a time, so memory depends
+on part size. Upload and verification time budgets are separate. State files identify
 logical operations; keep them between retries and use distinct files for new
 operations. The API never proxies the large-file payload.
 
@@ -616,6 +702,8 @@ operator assertions, not automatic detection of provider state.
 | `EXCHANGE_POOL_TIMEOUT` / `EXCHANGE_POOL_RECYCLE` | 30 / 1800 | Pool wait/recycling seconds |
 | `EXCHANGE_JWKS_TIMEOUT` / `EXCHANGE_JWKS_CACHE_SECONDS` | 5 / 300 | Key retrieval timeout/cache |
 
+The [generated environment table](generated/exchange-environment.md) includes
+authentication, storage and managed-mode settings as well as these tuning knobs.
 Size pools for all API and worker processes. `worker --once` logs the pass counts
 and exits zero when the pass returns normally, including handled per-transfer
 `retry` or `failed` outcomes. It exits nonzero when an exception escapes the whole
@@ -627,7 +715,7 @@ bytes. Per-request logs avoid bodies, bearer tokens and signed URL query strings
 ## Validation status and deployment limits
 
 The [October 8, 2026 remediation record](validation/2026-10-08-repository-remediation.md)
-reports the latest local suites, the actual manual cyclic CLI recipe, generated
+records historical local suites, the actual manual cyclic CLI recipe, generated
 contract checks, package verification, and the configurations that were not
 exercised. The September 22 results below are preserved as historical evidence.
 

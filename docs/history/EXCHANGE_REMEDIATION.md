@@ -1,5 +1,11 @@
 # Exchange review remediation
 
+> **Historical snapshot.** Legacy Exchange remediation after the `8f7fee7` assessment.
+> Working-tree status, test results and schema-v2 migration instructions below describe that legacy remediation, not the independent Exchange deployment.
+> Current guidance: [architecture](../ARCHITECTURE_V3.md),
+> [Exchange operations](../EXCHANGE_V3.md), and [training](../TRAINING_GUIDE.md).
+> See the [archive index](README.md) for historical context.
+
 This records the working-tree changes following the assessment of `8f7fee7`.
 The status lines for `9f670c9` in [the original review](EXCHANGE_REVIEW_FINDINGS.md)
 remain historical evidence; they do not describe this implementation.

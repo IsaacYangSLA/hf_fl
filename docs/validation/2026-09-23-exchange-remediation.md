@@ -1,5 +1,13 @@
 # Exchange remediation — 2026-09-23
 
+> **Historical record.** This report describes the September 23 working-tree
+> remediation and its recorded test runs. Its commands, counts, provider hashes,
+> and cleanup state apply to that snapshot, not later revisions. Evidence paths
+> refer to original task artifacts outside the tracked report; availability is
+> not established here. Use the [current Exchange runbook](../EXCHANGE_V3.md)
+> and [architecture limitations](../ARCHITECTURE_V3.md#current-implementation-limitations)
+> for present behavior and setup.
+
 This follow-up addresses the three application defects and the SeaweedFS
 compatibility failures identified by the [remote validation](2026-09-23-exchange-remote.md).
 Validation covered the working tree based on `60e4bf8`, before committing the

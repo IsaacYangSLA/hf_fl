@@ -1,5 +1,13 @@
 # Exchange remote validation — 2026-09-23
 
+> **Historical record.** Findings, commands, counts, and environment details
+> below describe the September 23 baseline only. The linked remediation records
+> subsequent fixes; unresolved findings here are not a current defect inventory.
+> Evidence paths identify original ignored task artifacts, not files supplied
+> by this report. Use the [current Exchange runbook](../EXCHANGE_V3.md) and
+> [architecture limitations](../ARCHITECTURE_V3.md#current-implementation-limitations)
+> for current setup and finding status.
+
 This is the historical validation of `60e4bf8`. See the
 [remediation follow-up](2026-09-23-exchange-remediation.md) for subsequent fixes
 and new verification results.

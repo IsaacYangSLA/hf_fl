@@ -1,5 +1,11 @@
 # Exchange v2: service, SDK and operations
 
+> **Historical snapshot.** Independent Exchange v2 operational snapshot before v3 integration.
+> Commands, settings and validation results below describe that snapshot; consult the current runbook before operating the integrated service.
+> Current guidance: [architecture](../ARCHITECTURE_V3.md),
+> [Exchange operations](../EXCHANGE_V3.md), and [training](../TRAINING_GUIDE.md).
+> See the [archive index](README.md) for historical context.
+
 Exchange v2 exchanges bounded JSON metadata and immutable file attachments.
 The API authorizes control requests, PostgreSQL stores metadata, and clients move
 file bytes directly to private versioned S3. Generic usage requires no model,

@@ -1,5 +1,14 @@
 # Multi-job implementation validation
 
+> **Historical record.** Completion and acceptance below apply to the recorded
+> source freezes, test cohorts, runtime image/profile, and single physical host.
+> Python 3.10 cohorts and retained-service statements describe that validation,
+> not current support or machine state. External artifact paths and hashes record
+> original provenance; this report does not include or independently reverify
+> those artifacts. See the [current operator guide](../JOB_MANAGER.md) and
+> [deployment qualification requirements](../../deploy/jobs/README.md#qualification-and-admission)
+> for current operation and qualification of each deployment.
+
 **Date:** 2026-10-09
 
 **Status:** CPU v1 implementation and required validation completed for the tested scope; provenance and limits below.

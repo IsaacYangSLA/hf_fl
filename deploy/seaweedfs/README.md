@@ -18,7 +18,9 @@ docker build -t hf2l-seaweedfs:4.47-exchange1 deploy/seaweedfs
 The Dockerfile pins SeaweedFS commit
 `c5073360007d28385a33426a42ac3e4ec504c5a3`, verifies its source archive SHA-256,
 and pins both builder and runtime images by digest. It runs the patch's Go
-regression tests before compiling the binary. The patch tests are included in
+regression tests before compiling the binary. This build is separate from the
+MinIO source image used by the main Exchange CI workflow; passing that workflow
+does not validate this SeaweedFS build. The patch tests are included in
 the patch itself and can also run in a patched source checkout:
 
 ```bash

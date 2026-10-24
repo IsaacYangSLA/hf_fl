@@ -1,5 +1,11 @@
 # Exchange service review: verified findings
 
+> **Historical snapshot.** Legacy Exchange review at `48b2c34`, status at `9f670c9`, and later remediation after `8f7fee7`.
+> The “current remediation” section, findings and test counts below retain their original historical meaning.
+> Current guidance: [architecture](../ARCHITECTURE_V3.md),
+> [Exchange operations](../EXCHANGE_V3.md), and [training](../TRAINING_GUIDE.md).
+> See the [archive index](README.md) for historical context.
+
 ## Current remediation
 
 The remaining findings from the `8f7fee7` assessment are addressed in the current

@@ -51,6 +51,12 @@ style: |
   }
 ---
 
+> **Historical snapshot.** Original four-slide Hugging Face/JFrog design.
+> Commands, backend coverage and transfer claims below describe the original presentation.
+> Current guidance: [architecture](../ARCHITECTURE_V3.md),
+> [Exchange operations](../EXCHANGE_V3.md), and [training](../TRAINING_GUIDE.md).
+> See the [archive index](README.md) for historical context.
+
 # 1. System architecture
 
 ## Training fan-out — every client starts from the same immutable revision

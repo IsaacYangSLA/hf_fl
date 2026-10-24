@@ -1,5 +1,11 @@
 # Architecture review and Exchange v2 design
 
+> **Historical snapshot.** Exchange v2 design decided on 2026-09-22 against `714fd66`.
+> Sibling-checkout references and implementation decisions below describe the original v2 work before v3 integration.
+> Current guidance: [architecture](../ARCHITECTURE_V3.md),
+> [Exchange operations](../EXCHANGE_V3.md), and [training](../TRAINING_GUIDE.md).
+> See the [archive index](README.md) for historical context.
+
 Review baseline: `714fd66` (Exchange v1). Design decision date: 2026-09-22.
 The review concerns code and documentation in that baseline; line numbers below
 refer to that revision. The v2 implementation lives in the independent

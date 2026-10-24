@@ -1,5 +1,11 @@
 # General metadata exchange and blob storage
 
+> **Historical snapshot.** Original legacy Exchange service design.
+> Proposals, implementation status and operational claims below belong to that design and its original implementation.
+> Current guidance: [architecture](../ARCHITECTURE_V3.md),
+> [Exchange operations](../EXCHANGE_V3.md), and [training](../TRAINING_GUIDE.md).
+> See the [archive index](README.md) for historical context.
+
 Status: architecture design with an initial implementation. See the
 [implementation and deployment guide](../EXCHANGE_SERVICE.md) for supported APIs,
 operational boundaries, and validation. No production infrastructure has been

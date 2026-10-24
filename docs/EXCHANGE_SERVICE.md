@@ -21,7 +21,9 @@ serializes writes; it is not the scale-out database configuration. PostgreSQL re
 Provide a private S3 bucket with versioning enabled and an identity provider
 issuing RS256 OAuth access tokens. Tokens must have `typ=at+jwt`, the configured
 issuer/audience, `sub`, `iat`, `exp`, and the `exchange` scope. The API does not
-issue tokens or use a shared client password.
+issue tokens or use a shared client password. Configure the provider to emit
+this access-token contract; an OIDC ID token or a default access token with a
+different `typ`, audience or scope will be rejected.
 
 ```bash
 .venv/bin/python -m pip install -e './packages/exchange[server]' -e '.[service,exchange]'
@@ -514,7 +516,8 @@ warning. Current `/v2` commands print the confirmed revision and warning rather
 than hiding a successful publication. The retained v1 fixtures are not current
 CLI entry points.
 
-The `Exchange service tests` GitHub workflow runs required dependency checks,
+The [HF2L architecture and exchange tests](../.github/workflows/exchange_tests.yml)
+GitHub workflow runs required dependency checks,
 SQLite/Moto on Python 3.12, and PostgreSQL/MinIO for real concurrency,
 schema migration and signed-URL checks. `EXCHANGE_REQUIRE_TESTS=1` turns missing
 exchange dependencies into a failure instead of an all-skipped success.

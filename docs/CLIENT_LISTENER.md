@@ -8,7 +8,7 @@ model-store backends: `huggingface`, `jfrog`, `exchange`, and `local`.
 
 They poll through the shared `ModelStore` interface. No event broker, webhook
 endpoint, or extra service is required. The Exchange event feed and HF PR
-webhook relay remain separate mechanisms. Run one light polling process per
+webhook relay remain separate mechanisms. Run one polling process per
 client and one for the owner; training and aggregation run only when work is
 ready. A scheduler can instead invoke either role with `--once`.
 
@@ -48,7 +48,16 @@ the same [`train_model(base_dir, output_dir, options)` contract](TRAINING_GUIDE.
 as `hf2l.client_train`: write a compatible checkpoint and return JSON metadata
 containing a positive integer `num_examples`. Plugins execute locally with the
 participant's permissions. Review and install the plugin locally; the listener
-does not load training code from remote submissions.
+does not load training code from remote submissions. The organizer hands the
+chosen plugin and dependencies to the participant, who installs and runs them
+with local data. No SSH access between the organizer and participant is needed.
+Bundled plugins accept `--plugin-arg device=cpu` or `device=cuda`; their default
+`device=auto` selects CUDA when available. This native listener can use that
+local GPU; the [managed job runtime](JOB_MANAGER.md) is CPU-only.
+
+The CLI has no human approval command or `--require-approval` option. Arrange
+any required code review before starting the listener. Its ready work executes
+automatically.
 
 | Client option | Meaning |
 | --- | --- |
@@ -77,7 +86,7 @@ It supports `main` as the global reference and does not require `--participant`.
 | `--minimum-participants 2` | Minimum distinct eligible participants on the current immutable base; at least two. |
 | `--allowlist PATH` | Approved participant mapping used by discovery and validation; recommended for HF/JFrog. |
 | `--weighting examples` | FedAvg weighting (`examples` or `uniform`). |
-| `--array-backend numpy`, `--accumulator-dtype float32` | Checkpoint reduction implementation and precision. |
+| `--array-backend numpy`, `--accumulator-dtype float32` | Defaults for checkpoint reduction and precision. BF16 requires the Torch extra and `--array-backend torch`. |
 | `--plugin`, `--plugin-arg KEY=VALUE` | Optional trusted local evaluation plugin and options. |
 | `--claim-lease-seconds 3600` | Exchange claim lease, from 10 to 3600 seconds; renewed while working. |
 | `--require-concurrent-publication` | Require backend conditional publication; rejects JFrog's preflight-only behavior. |
@@ -268,9 +277,9 @@ cleaned up on retry; published and uncertain output is retained. Exchange
 `claim-state.json` is outside
 attempt directories so retries can reuse it. Do not share state between actors.
 
-An exclusive POSIX lock prevents two processes from operating on one state
-directory. Separate directories do not coordinate duplicate listeners for the
-same actor. Run one listener per participant and repository, and one publishing
+Listener state requires POSIX advisory filesystem locks. An exclusive lock
+prevents two processes from operating on one state directory. Separate directories
+do not coordinate duplicate listeners for the same actor. Run one listener per participant and repository, and one publishing
 coordinator where the backend requires it.
 
 Progress is saved before side effects. Safe download, training, reduction, and
