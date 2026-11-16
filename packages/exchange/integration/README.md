@@ -5,8 +5,8 @@ and a versioned S3-compatible store. SDK requests are not intercepted. No Python
 Exchange service runs behind the native implementation.
 
 The Python SDK remains unchanged. Python is a client and fixture operator.
-The retained-state gate also uses the Python reference application while Go
-processes are stopped, to check state continuation in both directions.
+The retained-state gate stops and restarts native Go processes over the same
+owned data. No Python server implementation is installed or imported.
 
 ## Prerequisites
 
@@ -16,8 +16,8 @@ processes are stopped, to check state continuation in both directions.
 - Supply a dedicated S3 test endpoint with credentials allowed to create,
   version, inspect and remove owned buckets.
 - Use Python with the current Exchange package, HTTPX, Cryptography, PyJWT,
-  Psycopg, Boto3, SQLAlchemy, FastAPI, Uvicorn and JSONSchema. Server dependencies
-  support the offline retained-state oracle; Python servers/workers are not launched.
+  Psycopg and Boto3. These are client and test-operation dependencies; the
+  Python package contains no server implementation.
 - Create a mode-`0700` evidence root. Keep all settings and secrets outside Git.
 
 Each fixture generates a unique schema and bucket. Never supply production
@@ -74,13 +74,16 @@ Use the same private configuration contract with independent evidence roots:
 export HF2L_GO_EXCHANGE_RETAINED_CONFIG=/path/to/private/retained-config.json
 export HF2L_GO_EXCHANGE_RETAINED_PYTHON=/path/to/test-environment/bin/python
 go -C packages/exchange test -race -count=1 -timeout=20m \
-  -run '^TestRetainedStatePythonAndGo$' -v ./integration
+  -run '^TestRetainedStateNativeRestart$' -v ./integration
 ```
 
-Unset retained variables fall back to the SDK variables. This gate checks both
-Python-initialized state continued by Go and Go-initialized state continued by
-Python: idempotency, Unicode principals, large integers, frozen coordination
-inputs, multipart uploads, durable PUT markers and sealed settlement receipts.
+Unset retained variables fall back to the SDK variables. This gate checks two
+native restart cases: resuming through saved client state and resuming a
+partially uploaded multipart object directly. Both retain idempotency, Unicode
+principals, large integers, frozen coordination inputs, durable write markers,
+and signed settlement receipts through two service restarts. Expired and revoked
+credentials cannot authorize new work; an exact retained receipt can settle only
+its own previous write.
 
 ## Cleanup and evidence
 

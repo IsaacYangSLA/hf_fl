@@ -61,7 +61,7 @@ def _installed_requirements() -> list[str]:
 
 def _command_help() -> None:
     entrypoints = [entry for entry in importlib.metadata.distribution("hf2l").entry_points
-                   if entry.group == "console_scripts" and entry.name != "hf2l-exchange-service"]
+                   if entry.group == "console_scripts"]
     if not any(entry.name == "hf2l" for entry in entrypoints):
         raise AssertionError("Unified hf2l console entry point is missing")
     # Spawn each actual installed entry point independently: import caching cannot

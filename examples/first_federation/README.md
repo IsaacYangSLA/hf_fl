@@ -9,14 +9,42 @@ Complete two manual **download → local training → upload → aggregation**
 rounds using a tiny NumPy model. No Hugging Face account, Torch, GPU, or external
 dataset download is required.
 
+This walkthrough runs the Exchange server and its background worker as Go
+programs. Python remains the language of the setup helper, client tools, local
+trainer, and aggregation application. For Go services with already configured
+supporting services and an optional job dashboard, see the separate
+[Go services Compose guide](../../deploy/compose/go/README.md).
+
 ## Responsibilities
 
 | Organization and person | Responsibility | Machine |
 | --- | --- | --- |
-| Org S: service administrator | DNS, HTTPS, Compose, storage, identity accounts, initial project creation, delegation, service operations | Org S's Linux server |
+| Org S: service administrator | DNS, HTTPS, Compose, storage, identity accounts, selected study-creator grants, resource allocation, service operations | Org S's Linux server |
 | Org P: aggregator | Model agreement, participant approval/enrollment, initial checkpoint, aggregation, evaluation, publication, round invitations | Org P's aggregation workstation |
 | Org A: Alice | Own login, private dataset, local training, own submission | Org A's training machine |
 | Org B: Bob | Same responsibilities independently | Org B's training machine |
+
+For the optional job dashboard, a **study creator** is an account permitted by
+Org S to create studies across the service. Org S grants this permission to a
+selected Org P account once. Org P can then use **Studies** and **Create study**
+to create each study and becomes administrator of that study only. Existing
+project administrators do not automatically receive creation permission.
+Signing in alone grants no study permissions. See the [study creation guide](../../docs/JOB_MANAGER.md#study-creation-and-ownership)
+for limits, revocation, and the operator's resource-allocation step. A name-only
+dashboard creation starts with registration closed, participant approval required,
+zero resource quotas, and 14-day retention. Org P must arrange resources with
+Org S, open registration when ready, and approve participant registration before
+participants can use that managed study. Approval of training source code is a
+separate control; it does not replace participant approval.
+
+**Two separate workflows:** a manager **study** is a workspace governed by the job
+manager. An Exchange **project** is the model-sharing space created in step 3.
+This beginner stack deploys no job manager or dashboard: step 3 creates only an
+Exchange project, and step 4 explicitly grants Alice and Bob access to it. It
+does not create a manager study or exercise dashboard registration. The manual
+training workflow below does not require the optional dashboard or its study
+creator permission. Each participant reviews and runs its own local training
+code; that review does not replace Org P's project enrollment.
 
 Org S and Org P use **separate accounts, credential profiles, and workspaces**.
 Org S operates the shared services and identity accounts. Org P retains
@@ -39,7 +67,7 @@ flowchart LR
     subgraph OrgP["Org P (Aggregator)"]
         Aggregator["Approve participants / initialize / aggregate / evaluate / publish"]
     end
-    OrgS -->|Delegate project and trusted identity metadata| Aggregator
+    OrgS -->|Delegate Exchange project and trusted identity metadata| Aggregator
     Aggregator <-->|project operations and checkpoints over HTTPS| Stack
     Alice["Org A: Alice / local data and trainer"] <-->|checkpoints over HTTPS| Stack
     Bob["Org B: Bob / local data and trainer"] <-->|checkpoints over HTTPS| Stack
@@ -142,6 +170,11 @@ export ISSUER=https://auth.example.org/realms/hf2l
 export OBJECTS_ENDPOINT=https://objects.example.org
 ~~~
 
+The shared install includes Cryptography, a Python library used by Org S's setup
+helper to create private connection certificates. Storage administration uses a
+separate temporary Python setup container; Alice and Bob do not install its
+packages or run that container.
+
 All subsequent commands run from **that repository root with its environment
 activated**. Each role keeps its own private working directory. On a single
 practice machine, use separate terminals and credential profiles; do not share
@@ -154,16 +187,26 @@ an authenticated profile between people.
 **Success:** service status checks pass over HTTPS.
 **Handoff:** service URLs and individually delivered account credentials.
 
-[compose.yaml](compose.yaml) runs PostgreSQL, MinIO, Keycloak, Caddy, Exchange API,
-and its verification/cleanup worker. It runs no training code. Only Caddy
-publishes ports. Volumes preserve data across an ordinary stop/start.
+[compose.yaml](compose.yaml) runs PostgreSQL, MinIO, Keycloak, Caddy, the Go
+Exchange application interface, and its Go verification/cleanup worker. It runs
+no training code. Only Caddy publishes ports. Volumes preserve data across an
+ordinary stop/start. Caddy connects to the Go Exchange over a separate encrypted
+connection and verifies its private server certificate; forwarded request
+headers do not replace encryption. The setup helper creates that connection
+certificate. Only the server's private key is retained in Org S's private
+runtime directory; the temporary signing key is discarded after issuance.
 
-Bootstrap builds both the Exchange API image and MinIO using Docker Buildx;
-no host Go installation is needed. The MinIO build uses an official upstream
+Bootstrap builds both the native Go Exchange image and MinIO using Docker
+Buildx; no host Go installation is needed. The Exchange image contains no
+Python server or Python interpreter. A separate setup-only image supplies
+Boto3, the Python storage administration library. Its temporary container creates
+the private versioned bucket and exits; it does not serve requests or train
+models. The setup image and Go service image are built together. The MinIO build uses an official upstream
 source archive pinned by commit and SHA-256, pinned build/runtime images, and
 Go module checksum verification. The first build downloads source and Go modules
 and can take several minutes. Allow access to the configured registries, GitHub,
-Go module proxy/checksum services, and Python package index. Build and source
+Go module proxy/checksum services, and the Python package index for the host
+client tools and temporary storage setup image. Build and source
 pins are recorded in [images.example.json](images.example.json).
 
 The upstream [MinIO community repository](https://github.com/minio/minio) is
@@ -329,6 +372,16 @@ distinct accounts (`bootstrap-admin`, `owner`, `alice`, `bob`), current Exchange
 schema `0003_workload_grants`, and a private versioned bucket. Database and
 storage credentials stay service-side.
 
+For an older deployment that used the removed Python server, back up its
+databases, object versions, and private configuration, then follow the
+[Go Exchange retained-state procedure](../../docs/GO_EXCHANGE.md#compatibility-cutover-and-rollback)
+before changing implementations. This helper rejects historical
+runtime configuration rather than silently changing it. Use the older reviewed
+source revision to stop that stack and export required records before switching
+source. Prepare a new runtime configuration under an explicitly reviewed
+retained-state migration; do not overwrite retained credentials or reuse existing
+volumes with fresh passwords.
+
 Read the generated paths printed by bootstrap. Private `accounts.json` contains
 passwords: deliver **only each recipient's own credential** through a private
 channel. Never send the whole file to participants. `identities.json` records
@@ -346,6 +399,25 @@ Use a private local editor to read the intended entry; do not paste passwords
 into commands, logs, or support reports. Each recipient gets only its own
 `["accounts"][username]["password"]`, separately from project metadata.
 The Keycloak master password is not an HF²L login credential.
+
+This tutorial creates local Keycloak accounts. A GitHub or Hugging Face account
+does not automatically become an HF²L login. For external sign-in, Org S must
+register an application with that provider, configure its permitted return
+address (the callback URL), and keep the application's private client secret
+in service-side identity configuration. Each user then connects its own
+provider account through the enabled sign-in/account-connection flow. Org S
+owns provider setup; Org P, Alice, and Bob must not receive client secrets or
+change the service configuration.
+
+For an interrupted setup, Org S reuses the original runtime directory and
+reruns `bootstrap`; it preserves existing enabled accounts and does not reset
+their passwords. The generated `accounts.json` remains an initial credential
+record, so an administrator's later password change can make its saved password
+outdated. Use Org S's identity administrator to recover an existing account.
+Do not delete and recreate an account, substitute another user's login, or
+rewrite the identity receipt to recover access: a recreated account has a new
+identity and existing project permissions do not follow its username. Keep
+the original runtime configuration and persistent data for recovery.
 
 **Who:** Org S, Org P, Alice, and Bob. **Machine:** each caller's machine,
 from its own network for a real deployment. **Input:** the three endpoint

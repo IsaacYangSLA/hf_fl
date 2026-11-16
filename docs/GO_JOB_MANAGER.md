@@ -5,8 +5,9 @@ administration, scheduler, controller, provisioning, node and participant
 services, transfer gateway, execution proxies, collection, and retention.
 It does not call a Python manager through HTTP, RPC, or a manager subprocess.
 
-The Python implementation remains a compatibility reference and rollback
-option. Select one controller implementation per deployment and follow the
+Go is the only job-manager server implementation in this source tree. The
+Python package contains sandboxed training/build adapters, not a manager server.
+Run one controller for each deployment and follow the
 [cutover procedure](#cutover-and-rollback) before changing retained state.
 
 ## Boundaries
@@ -17,13 +18,21 @@ option. Select one controller implementation per deployment and follow the
 | Browser dashboard | Existing HTML, CSS, and JavaScript, embedded in the Go binary |
 | Model training and evaluation | Existing HF²L Python application and local plugins |
 | Sandboxed training/build application adapters | Existing Python adapters and fixed, qualified worker commands |
-| Exchange API, verification worker, private transfer backend | Independent native Go Exchange or retained Python reference; see [Go Exchange](GO_EXCHANGE.md) |
+| Exchange API, verification worker, private transfer backend | Independent native Go Exchange; see [Go Exchange](GO_EXCHANGE.md) |
 | Database, identity provider, object storage, sandbox runtime | Separately deployed infrastructure |
 
 Retained sandboxed adapters preserve source/wheel verification, durable round
 state, checkpoint validation, and publication safety. They do not require a
 Python manager service. Managed execution remains the qualified Linux CPU
 profile; native participant GPU training is a separate workflow.
+
+## Docker Compose
+
+Use the [Go services Compose guide](../deploy/compose/go/README.md) to run the
+Go manager API/dashboard alongside the Go Exchange API and worker. Its optional
+manager profile does not start the controller, execution agents, or qualified
+runtime. Configure dependencies and identity first, and follow the full
+[managed deployment guide](../deploy/jobs/README.md) before admitting jobs.
 
 ## Build
 
@@ -38,11 +47,12 @@ go -C packages/jobs build -trimpath -o ../../dist/hf2l-jobs ./cmd/hf2l-jobs
 
 The [Go module](../packages/jobs/go.mod) pins dependency versions and checksums.
 The dashboard uses the same [static assets](../packages/jobs/src/hf2l_jobs/static/index.html)
-as the reference implementation; Node.js is not required.
+as the existing dashboard; Node.js is not required.
 
 Install this binary explicitly in the service account's executable path.
-The Python wheel still installs the Python reference command. Check which
-executable each supervisor invokes before switching a deployment.
+Only the Go binary installs the `hf2l-jobs` server command. The Python wheel
+provides `hf2l-jobs-runtime` for execution adapters; it cannot start a manager.
+Check the explicit executable path in every supervisor definition.
 
 ## Configuration
 
@@ -80,8 +90,8 @@ For example, the public listener's `service` fragment is:
 ```
 
 Use the full manager identity configuration for `serve`, `node-api`, and
-`controller`, as with the reference implementation. Other standalone service
-commands validate their own required settings.
+`controller`. Other standalone service commands validate their own required
+settings.
 
 Human access uses HTTPS, OIDC authorization code with PKCE, server-side sessions,
 CSRF, and exact-origin checks. The dashboard is `/dashboard/` and the API base
@@ -102,8 +112,8 @@ Initialize only a new manager database:
 ./dist/hf2l-jobs init-db --config /etc/hf2l/jobs.json
 ```
 
-Use `migrate-db` for a supported existing database. The shared revision remains
-`0003_administrative_audit`. Startup checks schema state instead of silently
+Use `migrate-db` for a supported existing database. The current revision is
+`0005_study_creators`. Startup checks schema state instead of silently
 initializing or migrating it.
 
 Trusted local administration retains the existing command shape:
@@ -154,6 +164,44 @@ needs a complete assigned configuration. Keep pools unhealthy until runtime
 identity, dependency, storage, and health checks pass. Manager `/readyz` alone
 does not qualify admission.
 
+## Selected accounts can create studies
+
+A **study creator** is a selected account permitted to create a collaboration,
+called a study, in the manager. It is above an ordinary account and below the
+service operator. Existing project administrators receive no automatic grant.
+The operator grants or revokes this permission through trusted local
+administration; see the [account setup commands](JOB_MANAGER.md#grant-or-revoke-study-creation).
+The `study-creator-set` operation requires both an exact account principal
+(the manager’s stable identity identifier) and an explicit `--enabled=true` or
+`--enabled=false` value. Browser sessions do not grant this permission.
+
+In **Studies**, the selected account chooses **Create study** and enters only a
+name. The manager creates a closed, approval-required study, with six zero
+resource quotas, 14-day finished-job retention, and administrator membership
+only for its creator. A quota is a resource allowance. The operator must assign
+usable quotas, resource pools, and execution services separately. A resource
+pool supplies shared execution capacity. Creation grants no permission over
+another study or its jobs, and no service administration permission.
+
+Revocation blocks further creation immediately, including from an existing
+session or a repeated creation request. It preserves already recorded study
+administrator memberships. The database upgrade preserves existing studies
+and memberships without automatically granting creation permission. Study
+records in the manager remain separate from standalone Exchange projects.
+
+## Participant signup and study approval
+
+See [study enrollment](STUDY_ENROLLMENT.md) for trusted-account signup, optional
+GitHub/Hugging Face broker choices, applicant-owned requests, and mandatory Org P
+approval. The manager keeps its fixed trusted login issuer. Configure optional
+signup buttons with `HF2L_JOBS_OIDC_SIGNUP_PROVIDERS_JSON`; broker credentials stay
+with the login service. The default button uses the existing organization login.
+
+The manager requires database revision `0005_study_creators`. Upgrade a retained
+`0003_administrative_audit` or `0004_study_enrollment` database explicitly before startup. Existing projects
+are not opted in automatically. Study approval supplies participant eligibility,
+not project/job roles or a substitute for execution node/dataset approval.
+
 ## Independent Exchange private transfer backend
 
 The Go gateway needs a private Exchange control interface for origin grants
@@ -168,10 +216,10 @@ are absent from public ingress. Build/install the Exchange binary separately:
   --client-ca /etc/hf2l/backend-client-ca.pem
 ```
 
-The retained [Python reference backend](../packages/exchange/src/hf2l_exchange/gateway_api.py)
-is an alternative during qualification/rollback; its Uvicorn factory must
-supply HTTPS and required client-certificate verification. Select one backend
-implementation explicitly and follow the Exchange cutover procedure.
+The private backend is supplied by that separate Go Exchange executable.
+The Python reference backend has been removed. Keep the native private listener
+separate from ordinary and managed ingress, and follow the Exchange cutover
+procedure when changing releases.
 
 Load the Exchange server settings through that service's private environment:
 versioned storage, the normal service issuer, a distinct workload issuer/key,
@@ -232,9 +280,10 @@ proxy. Generic Exchange clients keep their existing `/v2` API and SDK.
    admission: concurrent jobs, queue
    advancement, cancellation, recovery, foreign-job denial, streaming
    revocation, and physical purge/accounting.
-7. For rollback, first stop Go admission/controller and reconcile uncertain
-   effects. Verify schema/state compatibility before starting the reference
-   implementation. Never run both controllers over the same jobs.
+7. To restore an earlier approved Go release, first stop admission/controller
+   and reconcile uncertain effects. Verify schema/state compatibility or restore
+   the tested backup before restarting. The removed Python manager is not a
+   recovery option. Never run competing controllers over the same jobs.
 
 Unit tests or qualification from another deployment do not establish this
 deployment's isolation or readiness. Managed GPU, Kubernetes, HA, and off-node
@@ -263,8 +312,8 @@ and require an explicit disposable database URL:
 The [Go workflow](../.github/workflows/jobs_go_tests.yml) runs formatting, vet,
 builds, race checks, PostgreSQL, an actual Go-backed browser gate, and the
 separate live transfer integration gate.
-Python regression and sandbox-application tests remain in their original
-workflow.
+Python client/application and sandbox-adapter tests remain in their Python
+workflows. No Python manager-server suite is retained.
 
 The browser gate sets `HF2L_GO_BROWSER_PYTHON` to an interpreter with
 Playwright and Chromium. It exercises the Go OIDC client, SQL-backed sessions,
@@ -274,8 +323,10 @@ Lifecycle fixture transitions in that test do not execute sandboxed training.
 The live gate starts an actual private Exchange HTTPS/mTLS application and
 uses the Go gateway with PostgreSQL and MinIO. Configure:
 
-- `HF2L_GO_EXCHANGE_TEST_PYTHON`: an interpreter with Exchange server,
-  Uvicorn, Boto3, Cryptography, and Psycopg.
+- `HF2L_EXCHANGE_GO_BINARY`: absolute path to the separately built native
+  Exchange executable.
+- `HF2L_GO_EXCHANGE_TEST_PYTHON`: an interpreter with the Exchange SDK, Boto3,
+  Cryptography, PyJWT, and Psycopg for fixture setup and client checks.
 - `HF2L_GO_EXCHANGE_TEST_DATABASE_CONFIG`: a private JSON file containing
   `{"databases":{"exchange":"POSTGRESQL_TEST_URL"}}`.
 - `HF2L_GO_EXCHANGE_TEST_STORAGE_CONFIG`: a private JSON file containing
@@ -342,8 +393,9 @@ In addition to the qualified runtime and imported worker image, prepare:
 - Separate disposable manager/lifecycle and Exchange PostgreSQL databases.
 - Operator-owned S3 credentials permitted to create and remove a unique test
   bucket, including versions and multipart uploads.
-- A fixture Python environment with independent Exchange server dependencies,
-  Uvicorn, and NumPy.
+- The native Exchange executable selected by `HF2L_EXCHANGE_GO_BINARY`.
+- A fixture Python environment with the Exchange SDK, Boto3, Cryptography,
+  PyJWT, Psycopg, NumPy, and SafeTensors for setup and application checks.
 - Only the required runtime/source-fetch sudo permissions and an owned local
   filesystem with enough capacity for concurrent execution and retained state.
 

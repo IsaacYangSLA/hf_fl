@@ -26,6 +26,9 @@ type record struct {
 }
 
 func (s *Service) approved(ctx context.Context, tx *store.Tx, job map[string]any, participantID, nodeID string, enabled bool) (domain.JobSpec, domain.ParticipantSpec, ApprovedNode, error) {
+	if _, e := store.StudyParticipantPrincipal(ctx, tx, str(job["project_id"]), participantID); e != nil {
+		return domain.JobSpec{}, domain.ParticipantSpec{}, ApprovedNode{}, e
+	}
 	spec, e := decodeSpec(job)
 	if e != nil {
 		return spec, domain.ParticipantSpec{}, ApprovedNode{}, e

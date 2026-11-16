@@ -2,11 +2,9 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -396,133 +394,89 @@ func TestCoordinationPostgresConcurrentAcquire(t *testing.T) {
 	})
 }
 
-const coordPythonContinuation = `
-import json,sys
-from pathlib import Path
-from hf2l_exchange.application import Service
-from hf2l_exchange.config import Settings,DatabaseSettings
-from hf2l_exchange.domain import Principal,principal_id,ExchangeError
-from hf2l_exchange.migrations import initialize,check
-phase,root=sys.argv[1],Path(sys.argv[2])
-settings=Settings(database=DatabaseSettings(url="sqlite:///"+str(root/"exchange.db")))
-service=Service(settings)
-principal=Principal(principal_id("https://issuer.example","owner"),"owner",True)
-try:
-    if phase=="seed":
-        initialize(service.engine)
-        space=service.create_space(principal,{"name":"Cross language","profile":"generic.v1"},"cross-space")
-        sid=space["id"]
-        kind=service.register_type(principal,sid,"asset",{"schema":{"type":"object","additionalProperties":True}},"type")
-        record=service.create_record(principal,sid,{"kind":"asset","schema_revision_id":kind["id"],"metadata":{"stage":"seed"},"attachments":[]},"record")
-        record=service.publish_record(principal,sid,record["id"],"publish")
-        service.put_reference(principal,sid,"main",{"record_id":record["id"]},"*","initial")
-        attempt=service.acquire(principal,sid,{"reference":"main","expected_token":"1","lease_seconds":300},"first")
-        result={"space_id":sid,"record_id":record["id"],"principal_id":principal.id,"first":attempt}
-        (root/"python-seed.json").write_text(json.dumps(result))
-        print(json.dumps(result))
-    else:
-        check(service.engine)
-        seed=json.loads((root/"python-seed.json").read_text())
-        second=json.loads((root/"go-second.json").read_text())
-        sid=seed["space_id"]
-        replay=service.acquire(principal,sid,{"reference":"main","expected_token":"2","lease_seconds":300},"second")
-        assert replay["id"]==second["id"] and replay["fence"]==second["fence"]
-        done=service.complete(principal,sid,second["id"],{"fence":second["fence"],"result_record_id":seed["record_id"]},"second-complete")
-        assert done["state"]=="completed"
-        first=seed["first"]
-        replay=service.complete(principal,sid,first["id"],{"fence":first["fence"],"result_record_id":seed["record_id"]},"new-key-after-go")
-        assert replay["state"]=="completed"
-        try: service.renew(principal,sid,first["id"],first["fence"])
-        except ExchangeError as error: assert error.code=="acquisition_not_active"
-        else: raise AssertionError("stale Go-completed attempt was renewed")
-        print(json.dumps(service.get_reference(principal,sid,"main")))
-finally:
-    service.engine.dispose()
-`
-
-func TestCoordinationPythonRetainedStateContinuation(t *testing.T) {
-	python := os.Getenv("HF2L_GO_EXCHANGE_REFERENCE_PYTHON")
-	if python == "" {
-		python = os.Getenv("HF2L_EXCHANGE_TEST_PYTHON")
-	}
-	if python == "" {
-		t.Skip("set HF2L_GO_EXCHANGE_REFERENCE_PYTHON to an interpreter with reference Exchange server dependencies")
-	}
+func TestCoordinationRetainedStateAcrossRestarts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	root := t.TempDir()
-	source, err := filepath.Abs("../../src")
-	if err != nil {
-		t.Fatal(err)
-	}
-	run := func(phase string) Object {
+	url := "sqlite:///" + filepath.Join(t.TempDir(), "exchange.db")
+	open := func(initialize bool) (*store.DB, *Service) {
 		t.Helper()
-		command := exec.CommandContext(ctx, python, "-c", coordPythonContinuation, phase, root)
-		command.Env = append(os.Environ(), "PYTHONPATH="+source+string(os.PathListSeparator)+os.Getenv("PYTHONPATH"), "PYTHONNOUSERSITE=1")
-		output, err := command.CombinedOutput()
+		db, err := store.Open(ctx, url)
 		if err != nil {
-			t.Fatalf("reference continuation %s: %v\n%s", phase, err, output)
+			t.Fatal(err)
 		}
-		decoded, err := domain.DecodeJSON(output)
+		t.Cleanup(func() { db.Close() })
+		if initialize {
+			err = store.Initialize(ctx, db)
+		} else {
+			err = store.Check(ctx, db)
+		}
 		if err != nil {
-			t.Fatalf("reference result: %v", err)
+			t.Fatal(err)
 		}
-		return obj(decoded)
+		return db, New(db, Options{})
 	}
-	seed := run("seed")
-	db, err := store.Open(ctx, "sqlite:///"+filepath.Join(root, "exchange.db"))
+	p := domain.Principal{ID: domain.PrincipalID("https://issuer.example", "owner"), Subject: "owner", BootstrapAdmin: true}
+	db, s := open(true)
+	space, err := s.CreateSpace(ctx, p, Object{"name": "Restart continuation", "profile": "generic.v1"}, "restart-space")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	if err = store.Check(ctx, db); err != nil {
+	sid := str(space["id"])
+	revision := coordType(t, s, p, sid, "asset")
+	record := coordPublished(t, s, p, sid, "asset", revision, Object{"stage": "seed"})
+	if _, err = s.PutReference(ctx, p, sid, "main", Object{"record_id": record["id"]}, "*", "initial"); err != nil {
 		t.Fatal(err)
 	}
-	s := New(db, Options{})
-	p := domain.Principal{ID: str(seed["principal_id"]), Subject: "owner", BootstrapAdmin: true}
-	sid := str(seed["space_id"])
-	space, err := s.CreateSpace(ctx, p, Object{"name": "Cross language", "profile": "generic.v1"}, "cross-space")
-	if err != nil || space["id"] != sid || num(space["record_count"]) != 0 {
-		t.Fatalf("Python operation replay: %v %v", space, err)
+	first, err := s.Acquire(ctx, p, sid, Object{"reference": "main", "expected_token": "1", "lease_seconds": int64(300)}, "first")
+	if err != nil {
+		t.Fatal(err)
 	}
-	first := obj(seed["first"])
+	db.Close()
+
+	// A distinct service and connection pool must honor the first process's
+	// durable operation receipts and coordination authority after restart.
+	db, s = open(false)
+	replayedSpace, err := s.CreateSpace(ctx, p, Object{"name": "Restart continuation", "profile": "generic.v1"}, "restart-space")
+	if err != nil || replayedSpace["id"] != sid || num(replayedSpace["record_count"]) != 0 {
+		t.Fatalf("space operation replay: %v %v", replayedSpace, err)
+	}
 	replayed, err := s.Acquire(ctx, p, sid, Object{"reference": "main", "expected_token": "1", "lease_seconds": int64(300)}, "first")
-	if err != nil || replayed["id"] != first["id"] {
-		t.Fatalf("Python acquisition replay: %v %v", replayed, err)
+	if err != nil || replayed["id"] != first["id"] || replayed["fence"] != first["fence"] {
+		t.Fatalf("retained acquisition replay: %v %v", replayed, err)
 	}
-	done, err := s.Complete(ctx, p, sid, str(first["id"]), Object{"fence": first["fence"], "result_record_id": seed["record_id"]}, "first-complete")
+	done, err := s.Complete(ctx, p, sid, str(first["id"]), Object{"fence": first["fence"], "result_record_id": record["id"]}, "first-complete")
 	if err != nil || done["state"] != "completed" {
-		t.Fatalf("complete Python acquisition: %v %v", done, err)
+		t.Fatalf("complete retained acquisition: %v %v", done, err)
 	}
 	second, err := s.Acquire(ctx, p, sid, Object{"reference": "main", "expected_token": "2", "lease_seconds": int64(300)}, "second")
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := json.Marshal(second)
-	if err != nil {
-		t.Fatal(err)
+	db.Close()
+
+	db, s = open(false)
+	replayed, err = s.Acquire(ctx, p, sid, Object{"reference": "main", "expected_token": "2", "lease_seconds": int64(300)}, "second")
+	if err != nil || replayed["id"] != second["id"] || replayed["fence"] != second["fence"] {
+		t.Fatalf("second acquisition replay: %v %v", replayed, err)
 	}
-	if err = os.WriteFile(filepath.Join(root, "go-second.json"), encoded, 0600); err != nil {
-		t.Fatal(err)
-	}
-	ref := run("continue")
-	if ref["token"] != "3" || ref["record_id"] != seed["record_id"] {
-		t.Fatalf("Python completion failed: %v", ref)
-	}
-	nativeRef, err := s.GetReference(ctx, p, sid, "main")
-	if err != nil || nativeRef["token"] != "3" {
-		t.Fatalf("read Python continuation: %v %v", nativeRef, err)
-	}
-	done, err = s.Complete(ctx, p, sid, str(second["id"]), Object{"fence": second["fence"], "result_record_id": seed["record_id"]}, "new-key-after-python")
+	done, err = s.Complete(ctx, p, sid, str(second["id"]), Object{"fence": second["fence"], "result_record_id": record["id"]}, "second-complete")
 	if err != nil || done["state"] != "completed" {
-		t.Fatalf("replay Python completion: %v %v", done, err)
+		t.Fatalf("second completion: %v %v", done, err)
 	}
-	operations, err := db.One(ctx, "SELECT COUNT(*) AS count FROM v2_operations WHERE scope='acquisition.create'")
-	if err != nil || num(operations["count"]) != 2 {
-		t.Fatalf("duplicate acquisition effects: %v %v", operations, err)
+	done, err = s.Complete(ctx, p, sid, str(first["id"]), Object{"fence": first["fence"], "result_record_id": record["id"]}, "new-key-after-restart")
+	if err != nil || done["state"] != "completed" {
+		t.Fatalf("first completion replay: %v %v", done, err)
 	}
-	operations, err = db.One(ctx, "SELECT COUNT(*) AS count FROM v2_operations WHERE scope LIKE 'acquisition.complete:%'")
-	if err != nil || num(operations["count"]) != 2 {
-		t.Fatalf("duplicate completion effects: %v %v", operations, err)
+	_, err = s.Renew(ctx, p, sid, str(first["id"]), num(first["fence"]))
+	coordError(t, err, "acquisition_not_active")
+	ref, err := s.GetReference(ctx, p, sid, "main")
+	if err != nil || ref["token"] != "3" || ref["record_id"] != record["id"] {
+		t.Fatalf("retained reference: %v %v", ref, err)
+	}
+	for _, scope := range []string{"scope='acquisition.create'", "scope LIKE 'acquisition.complete:%'"} {
+		operations, err := db.One(ctx, "SELECT COUNT(*) AS count FROM v2_operations WHERE "+scope)
+		if err != nil || num(operations["count"]) != 2 {
+			t.Fatalf("duplicate durable effects: %v %v", operations, err)
+		}
 	}
 }

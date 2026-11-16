@@ -29,6 +29,7 @@ type Config struct {
 	OIDC                OIDCConfig
 	SessionSecret       string
 	PlatformOperatorIDs []string
+	SignupProviders     []SignupProvider
 }
 type OIDCConfig struct {
 	Issuer, ClientID, ClientSecret, RedirectURI, Audience string
@@ -170,6 +171,9 @@ func errorStatus(err error) (int, string) {
 func equal(a, b string) bool { return hmac.Equal([]byte(a), []byte(b)) }
 func digest(v string) string { d := sha256.Sum256([]byte(v)); return hex.EncodeToString(d[:]) }
 func validateConfig(c Config) error {
+	if e := ValidateSignupProviders(c.SignupProviders); e != nil {
+		return e
+	}
 	if e := c.OIDC.Validate(); e != nil {
 		return e
 	}

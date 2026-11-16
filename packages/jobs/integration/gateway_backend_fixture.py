@@ -1,17 +1,18 @@
 """Owned real PostgreSQL/S3/HTTPS fixture for the Go managed transfer test.
 
 The parent passes private resource JSON files explicitly. This helper creates
-only a unique database schema, versioned bucket, private keys and child HTTPS
-server, and removes its owned resources on normal or signalled shutdown.
-No manager package is imported. Ready/control files are private, not stdout.
+only a unique database schema, versioned bucket, private keys and native Go
+HTTPS server/worker processes, and removes its owned resources on shutdown.
+Python supplies orchestration and independent SQL observations only; no Python
+server or manager package is imported. Ready/control files are private, not stdout.
 """
 from __future__ import annotations
 
 import argparse
 import base64
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
+import hmac
 import ipaddress
 import json
 import os
@@ -25,7 +26,8 @@ import subprocess
 import sys
 import time
 import uuid
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit, parse_qsl, urlencode
+from types import SimpleNamespace
 
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "packages" / "exchange" / "src"))
@@ -38,18 +40,20 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 import httpx
 import jwt
-from sqlalchemy import create_engine, select, text
-from sqlalchemy.engine import make_url
+import psycopg
+from psycopg.rows import dict_row
 
-from hf2l_exchange.application import Service
-from hf2l_exchange.auth import Authenticator, backend_assertion_headers
-from hf2l_exchange.config import AuthSettings, DatabaseSettings, Settings, StorageSettings
 from hf2l_exchange.domain import principal_id
-from hf2l_exchange.migrations import initialize
-from hf2l_exchange.models import Blob, Space, TransferAttempt
-from hf2l_exchange.storage import S3BlobStore
-from hf2l_exchange.transfers import TransferService
-from hf2l_exchange.worker import tick
+
+
+def backend_assertion_headers(secret, method, target, authorization, thumbprint):
+    """Independent fixture encoding of the native backend assertion contract."""
+    timestamp = str(int(time.time()))
+    message = json.dumps([method.upper(), target, authorization, thumbprint, timestamp],
+                         ensure_ascii=True, separators=(",", ":")).encode()
+    signature = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+    return {"X-HF2L-Backend-Timestamp": timestamp, "X-HF2L-TLS-Thumbprint": thumbprint,
+            "X-HF2L-Backend-Signature": signature}
 
 
 def private_json(path, value):
@@ -79,8 +83,8 @@ def resource_json(path):
 def native_exchange_binary():
     """Resolve an explicit executable; never fall back after native mode is set."""
     value = os.environ.get("HF2L_EXCHANGE_GO_BINARY")
-    if value is None:
-        return None
+    if not value:
+        raise ValueError("Set HF2L_EXCHANGE_GO_BINARY to the native Exchange executable")
     path = Path(value)
     if not path.is_absolute():
         raise ValueError("Native Exchange binary must be absolute")
@@ -101,7 +105,6 @@ class Fixture:
         self.database_config = database_config
         self.storage_config = storage_config
         self.child = None
-        self.service = None
         self.admin = None
         self.s3 = None
         self.bucket_created = False
@@ -123,21 +126,10 @@ class Fixture:
         self.ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
     def server_command(self, mode, port, *, client_ca=False):
-        if self.native_binary:
-            command = [self.native_binary, mode, "--host", "127.0.0.1", "--port", str(port),
-                       "--tls-cert", str(self.server_cert), "--tls-key", str(self.server_key)]
-            if client_ca:
-                command.extend(["--client-ca", str(self.ca_file)])
-            return command
-        factories = {"serve": "hf2l_exchange.api:create_app",
-                     "serve-managed": "hf2l_exchange.api:create_managed_app",
-                     "serve-gateway-backend": "hf2l_exchange.gateway_api:create_gateway_backend_app"}
-        command = [sys.executable, "-m", "uvicorn", factories[mode], "--factory",
-                   "--host", "127.0.0.1", "--port", str(port),
-                   "--ssl-certfile", str(self.server_cert), "--ssl-keyfile", str(self.server_key),
-                   "--no-access-log", "--log-level", "warning"]
+        command = [self.native_binary, mode, "--host", "127.0.0.1", "--port", str(port),
+                   "--tls-cert", str(self.server_cert), "--tls-key", str(self.server_key)]
         if client_ca:
-            command.extend(["--ssl-ca-certs", str(self.ca_file), "--ssl-cert-reqs", "2"])
+            command.extend(["--client-ca", str(self.ca_file)])
         return command
 
     def native_children_alive(self):
@@ -181,8 +173,8 @@ class Fixture:
                                     stdin=subprocess.DEVNULL, stdout=log, stderr=log))
         self.native_ready = True
 
-    def native_request(self, method, suffix, body=None, *, key=None, managed=False):
-        path = "/v2/spaces/" + quote(self.space_id, safe="") + suffix
+    def native_request(self, method, suffix, body=None, *, key=None, managed=False, scoped=True):
+        path = "/v2/spaces" + (("/" + quote(self.space_id, safe="")) if scoped else "") + suffix
         authorization = self.owner_authorization
         context = ssl.create_default_context(cafile=str(self.ca_file))
         headers = {}
@@ -211,12 +203,10 @@ class Fixture:
             return response.json()
 
     def runtime_receipt(self):
-        if not self.native_binary:
-            return {"implementation": "python", "reference_helpers": "fixture setup and oracle"}
         return {"implementation": "go", "binary_sha256": hashlib.sha256(
             Path(self.native_binary).read_bytes()).hexdigest(),
-            "reference_helpers": "DDL/S3/retained seed setup and read-only oracle",
-            "native_commands": ["serve", "serve-managed", "serve-gateway-backend", "worker"]}
+            "fixture_helpers": "independent psycopg schema ownership and read-only SQL observations",
+            "native_commands": ["init-db", "serve", "serve-managed", "serve-gateway-backend", "worker"]}
 
     @staticmethod
     def public(key):
@@ -289,16 +279,17 @@ class Fixture:
         self.backend_cert, self.backend_key, self.backend_thumbprint = self.cert("backend-client")
         self.client_cert, self.client_key, self.client_thumbprint = self.cert("workload-client")
         self.foreign_cert, self.foreign_key, _ = self.cert("other-client")
-        url = make_url(self.database_config["databases"]["exchange"])
-        if url.get_backend_name() not in {"postgres", "postgresql"}:
+        url = urlsplit(self.database_config["databases"]["exchange"].replace(
+            "postgresql+psycopg://", "postgresql://", 1))
+        if url.scheme not in {"postgres", "postgresql"}:
             raise ValueError("Actual PostgreSQL required")
-        url = url.set(drivername="postgresql+psycopg")
-        self.admin = create_engine(url)
-        with self.admin.begin() as connection:
-            connection.execute(text('CREATE SCHEMA "' + self.schema + '"'))
+        self.admin = psycopg.connect(urlunsplit(url), autocommit=True)
+        self.admin.execute('CREATE SCHEMA "' + self.schema + '"')
         self.schema_created = True
-        database_url = url.update_query_dict({"options": "-csearch_path=" + self.schema}).render_as_string(
-            hide_password=False)
+        parameters = dict(parse_qsl(url.query))
+        parameters["options"] = "-csearch_path=" + self.schema
+        database_url = urlunsplit(url._replace(query=urlencode(parameters)))
+        self.database_url = database_url
         cfg = self.storage_config
         self.s3 = boto3.client("s3", endpoint_url=cfg["endpoint"], region_name=cfg.get("region", "us-east-1"),
             aws_access_key_id=cfg["access_key"], aws_secret_access_key=cfg["secret_key"],
@@ -307,48 +298,17 @@ class Fixture:
         self.s3.create_bucket(Bucket=self.bucket)
         self.bucket_created = True
         self.s3.put_bucket_versioning(Bucket=self.bucket, VersioningConfiguration={"Status": "Enabled"})
-        auth = AuthSettings(issuer=self.issuer, audience="exchange", public_key=self.public(self.owner_key),
-            admin_subject="provisioner", workload_issuer=self.workload_issuer,
-            workload_audience="exchange-managed", workload_public_key=self.public(self.workload_key),
-            trusted_backend_secret=self.secret,
-            provisioning_principal_ids=(principal_id(self.issuer, "provisioner"),))
-        storage = StorageSettings(endpoint=cfg["endpoint"], bucket=self.bucket,
+        storage = SimpleNamespace(endpoint=cfg["endpoint"], bucket=self.bucket,
             access_key=cfg["access_key"], secret_key=cfg["secret_key"],
             region=cfg.get("region", "us-east-1"), prefix="gateway-integration/",
             part_size=5 * 1024 * 1024, allow_local_http=cfg["endpoint"].startswith("http://"))
-        self.settings = Settings(database=DatabaseSettings(url=database_url), auth=auth, storage=storage)
-        self.service = Service(self.settings)
-        initialize(self.service.engine)
-        self.storage = S3BlobStore(storage, client=self.s3)
-        self.storage.check()
-        self.transfers = TransferService(self.service, self.storage)
+        self.settings = SimpleNamespace(database=SimpleNamespace(url=database_url), storage=storage)
         self.owner_authorization = "Bearer " + self.human_token()
-        self.owner = Authenticator(auth).authenticate(self.owner_authorization)
-        self.space_id = self.service.create_space(self.owner, {"name": "Go gateway integration",
-                             "quota_bytes": 64 * 1024**2, "principal_quota_bytes": 64 * 1024**2},
-                             "fixture-space")["id"]
-        component = principal_id(self.workload_issuer, "component-a")
-        self.service.put_member(self.owner, self.space_id, component, {"subject": "component-a",
-                               "roles": ["reader", "contributor", "publisher"], "bindings": {}})
-        self.revision = self.service.register_type(self.owner, self.space_id, "document",
-                                  {"schema": {"type": "object"}}, "fixture-type")
-        self.service.enable_managed_space(self.owner, self.space_id,
-                                         {"job_id": "job-integration"}, "fixture-managed")
-        self.grant = self.service.create_workload_grant(self.owner, self.space_id,
-            {"subject": "component-a", "job_id": "job-integration", "attempt_id": "attempt-integration",
-             "component_id": "component-a", "epoch": 1, "expires_at": int(time.time()) + 3600,
-             "certificate_thumbprint": self.client_thumbprint,
-             "roles": ["reader", "contributor", "publisher"], "bindings": {}}, "fixture-grant")
-        self.token, self.expires = self.workload_token()
-        self.workload = Authenticator(replace(auth, workload_audience=self.gateway_audience)).authenticate(
-            "Bearer " + self.token, managed=True, certificate_thumbprint=self.client_thumbprint)
         content = bytes(range(256)) * ((5 * 1024 * 1024 + 12345) // 256 + 1)
         content = content[:5 * 1024 * 1024 + 12345]
         self.data = self.root / "content.bin"
         private_file(self.data, content)
         self.digest = hashlib.sha256(content).hexdigest()
-        self.record = self.create_upload("fixture-model", len(content), self.digest)
-        self.attachment = self.record["attachments"][0]["id"]
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
@@ -372,6 +332,29 @@ class Fixture:
             "EXCHANGE_S3_REGION": storage.region, "EXCHANGE_S3_PREFIX": storage.prefix,
             "EXCHANGE_PART_SIZE": str(storage.part_size),
             "EXCHANGE_ALLOW_LOCAL_HTTP": "true" if storage.allow_local_http else "false"})
+        with open(self.root / "initialize.log", "xb") as initialization_log:
+            os.chmod(self.root / "initialize.log", 0o600)
+            subprocess.run([self.native_binary, "init-db"], env=environment, check=True,
+                           stdin=subprocess.DEVNULL, stdout=initialization_log,
+                           stderr=initialization_log, timeout=30)
+        self.start_native_services(environment)
+        self.space_id = self.native_request("POST", "", {"name": "Go gateway integration",
+            "quota_bytes": 64 * 1024**2, "principal_quota_bytes": 64 * 1024**2},
+            key="fixture-space", scoped=False)["id"]
+        component = principal_id(self.workload_issuer, "component-a")
+        self.native_request("PUT", "/members/" + component, {"subject": "component-a",
+            "roles": ["reader", "contributor", "publisher"], "bindings": {}})
+        self.revision = self.native_request("POST", "/types/document/revisions",
+            {"schema": {"type": "object"}}, key="fixture-type")
+        self.native_request("PUT", "/managed", {"job_id": "job-integration"}, key="fixture-managed")
+        self.grant = self.native_request("POST", "/workload-grants",
+            {"subject": "component-a", "job_id": "job-integration", "attempt_id": "attempt-integration",
+             "component_id": "component-a", "epoch": 1, "expires_at": int(time.time()) + 3600,
+             "certificate_thumbprint": self.client_thumbprint,
+             "roles": ["reader", "contributor", "publisher"], "bindings": {}}, key="fixture-grant")
+        self.token, self.expires = self.workload_token()
+        self.record = self.create_upload("fixture-model", len(content), self.digest)
+        self.attachment = self.record["attachments"][0]["id"]
         self.backend_log = os.fdopen(os.open(self.root / "backend.log",
                                  os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb")
         command = self.server_command("serve-gateway-backend", port, client_ca=True)
@@ -397,8 +380,6 @@ class Fixture:
                 if time.monotonic() > deadline:
                     raise TimeoutError("Private HTTPS backend readiness failed")
                 time.sleep(0.05)
-        if self.native_binary:
-            self.start_native_services(environment)
         private_json(self.root / "ready.json", {"exchange_runtime": self.runtime_receipt(),
             "backend_endpoint": self.endpoint,
             "ca_file": str(self.ca_file), "server_certificate": str(self.server_cert),
@@ -414,63 +395,48 @@ class Fixture:
             "data_file": str(self.data), "size": len(content), "sha256": self.digest,
             "part_size": storage.part_size, "s3_endpoint": storage.endpoint,
             "s3_bucket": storage.bucket, "s3_prefix": storage.prefix.strip("/"), "s3_region": storage.region,
-            "launch": (["go-exchange", "serve-gateway-backend", "--tls-cert", "<owned-server-certificate>",
-                       "--tls-key", "<owned-server-key>", "--client-ca", "<owned-client-ca>"]
-                       if self.native_binary else
-                       ["python", "-m", "uvicorn", "hf2l_exchange.gateway_api:create_gateway_backend_app",
-                       "--factory", "--ssl-certfile", "<owned-server-certificate>",
-                       "--ssl-keyfile", "<owned-server-key>", "--ssl-ca-certs", "<owned-client-ca>",
-                       "--ssl-cert-reqs", "2"])})
+            "launch": ["go-exchange", "serve-gateway-backend", "--tls-cert", "<owned-server-certificate>",
+                       "--tls-key", "<owned-server-key>", "--client-ca", "<owned-client-ca>"]})
+
 
     def create_upload(self, key, size, digest):
-        if self.native_ready:
-            record = self.native_request("POST", "/records", {"kind": "document",
-                "schema_revision_id": self.revision["id"], "metadata": {},
-                "attachments": [{"path": "model.safetensors", "size": size, "sha256": digest}]},
-                key=key, managed=True)
-            self.native_request("POST", "/records/" + quote(record["id"], safe="") +
-                "/attachments/" + quote(record["attachments"][0]["id"], safe="") + "/upload",
-                managed=True)
-            return record
-        record = self.service.create_record(self.workload, self.space_id, {
-            "kind": "document", "schema_revision_id": self.revision["id"], "metadata": {},
-            "attachments": [{"path": "model.safetensors", "size": size, "sha256": digest}]}, key)
-        self.transfers.initiate(self.space_id, record["id"], record["attachments"][0]["id"], self.workload)
+        record = self.native_request("POST", "/records", {"kind": "document",
+            "schema_revision_id": self.revision["id"], "metadata": {},
+            "attachments": [{"path": "model.safetensors", "size": size, "sha256": digest}]},
+            key=key, managed=True)
+        self.native_request("POST", "/records/" + quote(record["id"], safe="") +
+            "/attachments/" + quote(record["attachments"][0]["id"], safe="") + "/upload",
+            managed=True)
         return record
 
     def inspect(self):
-        with self.service.sessions() as session:
-            attempts = session.scalars(select(TransferAttempt)).all()
-            space = session.get(Space, self.space_id)
-            return {"mutations": sum(len(item.mutation_tokens or []) for item in attempts),
-                    "allocated": space.allocated, "reclaiming": space.reclaiming,
+        with psycopg.connect(self.database_url, row_factory=dict_row) as connection:
+            attempts = connection.execute("SELECT mutation_tokens FROM v2_transfer_attempts").fetchall()
+            space = connection.execute("SELECT allocated,reclaiming FROM v2_spaces WHERE id=%s",
+                                       (self.space_id,)).fetchone()
+            if space is None:
+                raise RuntimeError("Fixture space disappeared")
+            return {"mutations": sum(len(item["mutation_tokens"]) for item in attempts),
+                    "allocated": space["allocated"], "reclaiming": space["reclaiming"],
                     "attempts": len(attempts)}
 
     def action(self, name):
         if name == "publish":
-            if self.native_ready:
-                self.native_request("POST", "/records/" + quote(self.record["id"], safe="") +
-                    "/attachments/" + quote(self.attachment, safe="") + "/complete", managed=True)
-            else:
-                self.transfers.complete(self.space_id, self.record["id"], self.attachment, self.workload)
-            for _ in range(600 if self.native_ready else 30):
-                if not self.native_ready:
-                    tick(self.transfers)
-                elif not self.native_children_alive():
+            self.native_request("POST", "/records/" + quote(self.record["id"], safe="") +
+                "/attachments/" + quote(self.attachment, safe="") + "/complete", managed=True)
+            for _ in range(600):
+                if not self.native_children_alive():
                     raise RuntimeError("Native Exchange worker stopped")
-                with self.service.sessions() as session:
-                    blob = session.get(Blob, self.attachment)
-                    if blob.state == "verified":
+                with psycopg.connect(self.database_url, row_factory=dict_row) as connection:
+                    blob = connection.execute("SELECT state FROM v2_blobs WHERE id=%s",
+                                              (self.attachment,)).fetchone()
+                    if blob is not None and blob["state"] == "verified":
                         break
                 time.sleep(0.05)
             else:
                 raise TimeoutError("Object verification failed")
-            if self.native_ready:
-                published = self.native_request("POST", "/records/" +
-                    quote(self.record["id"], safe="") + "/publish", key="fixture-publish", managed=True)
-            else:
-                published = self.service.publish_record(self.workload, self.space_id,
-                                                        self.record["id"], "fixture-publish")
+            published = self.native_request("POST", "/records/" +
+                quote(self.record["id"], safe="") + "/publish", key="fixture-publish", managed=True)
             return {"record_id": published["id"], **self.inspect()}
         if name == "receipt_upload":
             self.receipt_record = self.create_upload("fixture-receipt", 3, hashlib.sha256(b"abc").hexdigest())
@@ -478,16 +444,10 @@ class Fixture:
             return {"token": token, "expires_at": expiry, "record_id": self.receipt_record["id"],
                     "attachment_id": self.receipt_record["attachments"][0]["id"]}
         if name == "revoke":
-            if self.native_ready:
-                if self.receipt_record:
-                    self.native_request("DELETE", "/records/" + quote(self.receipt_record["id"], safe=""))
-                self.native_request("POST", "/workload-grants/revoke",
-                    {"attempt_id": "attempt-integration"}, key="fixture-revoke")
-            else:
-                if self.receipt_record:
-                    self.service.withdraw_record(self.owner, self.space_id, self.receipt_record["id"])
-                self.service.revoke_workload_grants(self.owner, self.space_id,
-                                   {"attempt_id": "attempt-integration"}, "fixture-revoke")
+            if self.receipt_record:
+                self.native_request("DELETE", "/records/" + quote(self.receipt_record["id"], safe=""))
+            self.native_request("POST", "/workload-grants/revoke",
+                {"attempt_id": "attempt-integration"}, key="fixture-revoke")
             return self.inspect()
         if name == "inspect":
             return self.inspect()
@@ -554,17 +514,14 @@ class Fixture:
                 result["bucket_removed"] = True
             except Exception as exc:
                 result["errors"].append(type(exc).__name__)
-        if self.service:
-            self.service.engine.dispose()
         if self.schema_created:
             try:
-                with self.admin.begin() as connection:
-                    connection.execute(text('DROP SCHEMA "' + self.schema + '" CASCADE'))
+                self.admin.execute('DROP SCHEMA "' + self.schema + '" CASCADE')
                 result["schema_removed"] = True
             except Exception as exc:
                 result["errors"].append(type(exc).__name__)
         if self.admin:
-            self.admin.dispose()
+            self.admin.close()
         if self.s3:
             self.s3.close()
         private_json(self.root / "cleanup.json", result)

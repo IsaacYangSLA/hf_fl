@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/IsaacYangSLA/hf_fl/packages/jobs/internal/auth"
 	"github.com/IsaacYangSLA/hf_fl/packages/jobs/internal/exchange"
 	"io"
 	"math"
@@ -51,6 +52,7 @@ type Settings struct {
 	OIDC                           OIDCSettings
 	Workload                       *WorkloadSettings
 	PlatformOperatorIDs            []string
+	SignupProviders                []auth.SignupProvider
 	MaxBodyBytes                   int64
 	DocsEnabled                    bool
 	Extra                          map[string]any
@@ -142,6 +144,9 @@ func (o OIDCSettings) Validate() error {
 	return nil
 }
 func (s Settings) Validate(component string) error {
+	if err := auth.ValidateSignupProviders(s.SignupProviders); err != nil {
+		return Invalid()
+	}
 	if !strings.HasPrefix(s.DatabaseURL, "postgresql:") && !strings.HasPrefix(s.DatabaseURL, "postgresql+psycopg:") && !strings.HasPrefix(s.DatabaseURL, "sqlite:") {
 		return Invalid()
 	}
@@ -266,6 +271,13 @@ func FromEnv(lookup Lookup, path, component string) (Settings, error) {
 		CursorSecret: secret("CURSOR_SECRET_FILE"), SessionSecret: secret("SESSION_SECRET_FILE"),
 		OIDC:                OIDCSettings{Issuer: get("OIDC_ISSUER", ""), ClientID: get("OIDC_CLIENT_ID", ""), ClientSecret: secret("OIDC_CLIENT_SECRET_FILE"), RedirectURI: get("OIDC_REDIRECT_URI", ""), Audience: get("AUDIENCE", "hf2l-jobs"), IntrospectionURL: get("OIDC_INTROSPECTION_URL", ""), JWKSURL: get("OIDC_JWKS_URL", ""), PublicKey: public("OIDC_PUBLIC_KEY_FILE"), EndpointOrigins: split(get("OIDC_ENDPOINT_ORIGINS", "")), TimeoutSeconds: timeout, JWKSCacheSeconds: int(integer("OIDC_JWKS_CACHE_SECONDS", "300")), AllowLocalHTTP: allow},
 		PlatformOperatorIDs: split(get("PLATFORM_OPERATOR_IDS", "")), MaxBodyBytes: integer("MAX_BODY_BYTES", "1048576"), DocsEnabled: boolean("DOCS_ENABLED", false), Extra: map[string]any{}, GracefulShutdownTimeoutSeconds: int(integer("GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS", "15")),
+	}
+	if raw := get("OIDC_SIGNUP_PROVIDERS_JSON", ""); raw != "" {
+		var err error
+		s.SignupProviders, err = auth.ParseSignupProviders(raw)
+		if err != nil {
+			return Settings{}, Invalid()
+		}
 	}
 	if s.CursorSecret == "" {
 		s.CursorSecret = get("CURSOR_SECRET", "")

@@ -6,14 +6,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/IsaacYangSLA/hf_fl/packages/exchange/internal/domain"
 	"github.com/IsaacYangSLA/hf_fl/packages/exchange/internal/storage"
 )
 
-// These traces were generated independently from the retained Python service.
+// These traces were generated independently from the former Python service.
 // The serial tick driver isolates engine semantics; worker tests separately
 // verify concurrency pools and retention.
 func referenceTick(t *testing.T, f *fixture) Object {
@@ -84,7 +83,7 @@ func traceSnapshot(t *testing.T, f *fixture, step string, extra Object) Object {
 	}
 	return result
 }
-func TestPythonReferenceTransferTraces(t *testing.T) {
+func TestFrozenTransferTraces(t *testing.T) {
 	data, e := os.ReadFile(filepath.Join("testdata", "python_traces.json"))
 	if e != nil {
 		t.Fatal(e)
@@ -94,16 +93,13 @@ func TestPythonReferenceTransferTraces(t *testing.T) {
 		t.Fatal(e)
 	}
 	gold := obj(value)
-	for path, want := range obj(gold["reference_inputs_sha256"]) {
-		source, e := os.ReadFile(filepath.Join("..", "..", strings.TrimPrefix(path, "packages/exchange/")))
-		if e != nil {
-			t.Fatal(e)
-		}
-		sum := sha256.Sum256(source)
-		if hex.EncodeToString(sum[:]) != str(want) {
-			t.Fatalf("reference input changed: %s; regenerate independent traces", path)
-		}
+	// Source provenance remains in the immutable fixture and Git history. The
+	// removed server implementation is not a live test dependency.
+	sum := sha256.Sum256(data)
+	if hex.EncodeToString(sum[:]) != "b3f15ad52238d472dd4d5f8e28b6b9840cc5334be6f7b1ab792b37fa5cadd2c7" {
+		t.Fatal("frozen transfer traces changed; review independent expectations")
 	}
+
 	expected := obj(gold["snapshots"])
 	for _, scenario := range []string{"normal", "uncertain_initiation", "invalid_parts", "verification_missing", "uncertain_completion"} {
 		t.Run(scenario, func(t *testing.T) {

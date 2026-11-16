@@ -81,13 +81,14 @@ func liveGatewayJSON(path string, value any) error {
 func startLiveGatewayFixture(t *testing.T) *liveGatewayFixture {
 	t.Helper()
 	python := os.Getenv("HF2L_GO_EXCHANGE_TEST_PYTHON")
+	binary := os.Getenv("HF2L_EXCHANGE_GO_BINARY")
 	database := os.Getenv("HF2L_GO_EXCHANGE_TEST_DATABASE_CONFIG")
 	storage := os.Getenv("HF2L_GO_EXCHANGE_TEST_STORAGE_CONFIG")
-	if python == "" || database == "" || storage == "" {
+	if python == "" || binary == "" || database == "" || storage == "" {
 		if os.Getenv("HF2L_GO_REQUIRE_EXCHANGE_INTEGRATION") == "1" {
-			t.Fatal("real Exchange gate requires explicit Python, database and storage configuration")
+			t.Fatal("real Exchange gate requires a native Exchange binary, Python fixture interpreter, database and storage configuration")
 		}
-		t.Skip("set HF2L_GO_EXCHANGE_TEST_PYTHON, HF2L_GO_EXCHANGE_TEST_DATABASE_CONFIG and HF2L_GO_EXCHANGE_TEST_STORAGE_CONFIG for the real PostgreSQL/S3 gate")
+		t.Skip("set HF2L_EXCHANGE_GO_BINARY, HF2L_GO_EXCHANGE_TEST_PYTHON, HF2L_GO_EXCHANGE_TEST_DATABASE_CONFIG and HF2L_GO_EXCHANGE_TEST_STORAGE_CONFIG for the native PostgreSQL/S3 gate")
 	}
 	script, err := filepath.Abs(filepath.Join("..", "..", "integration", "gateway_backend_fixture.py"))
 	if err != nil {

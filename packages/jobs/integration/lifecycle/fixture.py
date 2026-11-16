@@ -13,8 +13,6 @@ import hashlib
 import os
 from pathlib import Path
 import signal
-import socket
-import ssl
 import subprocess
 import sys
 import time
@@ -53,18 +51,8 @@ def train_model(base_dir, output_dir, options):
 """
 
 
-def free_port():
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
 
 class Fixture(_base.Fixture):
-    def __init__(self, *args):
-        super().__init__(*args)
-        self.extra_children = []
-        self.extra_logs = []
-
     def start(self):
         super().start()
         private = self.root
@@ -99,64 +87,8 @@ class Fixture(_base.Fixture):
             "commit","--quiet","-m","Freeze synthetic two-client lifecycle trainer")
         commit = git("rev-parse","HEAD")
 
-        environment = os.environ.copy()
-        for name in tuple(environment):
-            if name.startswith("EXCHANGE_") or name.lower() in {"http_proxy","https_proxy","all_proxy","no_proxy"}:
-                environment.pop(name)
         st = self.settings.storage
-        environment.update({
-            "PYTHONPATH":str(_base.REPO / "packages/exchange/src"),
-            "PYTHONDONTWRITEBYTECODE":"1","AWS_EC2_METADATA_DISABLED":"true",
-            "EXCHANGE_DATABASE_URL":self.settings.database.url,
-            "EXCHANGE_ISSUER":self.issuer,"EXCHANGE_AUDIENCE":"exchange","EXCHANGE_ADMIN_SUBJECT":"provisioner",
-            "EXCHANGE_JWT_PUBLIC_KEY":self.public(self.owner_key),
-            "EXCHANGE_WORKLOAD_ISSUER":self.workload_issuer,
-            "EXCHANGE_WORKLOAD_AUDIENCE":"exchange-managed",
-            "EXCHANGE_WORKLOAD_PUBLIC_KEY":self.public(self.workload_key),
-            "EXCHANGE_TRUSTED_BACKEND_SECRET":self.secret,
-            "EXCHANGE_PROVISIONING_PRINCIPAL_IDS":_base.principal_id(self.issuer,"provisioner"),
-            "EXCHANGE_DOWNLOAD_BROKER_PRINCIPAL_IDS":_base.principal_id(self.issuer,"provisioner"),
-            "EXCHANGE_S3_ENDPOINT":st.endpoint,"EXCHANGE_S3_BUCKET":st.bucket,
-            "EXCHANGE_S3_ACCESS_KEY":st.access_key,"EXCHANGE_S3_SECRET_KEY":st.secret_key,
-            "EXCHANGE_S3_REGION":st.region,"EXCHANGE_S3_PREFIX":st.prefix,
-            "EXCHANGE_PART_SIZE":str(st.part_size),
-            "EXCHANGE_ALLOW_LOCAL_HTTP":"true" if st.allow_local_http else "false",
-        })
-        endpoints = {"ordinary": self.public_endpoint, "managed": self.managed_endpoint} if self.native_binary else {}
-        modes = () if self.native_binary else (
-            ("ordinary","hf2l_exchange.api:create_app"),
-            ("managed","hf2l_exchange.api:create_managed_app"),
-        )
-        for name, factory in modes:
-            port = free_port()
-            log = os.fdopen(os.open(private/(name+".log"),os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),"wb")
-            self.extra_logs.append(log)
-            command = [sys.executable,"-m","uvicorn",factory,"--factory",
-                "--host","127.0.0.1","--port",str(port),"--ssl-certfile",str(self.server_cert),
-                "--ssl-keyfile",str(self.server_key),"--no-access-log","--log-level","warning"]
-            if name=="managed":
-                command.extend(["--ssl-ca-certs",str(self.ca_file),"--ssl-cert-reqs","2"])
-            child = subprocess.Popen(command,env=environment,stdin=subprocess.DEVNULL,stdout=log,stderr=log)
-            self.extra_children.append(child)
-            endpoint = "https://127.0.0.1:"+str(port)
-            context = ssl.create_default_context(cafile=str(self.ca_file))
-            if name=="managed":
-                context.load_cert_chain(str(self.backend_cert),str(self.backend_key))
-            with _base.httpx.Client(verify=context,trust_env=False,timeout=2) as client:
-                deadline=time.monotonic()+30
-                while True:
-                    if child.poll() is not None:
-                        raise RuntimeError("Independent Exchange API stopped: "+name)
-                    try:
-                        response=client.get(endpoint+"/ready")
-                        if response.status_code==200:
-                            break
-                    except _base.httpx.HTTPError:
-                        pass
-                    if time.monotonic()>deadline:
-                        raise TimeoutError("Independent Exchange readiness: "+name)
-                    time.sleep(.05)
-            endpoints[name]=endpoint
+        endpoints = {"ordinary": self.public_endpoint, "managed": self.managed_endpoint}
         ready = {
             "ordinary_endpoint":endpoints["ordinary"],
             "managed_backend_endpoint":endpoints["managed"],
@@ -183,14 +115,9 @@ class Fixture(_base.Fixture):
         _base.private_json(private/"lifecycle-ready.json",ready)
 
     def run(self):
-        last_worker = 0.0
         while not self.stop:
-            if (self.child.poll() is not None or not self.native_children_alive()
-                    or any(c.poll() is not None for c in self.extra_children)):
+            if self.child.poll() is not None or not self.native_children_alive():
                 raise RuntimeError("Independent Exchange process stopped")
-            if not self.native_binary and time.monotonic()-last_worker>=.05:
-                _base.tick(self.transfers)
-                last_worker=time.monotonic()
             for path in sorted((self.root/"commands").glob("*.json")):
                 body=_base.resource_json(path);path.unlink()
                 try:
@@ -202,15 +129,6 @@ class Fixture(_base.Fixture):
                 _base.private_json(self.root/"replies"/path.name,response)
             time.sleep(.02)
 
-    def close(self):
-        for child in self.extra_children:
-            if child.poll() is None:
-                child.terminate()
-                try:child.wait(timeout=5)
-                except subprocess.TimeoutExpired:child.kill();child.wait(timeout=5)
-        for log in self.extra_logs:
-            log.close()
-        super().close()
 
 
 def main():

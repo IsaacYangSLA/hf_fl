@@ -1,8 +1,8 @@
-"""Check job-control boundaries and a clean installed manager wheel.
+"""Check Python execution-adapter boundaries and a clean runtime wheel.
 
-The manager never loads training code. Only the sandbox runtime entry point
-may import HF2L or model frameworks, and those imports must be function-local.
-Use installation modes in a fresh environment, independently of HF2L.
+The Go program owns all job management. Only the Python sandbox runtime module
+may load training code, using function-local imports. Installation checks use
+a fresh environment without training dependencies.
 """
 from __future__ import annotations
 
@@ -10,9 +10,7 @@ import argparse
 import ast
 import importlib
 import importlib.metadata
-import importlib.resources
 import importlib.util
-from html.parser import HTMLParser
 import pkgutil
 import re
 from pathlib import Path
@@ -117,15 +115,18 @@ def source_problems(relative: Path, source: str) -> list[str]:
     visitor = ImportVisitor()
     visitor.visit(ast.parse(source, filename=str(relative)))
     runtime = relative.as_posix() in SANDBOX_ENTRY_POINTS
+    launcher = relative.as_posix() == "__main__.py"
     domain = relative.as_posix() == "domain.py"
     problems = []
     for line, imported, eager in visitor.imports:
+        if imported.split(".", 1)[0] in {"fastapi", "uvicorn", "sqlalchemy", "psycopg", "jwt", "cryptography"}:
+            problems.append(f"{relative}:{line}: Python adapter imports removed server dependency {imported}")
         top = imported.split(".", 1)[0]
         if top in ML_MODULES and (not runtime or eager):
             problems.append(f"{relative}:{line}: prohibited {'eager ' if eager else ''}training import {imported}")
         if domain and (top in DOMAIN_FORBIDDEN or imported.startswith(f"{PACKAGE}.")):
             problems.append(f"{relative}:{line}: domain imports infrastructure {imported}")
-        if not runtime and eager and imported in {f"{PACKAGE}.runtime"}:
+        if not runtime and not launcher and eager and imported in {f"{PACKAGE}.runtime"}:
             problems.append(f"{relative}:{line}: control plane eagerly imports sandbox runtime")
     for line, call, eager in visitor.dynamic_calls:
         if not runtime or eager:
@@ -148,7 +149,10 @@ def check_source(root: Path) -> list[str]:
     files = sorted(source.rglob("*.py"))
     if not files:
         return [f"No job manager sources found at {source}"]
-    problems = [
+    allowed = {"__init__.py", "__main__.py", "runtime.py", "workflow.py", "build.py", "domain.py"}
+    problems = [f"Python jobs package contains a non-adapter module: {path.relative_to(source)}"
+                for path in files if path.name not in allowed]
+    problems += [
         problem for path in files
         for problem in source_problems(path.relative_to(source), path.read_text(encoding="utf-8"))
     ]
@@ -166,53 +170,25 @@ def check_metadata() -> list[str]:
         if match and match.group(0).lower().replace("_", "-") in ML_DISTRIBUTIONS:
             problems.append(f"Manager distribution declares a training dependency: {requirement}")
     entries = {entry.name: entry.value for entry in distribution.entry_points if entry.group == "console_scripts"}
-    if entries.get("hf2l-jobs") != "hf2l_jobs.cli:main":
-        problems.append("hf2l-jobs console entry point is missing or incorrect")
+    if "hf2l-jobs" in entries:
+        problems.append("Python wheel must not install the Go-only hf2l-jobs command")
+    if entries.get("hf2l-jobs-runtime") != "hf2l_jobs.runtime:main":
+        problems.append("hf2l-jobs-runtime console entry point is missing or incorrect")
+    unconditional = [re.match(r"[A-Za-z0-9_.-]+", item).group(0).lower().replace("_", "-")
+                     for item in distribution.requires or [] if ";" not in item]
+    if unconditional != ["pydantic"]:
+        problems.append(f"Runtime unconditional dependencies must be [pydantic], got {unconditional}")
     python_requires = distribution.metadata.get("Requires-Python", "")
     if python_requires.strip() != ">=3.11":
         problems.append(f"Expected Python >=3.11 metadata, got {python_requires!r}")
     return problems
 
 
-class DashboardAssets(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.references = []
-
-    def handle_starttag(self, tag, attrs):
-        values = dict(attrs)
-        if tag == "script" and values.get("src"):
-            self.references.append(values["src"])
-        elif tag == "link" and values.get("rel") == "stylesheet" and values.get("href"):
-            self.references.append(values["href"])
-
-
-def check_assets() -> list[str]:
-    assets = importlib.resources.files(PACKAGE).joinpath("static")
-    index = assets.joinpath("index.html")
-    if not index.is_file():
-        return ["Manager wheel is missing dashboard static/index.html"]
-    problems = []
-    text = index.read_text(encoding="utf-8")
-    parser = DashboardAssets()
-    parser.feed(text)
-    references = parser.references
-    if not references:
-        problems.append("Dashboard does not reference packaged static assets")
-    for reference in references:
-        reference = reference.removeprefix("/static/").removeprefix("static/")
-        if ".." in Path(reference).parts or Path(reference).is_absolute():
-            problems.append(f"Unsafe dashboard asset reference {reference}")
-        elif not assets.joinpath(reference).is_file():
-            problems.append(f"Manager wheel is missing dashboard asset {reference}")
-    return problems
-
-
 def check_installation(mode: str, root: Path) -> list[str]:
-    problems = check_metadata() + check_assets()
-    for name in sorted(ML_MODULES):
+    problems = check_metadata()
+    for name in sorted(ML_MODULES | {"fastapi", "uvicorn", "sqlalchemy", "psycopg", "jwt", "cryptography"}):
         if importlib.util.find_spec(name) is not None:
-            problems.append(f"{mode} environment unexpectedly contains training module {name}")
+            problems.append(f"{mode} environment unexpectedly contains training/server module {name}")
     package = importlib.import_module(PACKAGE)
     if Path(package.__file__).resolve().is_relative_to(root / "packages/jobs/src"):
         problems.append("Installation check requires a built wheel, not the editable checkout")
@@ -224,15 +200,12 @@ def check_installation(mode: str, root: Path) -> list[str]:
     imported_ml = sorted(name for name in ML_MODULES if name in sys.modules)
     if imported_ml:
         problems.append(f"Control-plane imports loaded training modules: {imported_ml}")
-    if mode == "server":
-        importlib.import_module("uvicorn")
-        importlib.import_module("psycopg")
     return problems
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("source", "manager", "server"), default="source")
+    parser.add_argument("--mode", choices=("source", "runtime"), default="source")
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     args = parser.parse_args(argv)
     problems = check_source(args.root)

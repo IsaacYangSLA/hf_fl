@@ -2,7 +2,9 @@
   "revisions": [
     "0001_manager",
     "0002_artifact_locator",
-    "0003_administrative_audit"
+    "0003_administrative_audit",
+    "0004_study_enrollment",
+    "0005_study_creators"
   ],
   "tables": [
     {
@@ -2139,6 +2141,243 @@
         }
       ],
       "name": "jm_gpu_allocations"
+    },
+    {
+      "name": "jm_studies",
+      "columns": [
+        {
+          "kind": "value",
+          "name": "project_id",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "kind": "bool",
+          "name": "enabled",
+          "nullable": false,
+          "primary_key": false,
+          "default": {
+            "kind": "value",
+            "value": false
+          }
+        },
+        {
+          "kind": "bool",
+          "name": "registration_open",
+          "nullable": false,
+          "primary_key": false,
+          "default": {
+            "kind": "value",
+            "value": false
+          }
+        },
+        {
+          "kind": "value",
+          "name": "description",
+          "nullable": false,
+          "primary_key": false,
+          "default": {
+            "kind": "value",
+            "value": ""
+          }
+        },
+        {
+          "kind": "value",
+          "name": "row_version",
+          "nullable": false,
+          "primary_key": false,
+          "default": {
+            "kind": "value",
+            "value": 1
+          }
+        },
+        {
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "default": {
+            "kind": "now"
+          }
+        },
+        {
+          "kind": "time",
+          "name": "updated_at",
+          "nullable": false,
+          "primary_key": false,
+          "default": {
+            "kind": "now"
+          }
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_studies (\n project_id VARCHAR(128) NOT NULL PRIMARY KEY,\n enabled BOOLEAN NOT NULL DEFAULT FALSE,\n registration_open BOOLEAN NOT NULL DEFAULT FALSE,\n description TEXT NOT NULL DEFAULT '',\n row_version INTEGER NOT NULL DEFAULT 1,\n created_at TIMESTAMP WITH TIME ZONE NOT NULL,\n updated_at TIMESTAMP WITH TIME ZONE NOT NULL,\n CHECK (row_version >= 1),\n CHECK (length(description) <= 2000),\n CHECK (NOT registration_open OR enabled),\n FOREIGN KEY(project_id) REFERENCES jm_projects (id)\n)\n",
+        "sqlite": "\nCREATE TABLE jm_studies (\n project_id VARCHAR(128) NOT NULL PRIMARY KEY,\n enabled BOOLEAN NOT NULL DEFAULT FALSE,\n registration_open BOOLEAN NOT NULL DEFAULT FALSE,\n description TEXT NOT NULL DEFAULT '',\n row_version INTEGER NOT NULL DEFAULT 1,\n created_at DATETIME NOT NULL,\n updated_at DATETIME NOT NULL,\n CHECK (row_version >= 1),\n CHECK (length(description) <= 2000),\n CHECK (NOT registration_open OR enabled),\n FOREIGN KEY(project_id) REFERENCES jm_projects (id)\n)\n"
+      },
+      "indexes": []
+    },
+    {
+      "name": "jm_study_applications",
+      "columns": [
+        {
+          "kind": "value",
+          "name": "id",
+          "nullable": false,
+          "primary_key": true,
+          "default": {
+            "kind": "id"
+          }
+        },
+        {
+          "kind": "value",
+          "name": "project_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "principal_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "participant_id",
+          "nullable": false,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "status",
+          "nullable": false,
+          "primary_key": false,
+          "default": {
+            "kind": "value",
+            "value": "pending"
+          }
+        },
+        {
+          "kind": "value",
+          "name": "message",
+          "nullable": false,
+          "primary_key": false,
+          "default": {
+            "kind": "value",
+            "value": ""
+          }
+        },
+        {
+          "kind": "value",
+          "name": "review_reason",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "reviewer_id",
+          "nullable": true,
+          "primary_key": false
+        },
+        {
+          "kind": "value",
+          "name": "row_version",
+          "nullable": false,
+          "primary_key": false,
+          "default": {
+            "kind": "value",
+            "value": 1
+          }
+        },
+        {
+          "kind": "time",
+          "name": "created_at",
+          "nullable": false,
+          "primary_key": false,
+          "default": {
+            "kind": "now"
+          }
+        },
+        {
+          "kind": "time",
+          "name": "updated_at",
+          "nullable": false,
+          "primary_key": false,
+          "default": {
+            "kind": "now"
+          }
+        }
+      ],
+      "create": {
+        "postgresql": "\nCREATE TABLE jm_study_applications (\n id VARCHAR(32) NOT NULL PRIMARY KEY,\n project_id VARCHAR(128) NOT NULL,\n principal_id VARCHAR(256) NOT NULL,\n participant_id VARCHAR(128) NOT NULL,\n status VARCHAR(24) NOT NULL DEFAULT 'pending',\n message TEXT NOT NULL DEFAULT '',\n review_reason TEXT,\n reviewer_id VARCHAR(256),\n row_version INTEGER NOT NULL DEFAULT 1,\n created_at TIMESTAMP WITH TIME ZONE NOT NULL,\n updated_at TIMESTAMP WITH TIME ZONE NOT NULL,\n CHECK (status IN ('pending', 'approved', 'rejected', 'withdrawn')),\n CHECK (row_version >= 1),\n CHECK (length(message) <= 2000),\n CHECK (review_reason IS NULL OR length(review_reason) <= 2000),\n UNIQUE (project_id, principal_id),\n FOREIGN KEY(project_id) REFERENCES jm_studies (project_id)\n)\n",
+        "sqlite": "\nCREATE TABLE jm_study_applications (\n id VARCHAR(32) NOT NULL PRIMARY KEY,\n project_id VARCHAR(128) NOT NULL,\n principal_id VARCHAR(256) NOT NULL,\n participant_id VARCHAR(128) NOT NULL,\n status VARCHAR(24) NOT NULL DEFAULT 'pending',\n message TEXT NOT NULL DEFAULT '',\n review_reason TEXT,\n reviewer_id VARCHAR(256),\n row_version INTEGER NOT NULL DEFAULT 1,\n created_at DATETIME NOT NULL,\n updated_at DATETIME NOT NULL,\n CHECK (status IN ('pending', 'approved', 'rejected', 'withdrawn')),\n CHECK (row_version >= 1),\n CHECK (length(message) <= 2000),\n CHECK (review_reason IS NULL OR length(review_reason) <= 2000),\n UNIQUE (project_id, principal_id),\n FOREIGN KEY(project_id) REFERENCES jm_studies (project_id)\n)\n"
+      },
+      "indexes": [
+        {
+          "name": "uq_jm_study_approved_participant",
+          "create": {
+            "postgresql": "CREATE UNIQUE INDEX uq_jm_study_approved_participant ON jm_study_applications (project_id, participant_id) WHERE status = 'approved'",
+            "sqlite": "CREATE UNIQUE INDEX uq_jm_study_approved_participant ON jm_study_applications (project_id, participant_id) WHERE status = 'approved'"
+          }
+        },
+        {
+          "name": "ix_jm_study_applications_review",
+          "create": {
+            "postgresql": "CREATE INDEX ix_jm_study_applications_review ON jm_study_applications (project_id, status, created_at, id)",
+            "sqlite": "CREATE INDEX ix_jm_study_applications_review ON jm_study_applications (project_id, status, created_at, id)"
+          }
+        },
+        {
+          "name": "ix_jm_study_applications_principal",
+          "create": {
+            "postgresql": "CREATE INDEX ix_jm_study_applications_principal ON jm_study_applications (principal_id, project_id)",
+            "sqlite": "CREATE INDEX ix_jm_study_applications_principal ON jm_study_applications (principal_id, project_id)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "jm_study_creators",
+      "columns": [
+        {
+          "name": "principal_id",
+          "kind": "value",
+          "nullable": false,
+          "primary_key": true
+        },
+        {
+          "name": "enabled",
+          "kind": "bool",
+          "nullable": false,
+          "primary_key": false,
+          "default": {
+            "kind": "value",
+            "value": false
+          }
+        },
+        {
+          "name": "created_at",
+          "kind": "time",
+          "nullable": false,
+          "primary_key": false,
+          "default": {
+            "kind": "now"
+          }
+        },
+        {
+          "name": "updated_at",
+          "kind": "time",
+          "nullable": false,
+          "primary_key": false,
+          "default": {
+            "kind": "now"
+          }
+        }
+      ],
+      "create": {
+        "postgresql": "CREATE TABLE jm_study_creators (principal_id VARCHAR(256) NOT NULL PRIMARY KEY, enabled BOOLEAN NOT NULL DEFAULT FALSE, created_at TIMESTAMP WITH TIME ZONE NOT NULL, updated_at TIMESTAMP WITH TIME ZONE NOT NULL, CHECK (length(principal_id) BETWEEN 1 AND 256))",
+        "sqlite": "CREATE TABLE jm_study_creators (principal_id VARCHAR(256) NOT NULL PRIMARY KEY, enabled BOOLEAN NOT NULL DEFAULT FALSE, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, CHECK (length(principal_id) BETWEEN 1 AND 256))"
+      },
+      "indexes": []
     }
   ],
   "upgrades": {

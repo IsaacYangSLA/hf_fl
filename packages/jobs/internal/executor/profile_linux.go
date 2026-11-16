@@ -103,7 +103,11 @@ func (LinuxHostInspector) BackingDevice(path string) (BackingDevice, error) {
 	if err := unix.Stat(path, &st); err != nil {
 		return BackingDevice{}, refused("unsupported_backing")
 	}
-	sys, err := filepath.EvalSymlinks(fmt.Sprintf("/sys/dev/block/%d:%d", unix.Major(uint64(st.Dev)), unix.Minor(uint64(st.Dev))))
+	return physicalBackingDevice(uint64(st.Dev))
+}
+
+func physicalBackingDevice(deviceNumber uint64) (BackingDevice, error) {
+	sys, err := filepath.EvalSymlinks(fmt.Sprintf("/sys/dev/block/%d:%d", unix.Major(deviceNumber), unix.Minor(deviceNumber)))
 	if err != nil || !strings.HasPrefix(sys, "/sys/devices/") {
 		return BackingDevice{}, refused("unsupported_backing")
 	}

@@ -1,44 +1,30 @@
-"""Bidirectional retained-state qualification; Python reference is a stopped-peer oracle.
+"""Native Go retained-state qualification through process restarts.
 
-The active server and worker are native Go. Each reference phase runs only while
-all native processes for that fixture are stopped. This is not a Python bridge.
+Python supplies only client requests and independent evidence checks. Every
+service operation is performed by a native Go process; no Python server or
+persistence implementation is imported.
 """
 from __future__ import annotations
 
 import argparse
+import base64
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from dataclasses import replace
 import hashlib
+import hmac
 import json
-import os
 from pathlib import Path
-import sys
 import time
 import traceback
-import uuid
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import httpx
-from sqlalchemy import select
-from hf2l_exchange import api
-from hf2l_exchange.application import Service
-from hf2l_exchange.auth import Authenticator, backend_assertion_headers
 from hf2l_exchange.client_state import StateRepository
-from hf2l_exchange.client_types import (CoordinationHandle, ExchangeError, MemberDescriptor,
-    RecordDescriptor, ReferenceSnapshot, SpaceDescriptor, TypeRevision)
-from hf2l_exchange.config import Settings
-from hf2l_exchange.domain import Principal, principal_id
-from hf2l_exchange.gateway_api import _open, _receipt_payload, _seal
-from hf2l_exchange.migrations import check, initialize
-from hf2l_exchange.models import TransferAttempt
-from hf2l_exchange.storage import S3BlobStore
+from hf2l_exchange.client_types import CoordinationHandle, ExchangeError
+from hf2l_exchange.domain import principal_id
 from hf2l_exchange.transfer_client import sha256
-from hf2l_exchange.transfers import TransferService
-from hf2l_exchange.worker import tick
 
 from go_fixture import GoFixture, load_json, private_json
+from verify_go_sdk import assertion
 
 ACTOR = "opérator-雪"
 HUGE = 2**100 + 12345
@@ -70,103 +56,9 @@ def require_http(response, expected, label):
 
 
 @contextmanager
-def configured(environment):
-    previous = {key: os.environ.get(key) for key in environment if key.startswith("EXCHANGE_")}
-    try:
-        for key in previous:
-            os.environ[key] = environment[key]
-        yield
-    finally:
-        for key, value in previous.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-
-
-class Reference:
-    """Same application calls used by the reference HTTP boundary, without a server."""
-    def __init__(self, fixture):
-        with configured(fixture.env):
-            self.settings = Settings.from_env(component="server")
-        self.fixture = fixture
-        self.service = Service(self.settings)
-        self.transfers = TransferService(self.service, S3BlobStore(self.settings.storage))
-        self.subject = fixture.owner_subject
-
-    def principal(self, subject=None):
-        subject = self.subject if subject is None else subject
-        return Principal(principal_id(self.settings.auth.issuer, subject), subject,
-                         subject == self.settings.auth.admin_subject)
-
-    def close(self):
-        self.service.engine.dispose()
-
-    @contextmanager
-    def actor(self, subject):
-        prior = self.subject
-        self.subject = subject
-        try:
-            yield self
-        finally:
-            self.subject = prior
-
-    def create_space(self, name, *, profile="generic.v1", idempotency_key=None, **options):
-        body = api.payload(api.SpaceBody(name=name, profile=profile, **options))
-        return SpaceDescriptor.from_dict(self.service.create_space(self.principal(), body, idempotency_key))
-
-    def register_type(self, space, kind, schema, *, idempotency_key=None):
-        body = api.payload(api.TypeBody.model_validate({"schema": schema}))
-        return TypeRevision.from_dict(self.service.register_type(self.principal(), space, kind, body, idempotency_key))
-
-    def set_member(self, space, member, roles, *, subject=None, bindings=None):
-        body = api.payload(api.MemberBody(roles=roles, subject=subject, bindings=bindings or {}))
-        return MemberDescriptor.from_dict(self.service.put_member(self.principal(), space, member, body))
-
-    def create_record(self, space, *, kind, schema_revision_id, metadata, attachments=(), idempotency_key=None):
-        body = api.payload(api.RecordBody(kind=kind, schema_revision_id=schema_revision_id,
-                                        metadata=metadata, attachments=list(attachments)))
-        return RecordDescriptor.from_dict(self.service.create_record(self.principal(), space, body, idempotency_key))
-
-    def publish_record(self, space, record, *, idempotency_key=None):
-        return RecordDescriptor.from_dict(self.service.publish_record(self.principal(), space, record, idempotency_key))
-
-    def get_record(self, space, record):
-        return RecordDescriptor.from_dict(self.service.get_record(self.principal(), space, record))
-
-    def set_ref(self, space, name, record_id, *, reference=None, idempotency_key=None):
-        body = api.payload(api.ReferenceBody(record_id=record_id))
-        expected = reference.token if reference is not None else "*"
-        return ReferenceSnapshot.from_dict(self.service.put_reference(
-            self.principal(), space, name, body, expected, idempotency_key))
-
-    def resolve(self, space, name):
-        return ReferenceSnapshot.from_dict(self.service.get_reference(self.principal(), space, name))
-
-    def acquire(self, space, *, reference, input_ids=(), lease_seconds=3600, idempotency_key=None):
-        body = api.payload(api.AcquisitionBody(reference=reference.name,
-            expected_token=reference.token, input_record_ids=list(input_ids), lease_seconds=lease_seconds))
-        return CoordinationHandle.from_dict(self.service.acquire(self.principal(), space, body, idempotency_key))
-
-    def get_acquisition(self, space, acquisition_id):
-        return CoordinationHandle.from_dict(self.service.get_acquisition(self.principal(), space, acquisition_id))
-
-    def renew(self, space, handle):
-        return CoordinationHandle.from_dict(self.service.renew(self.principal(), space, handle.id, handle.fence))
-
-    def complete(self, space, handle, record_id, *, idempotency_key=None):
-        body = api.payload(api.CompletionBody(fence=handle.fence, result_record_id=record_id))
-        return CoordinationHandle.from_dict(self.service.complete(self.principal(), space, handle.id, body, idempotency_key))
-
-
-@contextmanager
 def actor_client(fixture, client, subject):
-    if isinstance(client, Reference):
-        with client.actor(subject) as value:
-            yield value
-    else:
-        with fixture.client(subject) as value:
-            yield value
+    with fixture.client(subject) as value:
+        yield value
 
 
 def metadata(label):
@@ -206,13 +98,13 @@ def seed(fixture, client, prefix):
 def continue_state(fixture, client, manifest):
     p, sid, revision = manifest["prefix"], manifest["space"], manifest["revision"]
     replay = client.create_space("Retained " + p, idempotency_key=p + "-space", **SPACE_OPTIONS)
-    require(replay.id == sid, "space idempotency changed across implementations")
+    require(replay.id == sid, "space idempotency changed across restarts")
     require(client.register_type(sid, KIND, SCHEMA, idempotency_key=p + "-type").id == revision,
-            "schema idempotency changed across implementations")
+            "schema idempotency changed across restarts")
     with actor_client(fixture, client, ACTOR) as actor:
         record = actor.create_record(sid, kind=KIND, schema_revision_id=revision,
             metadata=metadata(p + "-0"), idempotency_key=p + "-record-0")
-        require(record.id == manifest["records"][0], "record idempotency changed across implementations")
+        require(record.id == manifest["records"][0], "record idempotency changed across restarts")
         require(actor.get_record(sid, record.id).metadata["huge"] == HUGE, "large metadata integer rounded")
         require(record.creator == fixture.principal(ACTOR), "Unicode principal changed")
         expect_code("idempotency_conflict", lambda: actor.create_record(sid, kind=KIND,
@@ -244,7 +136,7 @@ def finish_state(client, manifest):
     sid, p = manifest["space"], manifest["prefix"]
     first = CoordinationHandle.from_dict(manifest["acquisition"])
     replay = client.complete(sid, first, manifest["result"], idempotency_key=p + "-complete")
-    require(replay.state == "completed", "completion replay lost across implementations")
+    require(replay.state == "completed", "completion replay lost across restarts")
     following = CoordinationHandle.from_dict(manifest["next_acquisition"])
     current = client.get_acquisition(sid, following.id)
     require(current.input_record_ids == following.input_record_ids and current.fence == following.fence,
@@ -254,7 +146,7 @@ def finish_state(client, manifest):
     reference = client.resolve(sid, "continuation")
     require(reference.record_id == manifest["next_result"] and reference.token == "2",
             "second retained reference generation changed")
-    require(client.get_record(sid, manifest["next_result"]).metadata["huge"] == HUGE, "reverse large integer rounded")
+    require(client.get_record(sid, manifest["next_result"]).metadata["huge"] == HUGE, "retained large integer rounded")
 
 
 def upload_data(fixture):
@@ -274,80 +166,76 @@ def put_part(grant, data):
         response.close()
 
 
-def begin_partial_reference(fixture, reference, manifest):
+def begin_partial(fixture, client, manifest, *, sdk_state):
     path = upload_data(fixture)
     sid = manifest["space"]
     attachment = {"path": "retained.bin", "size": path.stat().st_size, "sha256": sha256(path)}
-    record = reference.create_record(sid, kind=KIND, schema_revision_id=manifest["revision"],
-        metadata=metadata("partial-python"), attachments=[attachment], idempotency_key="partial-python")
-    blob = record.attachments[0]
-    started = reference.transfers.initiate(sid, record.id, blob.id, reference.principal())
-    require(started["state"] == "uploading", "reference partial upload not ready")
-    grant = reference.transfers.grants(sid, record.id, blob.id, reference.principal(), [1])["grants"][0]
-    part_size = started["part_size"]
-    require(type(part_size) is int and part_size == int(fixture.env.get("EXCHANGE_PART_SIZE", PART_SIZE)),
-            "reference multipart descriptor differs from configured size")
-    put_part(grant, path.read_bytes()[:part_size])
-    state_path = fixture.root / "retained-upload-state.json"
-    repository = StateRepository(state_path)
-    identity = [fixture.endpoint, sid, KIND, manifest["revision"], metadata("partial-python"), [attachment]]
-    state = repository.begin("put_record", identity, idempotency_key="partial-python")
-    state.update({"record_id": record.id, "publish_key": "partial-python-publish"})
-    repository.save(state)
-    return {"path": path, "state_path": state_path, "record": record.id, "attachment": blob.id,
-            "attempt": started["attempt_id"], "sha256": attachment["sha256"], "part_size": part_size}
-
-
-def finish_partial_go(fixture, client, manifest, partial):
-    record = client.put_record(manifest["space"], kind=KIND, schema_revision_id=manifest["revision"],
-        metadata=metadata("partial-python"), files={"retained.bin": partial["path"]},
-        state_path=partial["state_path"], upload_seconds=120, verification_seconds=120)
-    require(record.id == partial["record"] and record.state == "published", "Go did not resume reference record")
-    attachment = record.attachments[0]
-    output = fixture.root / "python-to-go-download.bin"
-    client.download_attachment(manifest["space"], record.id, attachment, output, seconds=120)
-    require(sha256(output) == partial["sha256"], "Go resumed content differs")
-    rows = fixture.query("SELECT id FROM v2_transfer_attempts WHERE blob_id=%s", (partial["attachment"],))
-    require(len(rows) == 1 and rows[0][0] == partial["attempt"], "Go replaced the retained upload attempt")
-
-
-def begin_partial_go(fixture, client, manifest):
-    path = upload_data(fixture)
-    sid = manifest["space"]
     record = client.create_record(sid, kind=KIND, schema_revision_id=manifest["revision"],
-        metadata=metadata("partial-go"), attachments=[{"path": "retained.bin", "size": path.stat().st_size,
-        "sha256": sha256(path)}], idempotency_key="partial-go")
+        metadata=metadata("partial-native"), attachments=[attachment], idempotency_key="partial-native")
     blob = record.attachments[0]
     base = client.path(sid, client._record(record.id) + "/attachments/" + blob.id)
     started = client.request("POST", base + "/upload")
-    require(started["state"] == "uploading", "Go partial upload not ready")
+    require(started["state"] == "uploading", "native partial upload not ready")
     grant = client.request("POST", base + "/grants", body={"numbers": [1]})["grants"][0]
     part_size = started["part_size"]
     require(type(part_size) is int and part_size == int(fixture.env.get("EXCHANGE_PART_SIZE", PART_SIZE)),
             "native multipart descriptor differs from configured size")
     put_part(grant, path.read_bytes()[:part_size])
-    return {"path": path, "record": record.id, "attachment": blob.id, "attempt": started["attempt_id"],
-            "sha256": sha256(path), "part_size": part_size}
+    result = {"path": path, "record": record.id, "attachment": blob.id, "attempt": started["attempt_id"],
+              "sha256": attachment["sha256"], "part_size": part_size}
+    if sdk_state:
+        state_path = fixture.root / "retained-upload-state.json"
+        repository = StateRepository(state_path)
+        identity = [fixture.endpoint, sid, KIND, manifest["revision"], metadata("partial-native"), [attachment]]
+        state = repository.begin("put_record", identity, idempotency_key="partial-native")
+        state.update({"record_id": record.id, "publish_key": "partial-native-publish"})
+        repository.save(state)
+        result["state_path"] = state_path
+    return result
 
 
-def finish_partial_reference(reference, manifest, partial):
-    sid, record, blob = manifest["space"], partial["record"], partial["attachment"]
-    present = reference.transfers.parts(sid, record, blob, reference.principal())["parts"]
-    require(len(present) == 1 and present[0]["number"] == 1 and present[0]["size"] == partial["part_size"],
-            "reference did not recover Go multipart parts")
-    grant = reference.transfers.grants(sid, record, blob, reference.principal(), [2])["grants"][0]
-    put_part(grant, partial["path"].read_bytes()[partial["part_size"]:])
-    reference.transfers.complete(sid, record, blob, reference.principal())
-    deadline = time.monotonic() + 120
-    while True:
-        tick(reference.transfers)
-        state = reference.get_record(sid, record)
-        if state.attachments[0].state == "verified":
-            break
-        require(time.monotonic() < deadline, "reference verification did not complete")
-        time.sleep(.05)
-    published = reference.publish_record(sid, record, idempotency_key="partial-go-publish")
-    require(published.state == "published", "reference did not publish Go upload")
+def finish_partial(fixture, client, manifest, partial):
+    sid, record_id, blob = manifest["space"], partial["record"], partial["attachment"]
+    if "state_path" in partial:
+        record = client.put_record(sid, kind=KIND, schema_revision_id=manifest["revision"],
+            metadata=metadata("partial-native"), files={"retained.bin": partial["path"]},
+            state_path=partial["state_path"], upload_seconds=120, verification_seconds=120)
+    else:
+        base = client.path(sid, client._record(record_id) + "/attachments/" + blob)
+        present = client.request("GET", base + "/parts")["parts"]
+        require(len(present) == 1 and present[0]["number"] == 1 and present[0]["size"] == partial["part_size"],
+                "native restart did not recover provider multipart parts")
+        grant = client.request("POST", base + "/grants", body={"numbers": [2]})["grants"][0]
+        put_part(grant, partial["path"].read_bytes()[partial["part_size"]:])
+        client.request("POST", base + "/complete")
+        deadline = time.monotonic() + 120
+        while True:
+            record = client.get_record(sid, record_id)
+            if record.attachments[0].state == "verified":
+                break
+            require(time.monotonic() < deadline, "native upload verification did not complete")
+            time.sleep(.05)
+        record = client.publish_record(sid, record_id, idempotency_key="partial-native-publish")
+    require(record.id == record_id and record.state == "published", "native restart replaced retained record")
+    output = fixture.root / "retained-download.bin"
+    client.download_attachment(sid, record.id, record.attachments[0], output, seconds=120)
+    require(sha256(output) == partial["sha256"], "resumed content differs")
+    rows = fixture.query("SELECT id FROM v2_transfer_attempts WHERE blob_id=%s", (blob,))
+    require(len(rows) == 1 and rows[0][0] == partial["attempt"], "native restart replaced retained upload attempt")
+
+
+def receipt_payload(secret, receipt, authorization, thumb):
+    """Verify the documented receipt envelope independently of service code."""
+    encoded, signature = receipt.split(".")
+    expected = hmac.new(secret.encode(), b"hf2l-exchange-gateway-put-v1\0" + encoded.encode("ascii"),
+                        hashlib.sha256).hexdigest()
+    require(hmac.compare_digest(signature, expected), "native receipt signature changed")
+    payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+    require(payload["version"] == 1, "native receipt version changed")
+    require(payload["authorization_sha256"] == hashlib.sha256(authorization.encode()).hexdigest(),
+            "native receipt authorization changed")
+    require(payload["owner"]["certificate_thumbprint"] == thumb, "native receipt certificate changed")
+    return payload
 
 
 def workload_claims(fixture, space, grant, attempt, thumb, lifetime=4):
@@ -357,71 +245,25 @@ def workload_claims(fixture, space, grant, attempt, thumb, lifetime=4):
             "cnf": {"x5t#S256": thumb}, "iat": now, "exp": now + lifetime}
 
 
-def reference_receipts(fixture, reference):
-    owner = reference.principal()
-    space = reference.create_space("Retained Python receipt", idempotency_key="python-receipt-space", **SPACE_OPTIONS)
-    fixture.track_space(space.id)
-    revision = reference.register_type(space.id, KIND, SCHEMA, idempotency_key="python-receipt-type")
-    reference.service.enable_managed_space(owner, space.id, {"job_id": "retained-job"}, "python-managed")
-    subject = "retained-workload-python-雪"
-    pid = principal_id(fixture.workload_issuer, subject)
-    thumb = hashlib.sha256(b"retained-python-certificate").digest()
-    import base64
-    thumb = base64.urlsafe_b64encode(thumb).rstrip(b"=").decode()
-    reference.service.put_member(owner, space.id, pid, {"subject": subject, "roles": ROLES, "bindings": {}})
-    grant = reference.service.create_workload_grant(owner, space.id, {"subject": subject,
-        "job_id": "retained-job", "attempt_id": "retained-python-attempt", "component_id": "participant",
-        "epoch": 1, "expires_at": time.time() + 3600, "certificate_thumbprint": thumb,
-        "roles": ROLES, "bindings": {}}, "python-workload-grant")
-    claims = workload_claims(fixture, space.id, grant["grant_id"], "retained-python-attempt", thumb)
-    token = fixture.workload_token(subject, claims, audience="hf2l-transfer", scope="transfer")
-    authorization = "Bearer " + token
-    auth = Authenticator(replace(reference.settings.auth, workload_audience="hf2l-transfer"))
-    principal = auth.authenticate(authorization, managed=True, certificate_thumbprint=thumb)
-    data = b"retained Python receipt"
-    record = reference.service.create_record(principal, space.id, {
-        "kind": KIND, "schema_revision_id": revision.id, "metadata": metadata("receipt-python"),
-        "attachments": [{"path": "receipt.bin", "size": len(data),
-                         "sha256": hashlib.sha256(data).hexdigest()}]}, "python-receipt-record")
-    blob = record["attachments"][0]["id"]
-    reference.transfers.initiate(space.id, record["id"], blob, principal)
-    receipts = []
-    retained = {"authorization": authorization, "thumb": thumb, "expires": claims["exp"],
-                "receipts": receipts, "attachment": blob, "space": space.id}
-    receipt_path = fixture.root / "python-issued-put-receipts.json"
-    for _ in range(2):
-        handle, origin = reference.transfers.begin_gateway_put(principal, space.id, record["id"], blob, 1)
-        item = {"value": _seal(fixture.backend_secret, _receipt_payload(principal, authorization, handle)),
-                "token": handle.token, "origin_effect": "not_started"}
-        receipts.append(item)
-        private_json(receipt_path, retained)
-        put_part(origin, data)
-        item["origin_effect"] = "closed_success"
-        private_json(receipt_path, retained)
-    reference.service.revoke_workload_grants(owner, space.id,
-        {"attempt_id": "retained-python-attempt"}, "python-receipt-revoke")
-    return retained
-
-
-def settle_python_receipts_go(fixture, receipts):
+def settle_retained_receipts(fixture, receipts):
     while time.time() <= receipts["expires"]:
         time.sleep(.05)
     target = "/internal/transfers/v1/settle"
     def settle(receipt):
         authorization = receipts["authorization"]
-        headers = backend_assertion_headers(fixture.backend_secret, "POST", target, authorization, receipts["thumb"])
+        headers = assertion(fixture.backend_secret, "POST", target, authorization, receipts["thumb"])
         headers["Authorization"] = authorization
         with fixture.backend_http() as client:
             response = client.post(fixture.gateway_endpoint + target, json={"receipt": receipt}, headers=headers)
-            require_http(response, 200, "Go retained Python settlement receipt")
+            require_http(response, 200, "native retained settlement receipt")
             return response.json()["settled"]
     first, second = receipts["receipts"]
-    require(settle(first["value"]) is True, "Go did not settle Python marker")
-    require(settle(first["value"]) is False, "Go replay unexpectedly settled marker")
+    require(settle(first["value"]) is True, "native restart did not settle retained marker")
+    require(settle(first["value"]) is False, "replay unexpectedly settled marker")
     rows = fixture.query("SELECT mutation_tokens FROM v2_transfer_attempts WHERE blob_id=%s",
                          (receipts["attachment"],))
-    require(len(rows) == 1 and rows[0][0] == [second["token"]], "Go replay cleared successor marker")
-    require(settle(second["value"]) is True, "Go did not settle second Python marker")
+    require(len(rows) == 1 and rows[0][0] == [second["token"]], "replay cleared successor marker")
+    require(settle(second["value"]) is True, "native restart did not settle second marker")
 
 
 class BackendAuth(httpx.Auth):
@@ -430,7 +272,7 @@ class BackendAuth(httpx.Auth):
 
     def auth_flow(self, request):
         target = request.url.raw_path.decode("ascii")
-        request.headers.update(backend_assertion_headers(self.fixture.backend_secret, request.method,
+        request.headers.update(assertion(self.fixture.backend_secret, request.method,
             target, request.headers.get("authorization", ""), self.thumb))
         yield request
 
@@ -472,7 +314,7 @@ def native_receipts(fixture, owner):
                 "receipts": values, "attachment": blob, "space": space.id}
     receipt_path = fixture.root / "go-issued-put-receipts.json"
     for _ in range(2):
-        headers = backend_assertion_headers(fixture.backend_secret, "POST", target, authorization, thumb)
+        headers = assertion(fixture.backend_secret, "POST", target, authorization, thumb)
         headers["Authorization"] = authorization
         with fixture.backend_http() as client:
             response = client.post(fixture.gateway_endpoint + target, json={}, headers=headers)
@@ -481,28 +323,14 @@ def native_receipts(fixture, owner):
         item = {"value": result["receipt"], "origin_effect": "not_started"}
         values.append(item)
         private_json(receipt_path, retained)
-        handle = _open(fixture.backend_secret, result["receipt"], authorization, thumb)
-        item["token"] = handle.token
+        payload = receipt_payload(fixture.backend_secret, result["receipt"], authorization, thumb)
+        item["token"] = payload["put"]["token"]
         private_json(receipt_path, retained)
         put_part(result["grant"], data)
         item["origin_effect"] = "closed_success"
         private_json(receipt_path, retained)
     owner.revoke_workload_grants(space.id, attempt_id="retained-go-attempt", idempotency_key="go-receipt-revoke")
     return retained
-
-
-def settle_go_receipts_reference(fixture, reference, receipts):
-    while time.time() <= receipts["expires"]:
-        time.sleep(.05)
-    handles = [_open(fixture.backend_secret, item["value"], receipts["authorization"], receipts["thumb"])
-               for item in receipts["receipts"]]
-    require(reference.transfers.finish_gateway_put(handles[0]) is True, "Python rejected native receipt marker")
-    require(reference.transfers.finish_gateway_put(handles[0]) is False, "Python replay settled a successor")
-    with reference.service.sessions.begin() as session:
-        rows = list(session.scalars(select(TransferAttempt).where(TransferAttempt.blob_id == receipts["attachment"])))
-        require(len(rows) == 1 and rows[0].mutation_tokens == [handles[1].token],
-                "Python replay changed successor marker")
-    require(reference.transfers.finish_gateway_put(handles[1]) is True, "Python did not settle second native marker")
 
 
 def run(config, report_path):
@@ -513,68 +341,34 @@ def run(config, report_path):
         report["stage"] = value
         private_json(root / "progress.json", {"stage": value})
     try:
-        stage("python_initialized")
-        first = GoFixture(config, name="retained-python", root=root / "python-first")
-        fixtures.append(first)
-        first.setup(initialize=False, start=False)
-        reference = Reference(first)
-        try:
-            initialize(reference.service.engine)
-            seeded = seed(first, reference, "python-first")
-            partial = begin_partial_reference(first, reference, seeded)
-            python_receipts = reference_receipts(first, reference)
-        finally:
-            reference.close()
-        first.start_services()
-        stage("go_continues_python")
-        with first.client() as client:
-            seeded = continue_state(first, client, seeded)
-            finish_partial_go(first, client, seeded, partial)
-            settle_python_receipts_go(first, python_receipts)
-        first.stop_services()
-        reference = Reference(first)
-        try:
-            check(reference.service.engine)
-            finish_state(reference, seeded)
-            require(reference.get_record(seeded["space"], partial["record"]).attachments[0].state == "verified",
-                    "Python cannot read Go-verified retained blob")
-        finally:
-            reference.close()
-        first.start_services()
-        with first.client() as client:
-            require(client.resolve(seeded["space"], "continuation").token == "2", "Go cannot read Python completion")
-        report["cases"]["python_to_go"] = {"initialization": True, "idempotency": True,
-            "large_integer": True, "unicode_principal": True, "coordination": True,
-            "multipart_attempt_retained": True, "sealed_put_receipts": True}
-
-        stage("go_initialized")
-        second = GoFixture(config, name="retained-go", root=root / "go-first")
-        fixtures.append(second)
-        second.setup()
-        with second.client() as client:
-            native = seed(second, client, "go-first")
-            partial_go = begin_partial_go(second, client, native)
-            go_receipts = native_receipts(second, client)
-        second.stop_services()
-        stage("python_continues_go")
-        reference = Reference(second)
-        try:
-            check(reference.service.engine)
-            native = continue_state(second, reference, native)
-            finish_partial_reference(reference, native, partial_go)
-            settle_go_receipts_reference(second, reference, go_receipts)
-        finally:
-            reference.close()
-        second.start_services()
-        with second.client() as client:
-            finish_state(client, native)
-            record = client.get_record(native["space"], partial_go["record"])
-            output = second.root / "go-to-python-download.bin"
-            client.download_attachment(native["space"], record.id, record.attachments[0], output, seconds=120)
-            require(sha256(output) == partial_go["sha256"], "Go cannot download Python-verified native upload")
-        report["cases"]["go_to_python"] = {"initialization": True, "idempotency": True,
-            "large_integer": True, "unicode_principal": True, "coordination": True,
-            "multipart_attempt_retained": True, "sealed_put_receipts": True}
+        for name, sdk_state in (("sdk_resume", True), ("raw_resume", False)):
+            stage(name + "_initialized")
+            fixture = GoFixture(config, name=name, root=root / name)
+            fixtures.append(fixture)
+            fixture.setup()
+            with fixture.client() as client:
+                manifest = seed(fixture, client, name)
+                partial = begin_partial(fixture, client, manifest, sdk_state=sdk_state)
+                receipts = native_receipts(fixture, client)
+            fixture.restart_services()
+            stage(name + "_continued_after_restart")
+            with fixture.client() as client:
+                manifest = continue_state(fixture, client, manifest)
+                finish_partial(fixture, client, manifest, partial)
+                settle_retained_receipts(fixture, receipts)
+            fixture.restart_services()
+            stage(name + "_completed_after_second_restart")
+            with fixture.client() as client:
+                finish_state(client, manifest)
+                record = client.get_record(manifest["space"], partial["record"])
+                require(record.attachments[0].state == "verified", "retained verification state changed")
+                output = fixture.root / "after-second-restart.bin"
+                client.download_attachment(manifest["space"], record.id, record.attachments[0], output, seconds=120)
+                require(sha256(output) == partial["sha256"], "retained download differs after second restart")
+            report["cases"][name] = {"initialization": True, "idempotency": True,
+                "large_integer": True, "unicode_principal": True, "coordination": True,
+                "multipart_attempt_retained": True, "sealed_put_receipts": True,
+                "native_process_restarts": 2}
         stage("capability_drain_and_cleanup")
     except BaseException as error:
         report["error_class"] = type(error).__name__
@@ -585,15 +379,14 @@ def run(config, report_path):
             ("stage", "error_class", "error_code", "error_status") if key in report})
         traceback.print_exc()
     finally:
-        cleanup_errors = []
         def cleanup(fixture):
             try:
                 fixture.cleanup()
             except BaseException as error:
                 return {"name": fixture.root.name, "error_class": type(error).__name__}
             return None
-        # Default signed capabilities retain their full lifetime. Independent
-        # fixtures drain concurrently; no expiry or accounting state is rewritten.
+        # Default capabilities retain their full lifetime. Drain independently,
+        # without rewriting expiry, mutation ownership, or accounting records.
         with ThreadPoolExecutor(max_workers=max(1, len(fixtures))) as pool:
             cleanup_errors = [value for value in pool.map(cleanup, fixtures) if value is not None]
         report["cleanup_errors"] = cleanup_errors

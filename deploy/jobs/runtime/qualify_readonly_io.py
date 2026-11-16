@@ -135,15 +135,6 @@ def write_canary_file(path: Path, size_bytes: int) -> None:
         os.close(descriptor)
 
 
-def load_executor():
-    checkout = Path(__file__).resolve().parents[3]
-    source = checkout / "packages/jobs/src"
-    if source.is_dir():
-        sys.path.insert(0, str(source))
-    from hf2l_jobs.executor import LinuxExecutor, ExecutionIdentity, ExecutionSpec, ResourceLimits, ExecutorRefused
-    return LinuxExecutor, ExecutionIdentity, ExecutionSpec, ResourceLimits, ExecutorRefused
-
-
 class Qualification:
     def __init__(self, args):
         if os.getuid() == 0 or os.getgid() == 0:
@@ -171,7 +162,9 @@ class Qualification:
         self.derived_image = None
         self.parent_tag = None
         self.input_roots = []
-        self.executor_classes = load_executor()
+        self.executor_binary = private_path(args.executor_binary)
+        if not os.access(self.executor_binary, os.X_OK):
+            raise ValueError("--executor-binary must be an executable native qualification command")
         self.report = {
             "schema_version": 1, "owner": self.owner, "qualified": False,
             "scope": "uncached readonly physical backing I/O and production executor configuration",
@@ -179,6 +172,8 @@ class Qualification:
             "checks": [], "runs": [], "cleanup": {},
             "original_profile_sha256": digest(self.original_bytes),
             "qualifier_sha256": digest(Path(__file__).read_bytes()),
+            "executor_binary": str(self.executor_binary),
+            "executor_binary_sha256": digest(self.executor_binary.read_bytes()),
             "base_qualification_path": self.profile["qualification_path"],
             "base_qualification_sha256": self.profile["qualification_sha256"],
             "base_qualification_checks": self.profile["qualification_checks"],
@@ -288,12 +283,10 @@ class Qualification:
                 )
             },
         })
-        LinuxExecutor = self.executor_classes[0]
-        self.deriver = LinuxExecutor(self.profile_path, self.run_root / "derivation", validate=False)
-        devices = [self.deriver._backing_device(x) for x in (self.run_root, self.owned_root, p["docker_data_root"])]
+        devices = [self.backing_device(x) for x in (self.run_root, self.owned_root, p["docker_data_root"])]
         self.devices = sorted({json.dumps(x, sort_keys=True): x for x in devices}.values(), key=lambda x: x["path"])
-        run_device = self.deriver._backing_device(self.run_root)
-        image_device = self.deriver._backing_device(p["docker_data_root"])
+        run_device = self.backing_device(self.run_root)
+        image_device = self.backing_device(p["docker_data_root"])
         if any(x not in (run_device, image_device) for x in self.devices):
             raise ValueError("Every required device needs a canary root or image-root read proof")
         self.report["backing_devices"] = self.devices
@@ -331,7 +324,7 @@ class Qualification:
             Path(layer) / "run/hf2l-qualification-image.bin" for layer in layers
             if command(["sudo", "-n", "test", "-f", str(Path(layer) / "run/hf2l-qualification-image.bin")], check=False).returncode == 0
         )
-        if self.deriver._backing_device(self.image_file) != self.role_devices["image"]:
+        if self.backing_device(self.image_file) != self.role_devices["image"]:
             raise ValueError("Private image layer is on an unexpected physical device")
 
     def cgroup(self, inspected):
@@ -465,68 +458,43 @@ class Qualification:
         if result.returncode == 0 and absent:
             self.containers.remove(name)
 
-    def adapter_check(self, candidate):
-        LinuxExecutor, Identity, Spec, Resources, Refused = self.executor_classes
-        job_id = self.owner + "-adapter"
-        job = self.run_root / job_id
-        job.mkdir(mode=0o700)
-        source, state = job / "source", job / "state"
-        source.mkdir(mode=0o700)
-        state.mkdir(mode=0o700)
-        config = job / "runtime.json"
-        config.write_text('{"role":"build"}')
-        config.chmod(0o600)
-        identity = Identity(job_id, "attempt-1", "build", 1)
-        executor = LinuxExecutor(candidate, self.run_root / "adapter-executor")
-        spec = Spec(identity, self.base_image, str(source), str(state),
-                    ("python", "-m", "hf2l_jobs.runtime", "--config", "/run/hf2l/runtime.json"),
-                    None, Resources(500, 512 * MIB, 64 * MIB, pids=64),
-                    config_path=str(config), role="build")
-        reserved = False
+    def native_probe(self, operation, *, profile=None, **flags):
+        arguments = [str(self.executor_binary), operation, "--profile", str(profile or self.profile_path),
+                     "--root", str(self.run_root)]
+        for name, value in flags.items():
+            arguments.extend(["--" + name.replace("_", "-"), str(value)])
+        result = command(arguments, check=False, timeout=300)
+        if len(result.stdout) > 64 * 1024 or len(result.stderr) > 64 * 1024:
+            raise RuntimeError("Native qualification output exceeded its bound")
         try:
-            expected_paths = sorted({d["path"] for d in (
-                executor._backing_device(source), executor._backing_device(self.profile["docker_data_root"])
-            )})
-            self.check("adapter_derived_trusted_devices", executor._io_devices(spec) == expected_paths)
-            try:
-                executor._backing_device("/dev/shm")
-            except Refused as exc:
-                denied = exc.code == "unsupported_backing"
-            else:
-                denied = False
-            self.check("adapter_unknown_nonblock_denied", denied)
-            executor.reserve(spec)
-            reserved = True
-            executor.start(identity)
-            until = time.monotonic() + 30
-            while time.monotonic() < until:
-                observation = executor.inspect(identity)
-                if observation.termination_confirmed:
-                    break
-                time.sleep(.1)
-            record = executor._load(identity)
-            actual = json.loads(executor._docker(["inspect", record["container"]]).stdout)[0]
-            caps = {record["loop_device"]: 16 * MIB, **{p: 16 * MIB for p in expected_paths}}
-            self.check("adapter_actual_physical_and_loop_caps",
-                       {x["Path"]: x["Rate"] for x in actual["HostConfig"]["BlkioDeviceReadBps"]} == caps
-                       and {x["Path"]: x["Rate"] for x in actual["HostConfig"]["BlkioDeviceWriteBps"]} == caps)
-            self.check("adapter_fixed_isolated_command",
-                       actual["HostConfig"]["Runtime"] == "runsc"
-                       and actual["HostConfig"]["NetworkMode"] == "none"
-                       and actual["Path"] == "python" and actual["Args"] == list(spec.argv[1:])
-                       and observation.termination_confirmed and observation.exit_code == 1,
-                       scope="intentional invalid build manifest exit1; no FL success claim")
-            released = executor.release(identity)
-            loop_backing = Path("/sys/block") / Path(record["loop_device"]).name / "loop/backing_file"
-            still_owned = loop_backing.exists() and loop_backing.read_text().strip().lstrip("/") == str(executor._directory(identity) / "state.ext4").lstrip("/")
-            self.check("adapter_confirmed_resource_cleanup", released and not still_owned
-                       and not (executor._directory(identity) / "state.ext4").exists()
-                       and executor._docker(["inspect", record["container"]], allow_failure=True).returncode != 0)
-        finally:
-            if reserved:
-                executor.stop(identity, grace_seconds=1)
-                if not executor.release(identity):
-                    raise RuntimeError("Adapter resources were not confirmed released")
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Native qualification returned invalid evidence") from exc
+        if result.returncode:
+            self.report.setdefault("native_probe_failures", []).append({
+                "operation": operation, "evidence": payload, "stderr": result.stderr[-2000:]})
+            raise RuntimeError("Native executor qualification failed: " + result.stderr[-2000:])
+        return payload
+
+    def backing_device(self, path):
+        value = self.native_probe("backing-device", path=path)
+        if not isinstance(value, dict) or set(value) != {"path", "major", "minor", "sysfs_path"}:
+            raise ValueError("Native backing-device evidence is invalid")
+        return value
+
+    def adapter_check(self, candidate):
+        result = self.native_probe("adapter", profile=candidate, image=self.base_image,
+                                   job_id=self.owner + "-adapter")
+        expected = ["adapter_derived_trusted_devices", "adapter_unknown_nonblock_denied",
+                    "adapter_actual_physical_and_loop_caps", "adapter_fixed_isolated_command",
+                    "adapter_confirmed_resource_cleanup"]
+        checks = result.get("checks") if isinstance(result, dict) else None
+        if (not isinstance(checks, list) or [item.get("name") for item in checks] != expected
+                or result.get("cleanup_confirmed") is not True):
+            raise ValueError("Native executor did not prove every required check and cleanup")
+        for item in checks:
+            self.check(item["name"], item.get("passed") is True,
+                       scope="native production executor; intentional invalid build manifest exits 1")
 
     def cleanup(self):
         for control in self.run_root.glob("control-*"):
@@ -616,6 +584,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", required=True, help="trusted executor-profile.json from original isolation qualification")
     parser.add_argument("--root", required=True, help="private evidence directory within profile owned_root; only a new random child is used")
+    parser.add_argument("--executor-binary", required=True,
+                        help="absolute trusted hf2l-jobs-qualify-io binary built from the deployment source")
     parser.add_argument("--base-image", required=True, help="already local immutable Python-capable image ID/digest; no pulls")
     args = parser.parse_args()
     try:

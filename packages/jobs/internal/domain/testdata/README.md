@@ -1,18 +1,13 @@
-# Python interoperability fixtures
+# Frozen interoperability fixtures
 
-These expected values come from the existing Python manager's domain and
-principal-ID contracts, independently of the Go implementation. They cover
-canonical JSON and hashes, Unicode, 1,000 deterministic floating-point bit
-patterns, normalized/defaulted job specifications, invalid specifications, and
-confined artifact locators.
+These expected values were recorded from the former Python manager before its
+server implementation was removed. They are independent of the Go implementation
+and preserve the existing client and retained-data contracts: canonical JSON and
+hashes, Unicode, deterministic floating-point patterns, normalized/defaulted job
+specifications, invalid specifications, and confined artifact locators.
 
-Go tests consume the frozen JSON and need no Python installation. To regenerate
-it from the checked-out reference, install the Python manager's development
-dependencies and run from the repository root:
-
-```sh
-python packages/jobs/internal/domain/testdata/generate.py
-```
-
-The fixture records the source commit and SHA-256 of both reference modules.
-Review changed expected values against both implementations.
+Go tests consume the frozen JSON without Python or a reference server. The fixture
+records the historical source revision and module hashes. Do not regenerate
+expected results from the implementation being tested. Any intentional contract
+change requires separately reviewed expected cases and compatibility analysis.
+The historical source remains available in Git for provenance.

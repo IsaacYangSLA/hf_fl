@@ -4,11 +4,12 @@
   const BASE = "/api/jobs/v1";
   const $ = (id) => document.getElementById(id);
   const STATES = ["QUEUED", "PROVISIONING", "STARTING", "RUNNING", "RECONCILING", "NEEDS_ATTENTION", "CANCELLING", "SUCCEEDED", "FAILED", "CANCELLED"];
-  const state = {session: null, catalog: null, view: "current", job: null, tab: "overview",
+  const state = {identityGeneration: 0, session: null, catalog: null, view: "current", job: null, tab: "overview",
     cursor: null, next: null, previous: [], page: 1, search: "", filter: "",
     stream: null, streamLive: false, reconnect: null, reconnectDelay: 3000,
     refreshTimer: null, refreshing: false, refreshAgain: false, authenticated: false,
-    action: null, createRequest: null, supplemental: {}, enrollments: {}, logCursor: null, logs: [], logNext: null};
+    studyId: null, studyDirty: false, studyCursor: null, studyPrevious: [], studyApplicationCursor: null, studyApplicationPrevious: [],
+    action: null, createRequest: null, studyCreateRequest: null, studyCreatePending: false, supplemental: {}, enrollments: {}, logCursor: null, logs: [], logNext: null};
   const node = (tag, cls, text) => {
     const item = document.createElement(tag);
     if (cls) item.className = cls;
@@ -66,7 +67,20 @@
       runtime_active: "The runtime must be confirmed stopped before this action.",
       idempotency_conflict: "This request key was already used with different inputs. Reopen the form and try again.",
       invalid_reconciliation_evidence: "Provide verified publication or nonpublication evidence.",
-      job_not_found: "This job is unavailable or your access has been removed."
+      job_not_found: "This job is unavailable or your access has been removed.",
+      study_not_found: "This study is unavailable or is no longer accepting applications.",
+      study_creator_required: "Your account cannot create studies. Contact Org S to request permission.",
+      invalid_study_fields: "Enter a study name of at most 200 characters on one line.",
+      study_registration_closed: "This study is not accepting applications. Your existing approval or pending request is unchanged.",
+      study_application_version_conflict: "This request changed. Refresh before reviewing it.",
+      study_application_not_pending: "This request is no longer pending. Refresh to see its current status.",
+      participant_already_approved: "That participant name is already assigned. Choose another name.",
+      study_approval_required: "Every participant must request to join this study and receive Org P approval.",
+      study_version_conflict: "This study or request changed. Refresh before trying again.",
+      study_participant_id_taken: "That participant name already belongs to an approved participant. Choose another name.",
+      study_has_active_jobs: "Finish or cancel active jobs before enabling study signup.",
+      study_already_approved: "Your participation has already been approved.",
+      study_application_pending: "You already have a request awaiting review."
     };
     const detail = typeof error.detail === "string" ? error.detail : "";
     return help[code] || detail || (code ? human(code) : error.message || "The request failed. Try again.");
@@ -96,18 +110,30 @@
     return result;
   }
   function expireSession() {
-    state.authenticated = false;
+    state.identityGeneration++; state.authenticated = false;
+    clearStudyCreation(); $("create-study-button").hidden = true;
     if (state.stream) state.stream.close();
     clearTimeout(state.reconnect);
     state.streamLive = false;
     $("application").hidden = true; $("login-panel").hidden = false;
     $("identity").textContent = ""; $("logout-button").hidden = true;
-    $("jobs-content").replaceChildren(); $("detail-panel").replaceChildren(); $("operations-panel").replaceChildren(); $("summary").replaceChildren();
-    state.job = null; state.supplemental = {}; state.logs = [];
+    $("jobs-content").replaceChildren(); $("detail-panel").replaceChildren(); $("operations-panel").replaceChildren(); $("studies-panel").replaceChildren(); $("summary").replaceChildren();
+    state.job = null; state.catalog = null; state.supplemental = {}; state.logs = []; state.studyId = null; state.studyDirty = false; state.studyCursor = null; state.studyPrevious = []; state.studyApplicationCursor = null; state.studyApplicationPrevious = [];
     document.querySelectorAll("dialog[open]").forEach((dialog) => dialog.close());
     connection("Session expired", false);
     notice("session-notice", "");
     $("login-panel").querySelector("p").textContent = "Your session expired or access was revoked. Sign in again to retrieve current authorization.";
+  }
+  function acceptCurrentSession(info) {
+    const previous = state.session?.principal?.principal_id;
+    const current = info?.principal?.principal_id;
+    if (!info?.authenticated || !current) {expireSession(); return false;}
+    if (previous && previous !== current) {
+      expireSession();
+      $("login-panel").querySelector("p").textContent = "Your signed-in account changed in another tab. Sign in again to retrieve that account’s current permissions.";
+      return false;
+    }
+    state.session = info; updateStudyCreation(); return true;
   }
   function connection(label, live) {
     $("connection-label").textContent = label;
@@ -140,19 +166,23 @@
     const [path, params] = raw.split("?");
     const segments = path.split("/");
     document.querySelectorAll("dialog[open]").forEach((dialog) => dialog.close());
-    const nextView = segments[0] === "job" ? "job" : (["current", "queued", "history", "operations"].includes(segments[0]) ? segments[0] : "current");
+    const nextView = segments[0] === "job" ? "job" : segments[0] === "study" ? "study" : (["current", "queued", "history", "operations", "studies"].includes(segments[0]) ? segments[0] : "current");
     if (nextView !== state.view) {resetPagination(); state.search = ""; state.filter = ""; $("job-search").value = ""; $("state-filter").value = "";}
+    state.studyDirty = false; state.studyCursor = null; state.studyPrevious = []; state.studyApplicationCursor = null; state.studyApplicationPrevious = [];
     state.view = nextView;
     state.tab = new URLSearchParams(params || "").get("tab") || "overview";
     if (!["overview", "logs", "artifacts", "access"].includes(state.tab)) state.tab = "overview";
-    try {state.jobId = nextView === "job" ? decodeURIComponent(segments[1] || "") : null;} catch (_) {state.jobId = ""; }
+    try {state.jobId = nextView === "job" ? decodeURIComponent(segments[1] || "") : null; state.studyId = nextView === "study" ? decodeURIComponent(segments[1] || "") : null;} catch (_) {state.jobId = ""; state.studyId = "";}
     state.logCursor = null; state.logs = []; state.logNext = null;
-    document.querySelectorAll(".nav-link").forEach((link) => {const selected = link.dataset.view === state.view; link.classList.toggle("active", selected); if (selected) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");});
-    $("list-panel").hidden = ["job", "operations"].includes(state.view);
-    $("summary").hidden = ["job", "operations"].includes(state.view);
+    document.querySelectorAll(".nav-link").forEach((link) => {const selected = link.dataset.view === (state.view === "study" ? "studies" : state.view); link.classList.toggle("active", selected); if (selected) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");});
+    $("list-panel").hidden = ["job", "operations", "studies", "study"].includes(state.view);
+    $("summary").hidden = ["job", "operations", "studies", "study"].includes(state.view);
     $("detail-panel").hidden = state.view !== "job";
     $("operations-panel").hidden = state.view !== "operations";
-    const titles = {current: ["Current jobs", "Follow active training and resource provisioning."], queued: ["Job queue", "Resource requests waiting for admission. Queue reasons are current; no estimated start time is implied."], history: ["Job history", "Completed, cancelled, and failed jobs you are authorized to access."], job: ["Job detail", "Private job progress, execution history, and retained results."], operations: ["Resource health", "Capacity, sandbox qualification, quarantine, and cleanup for platform operators."]};
+    $("studies-panel").hidden = !["studies", "study"].includes(state.view);
+    $("create-button").hidden = ["studies", "study"].includes(state.view) || !(state.catalog?.projects || []).length;
+    updateStudyCreation();
+    const titles = {studies: ["Studies", "Find a study, request to participate, and follow Org P’s review."], study: ["Study enrollment", "Participation requires your own request and Org P’s explicit approval."], current: ["Current jobs", "Follow active training and resource provisioning."], queued: ["Job queue", "Resource requests waiting for admission. Queue reasons are current; no estimated start time is implied."], history: ["Job history", "Completed, cancelled, and failed jobs you are authorized to access."], job: ["Job detail", "Private job progress, execution history, and retained results."], operations: ["Resource health", "Capacity, sandbox qualification, quarantine, and cleanup for platform operators."]};
     $("page-title").textContent = titles[state.view][0]; $("page-description").textContent = titles[state.view][1]; $("breadcrumb-title").textContent = titles[state.view][0];
     $("page-eyebrow").textContent = state.view === "operations" ? "Platform operations" : "Federated learning";
     updateStateOptions();
@@ -173,12 +203,26 @@
     try {
       if (state.view === "job") await loadJob(routeKey);
       else if (state.view === "operations") await loadOperations();
+      else if (["studies", "study"].includes(state.view)) {
+        // Editing must never suppress account-change or session checks.
+        const generation = state.identityGeneration;
+        const session = await api("/session");
+        if (!state.authenticated || generation !== state.identityGeneration || !acceptCurrentSession(session)) return;
+        if (!state.studyDirty) await loadStudies(routeKey);
+      }
       else await loadList(routeKey);
       $("updated-label").textContent = "Updated " + new Date().toLocaleTimeString(undefined, {hour: "2-digit", minute: "2-digit", second: "2-digit"});
     } catch (error) {
       if (state.authenticated) {
         notice("page-error", errorMessage(error));
-        if (state.cursor && ["invalid_cursor", "cursor_expired"].includes(error.code)) {resetPagination(); state.refreshAgain = true;}
+        if (["invalid_cursor", "cursor_expired"].includes(error.code)) {
+          if (state.cursor) {resetPagination(); state.refreshAgain = true;}
+          if (["studies", "study"].includes(state.view) && (state.studyCursor || state.studyApplicationCursor)) {
+            state.studyCursor = null; state.studyPrevious = []; state.studyApplicationCursor = null; state.studyApplicationPrevious = [];
+            state.refreshAgain = !state.studyDirty;
+          }
+        }
+        if (["studies", "study"].includes(state.view) && [403, 404].includes(error.status)) {$("studies-panel").replaceChildren(empty("Study unavailable", "This study is unavailable or your current account is not permitted to view it."));}
         if (state.view === "job" && [403, 404].includes(error.status)) {state.job = null; $("detail-panel").replaceChildren(empty("Job unavailable", "Your current authorization does not permit access to this job."));}
       }
     } finally {
@@ -459,6 +503,168 @@ if (result.next_cursor) panel.append(button("Load more artifacts", async () => {
     }
     wrap.append(panel);
   }
+
+  function clearStudyCreation() {
+    state.studyCreateRequest = null; state.studyCreatePending = false;
+    $("create-study-form").reset(); notice("create-study-error", "");
+    $("create-study-form").querySelectorAll("button, input").forEach((control) => {control.disabled = false;});
+    $("submit-study").textContent = "Create study";
+    if ($("create-study-dialog").open) $("create-study-dialog").close();
+  }
+  function updateStudyCreation() {
+    const allowed = state.authenticated && state.session?.can_create_study === true;
+    $("create-study-button").hidden = !allowed || state.view !== "studies";
+    if (!allowed) clearStudyCreation();
+  }
+  async function submitStudy(event) {
+    event.preventDefault();
+    if (state.studyCreatePending || !state.authenticated || state.session?.can_create_study !== true) return;
+    const form = $("create-study-form"), name = form.elements.name.value.trim();
+    if (!name) {notice("create-study-error", "Enter a study name."); return;}
+    const generation = state.identityGeneration;
+    if (!state.studyCreateRequest || state.studyCreateRequest.name !== name) state.studyCreateRequest = {name, key: uuid()};
+    state.studyCreatePending = true; notice("create-study-error", "");
+    const controls = Array.from(form.querySelectorAll("button, input")); controls.forEach((control) => {control.disabled = true;});
+    $("submit-study").textContent = "Creating…";
+    try {
+      const result = await api("/studies", {method: "POST", body: {name}, key: state.studyCreateRequest.key});
+      if (!state.authenticated || generation !== state.identityGeneration || state.session?.can_create_study !== true) return;
+      clearStudyCreation(); state.studyDirty = false; state.studyCursor = null; state.studyPrevious = [];
+      toast("Study created. You can manage participant signup and requests.");
+      location.hash = "#study/" + encodeURIComponent(result.id || result.project_id);
+    } catch (error) {
+      if (!state.authenticated || generation !== state.identityGeneration || state.session?.can_create_study !== true) return;
+      notice("create-study-error", errorMessage(error)); $("create-study-error").focus();
+    } finally {
+      if (generation === state.identityGeneration) {state.studyCreatePending = false; controls.forEach((control) => {control.disabled = false;}); $("submit-study").textContent = "Create study";}
+    }
+  }
+  function studyPath(id) {return "/studies/" + encodeURIComponent(id);}
+  function studyField(label, input, hint) {
+    return append(node("label", "wide-label"), node("span", "", label), input, hint ? node("span", "field-help", hint) : null);
+  }
+  function studyError() {const el = node("div", "notice error"); el.setAttribute("role", "alert"); el.tabIndex = -1; el.hidden = true; return el;}
+  function studyWatch(form) {form.addEventListener("input", () => {state.studyDirty = true;}); return form;}
+  async function studyMutate(form, error, request, message) {
+    const generation = state.identityGeneration;
+    error.hidden = true; error.textContent = ""; state.studyDirty = true;
+    const controls = Array.from(form.querySelectorAll("button")); controls.forEach((b) => {b.disabled = true;});
+    const signature = JSON.stringify([request.path, request.body, request.entity?.version]);
+    if (!form.studyRequest || form.studyRequest.signature !== signature) form.studyRequest = {signature, key: uuid()};
+    try {
+      await api(request.path, {method: request.method || "POST", body: request.body, job: request.entity, key: form.studyRequest.key});
+      if (!state.authenticated || generation !== state.identityGeneration) return;
+      state.studyDirty = false; toast(message); await refresh();
+    } catch (failure) {
+      if (!state.authenticated || generation !== state.identityGeneration) return;
+      error.textContent = errorMessage(failure); error.hidden = false; error.focus();
+    } finally {controls.forEach((b) => {b.disabled = false;});}
+  }
+  async function loadStudies(routeKey) {
+    const generation = state.identityGeneration;
+    const panel = $("studies-panel");
+    if (state.view === "studies") {
+      const result = await api("/studies?" + query({limit: 50, cursor: state.studyCursor}));
+      if (!state.authenticated || generation !== state.identityGeneration || location.hash !== routeKey || state.studyDirty) return;
+      panel.replaceChildren();
+      panel.append(node("p", "muted study-intro", "A study brings organizations together to train a model. Sign in with your own account, request to participate, and wait for Org P to approve you."));
+      const studies = list(result);
+      if (!studies.length) panel.append(empty("No studies available", "Org P must open study signup before new participants can apply. Studies with your existing requests remain visible when signup closes."));
+      else {
+        const grid = node("div", "study-grid");
+        studies.forEach((study) => {
+          const item = card(study.name || study.id);
+          const link = node("a", "job-name", "View study"); link.href = "#study/" + encodeURIComponent(study.id || study.project_id);
+          const status = study.my_application?.status || (!study.registration_enabled ? "not enabled" : study.registration_open ? "accepting requests" : "signup closed");
+          item.append(badge(status), node("p", "study-description", study.description || "Org P has not added a study description."));
+          if (study.can_manage) item.append(node("p", "field-help", "You manage study signup and review participant requests."));
+          item.append(link); grid.append(item);
+        });
+        panel.append(grid);
+      }
+      const controls = node("div", "pagination");
+      const previous = button("Previous studies", () => {state.studyCursor = state.studyPrevious.pop() || null; refresh();}, "small"); previous.disabled = !state.studyPrevious.length;
+      const next = button("More studies", () => {state.studyPrevious.push(state.studyCursor); state.studyCursor = result.next_cursor; refresh();}, "small"); next.disabled = !result.next_cursor;
+      append(controls, previous, next); panel.append(controls); return;
+    }
+    const id = state.studyId;
+    if (!id) throw new Error("Select a study from the studies page.");
+    const study = await api(studyPath(id));
+    if (!state.authenticated || generation !== state.identityGeneration || location.hash !== routeKey || state.studyDirty) return;
+    let applications = null;
+    if (study.can_manage && study.registration_enabled) applications = await api(studyPath(id) + "/applications?" + query({limit: 50, cursor: state.studyApplicationCursor}));
+    if (!state.authenticated || generation !== state.identityGeneration || location.hash !== routeKey || state.studyDirty) return;
+    $("page-title").textContent = study.name || "Study enrollment";
+    $("breadcrumb-title").textContent = study.name || "Study enrollment";
+    panel.replaceChildren();
+    const back = node("a", "button small", "All studies"); back.href = "#studies";
+    panel.append(append(node("div", "study-back"), back), card("About this study", node("p", "study-description", study.description || "Org P has not added a study description."), node("p", "muted", study.registration_open ? "Signup is open. Every participant must submit their own request and receive Org P approval." : study.registration_enabled ? "Signup is closed. Existing approvals and pending requests still apply." : "Org P has not enabled participant signup for this project.")));
+    if (study.registration_enabled) renderStudyParticipation(panel, study);
+    if (study.can_manage) {
+      renderStudySettings(panel, study);
+      if (applications) renderStudyApplications(panel, study, applications);
+    }
+  }
+  function renderStudyParticipation(panel, study) {
+    const application = study.my_application;
+    const section = card("Your participation"); section.id = "study-participation";
+    if (application) {
+      section.append(badge(application.status), keyValues([["Participant name", application.participant_id], ["Requested", when(application.created_at, true)], ["Last updated", when(application.updated_at, true)]]));
+      if (application.review_reason) section.append(node("p", "study-description", "Org P’s response: " + application.review_reason));
+      if (application.status === "pending") {
+        section.append(node("p", "muted", "Your request is awaiting Org P’s review. A pending request grants no access to study jobs, models, or training instructions."));
+        const form = node("form"), error = studyError();
+        const submit = node("button", "button small", "Withdraw request"); submit.type = "submit";
+        append(form, error, submit); form.addEventListener("submit", (event) => {event.preventDefault(); studyMutate(form, error, {path: studyPath(study.id || study.project_id) + "/applications/" + encodeURIComponent(application.id) + "/withdraw", body: {}, entity: application}, "Request withdrawn.");});
+        section.append(form);
+      } else if (application.status === "approved") section.append(node("p", "muted", "Org P approved your participation. Org P still selects the jobs and agrees on your training setup. Approval does not grant job creation, administration, or access to unrelated jobs."));
+    }
+    if ((!application || ["rejected", "withdrawn"].includes(application.status)) && study.registration_open) {
+      const form = studyWatch(node("form")); form.id = "study-request-form";
+      const participant = node("input"); participant.name = "participant_id"; participant.required = true; participant.maxLength = 128; participant.pattern = "[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"; participant.autocomplete = "off"; participant.value = application?.participant_id || "";
+      const message = node("textarea"); message.name = "message"; message.rows = 4; message.maxLength = 2000;
+      const error = studyError(), submit = node("button", "button primary", application ? "Send a new request" : "Request to join"); submit.type = "submit";
+      append(form, studyField("Participant name", participant, "Choose a name such as alice. Use letters, numbers, dots, underscores, or hyphens; start with a letter or number."), studyField("Message to Org P (optional)", message, "Describe your organization and interest in the study. Do not include passwords, credentials, or private training data."), error, submit);
+      form.addEventListener("submit", (event) => {event.preventDefault(); studyMutate(form, error, {path: studyPath(study.id || study.project_id) + "/applications", body: {participant_id: participant.value.trim(), message: message.value.trim()}}, "Request sent to Org P for review.");});
+      section.append(form);
+    } else if (!application) section.append(node("p", "muted", "This study is not accepting new requests."));
+    panel.append(section);
+  }
+  function renderStudySettings(panel, study) {
+    const section = card("Org P: signup settings"), form = studyWatch(node("form")); form.id = "study-settings-form";
+    section.append(node("p", "muted", "Enabling study signup makes self-registration and Org P approval mandatory for participants. Closing signup later does not remove this requirement or existing approvals."));
+    const description = node("textarea"); description.name = "description"; description.rows = 4; description.maxLength = 2000; description.value = study.description || "";
+    const open = node("input"); open.type = "checkbox"; open.name = "registration_open"; open.checked = !study.registration_enabled || !!study.registration_open;
+    const label = append(node("label", "study-checkbox"), open, node("span", "", "Accept new participant requests"));
+    const error = studyError(), submit = node("button", "button primary", study.registration_enabled ? "Save signup settings" : "Enable study signup"); submit.type = "submit";
+    append(form, studyField("Study description", description), label, error, submit);
+    form.addEventListener("submit", (event) => {event.preventDefault(); studyMutate(form, error, {path: studyPath(study.id || study.project_id) + "/settings", method: "PUT", body: {description: description.value.trim(), registration_open: open.checked}, entity: study}, "Study signup settings saved.");});
+    section.append(form); panel.append(section);
+  }
+  function renderStudyApplications(panel, study, result) {
+    const section = card("Org P: participant requests"); section.id = "study-applications";
+    section.append(node("p", "muted", "Review each person’s request before approving participation. Approval never grants project administration, job creation, or automatic access to other jobs."));
+    if (!list(result).length) section.append(empty("No requests yet", "Participants must sign in and submit their own requests."));
+    list(result).forEach((application) => {
+      const item = node("article", "study-application"); item.dataset.application = application.id;
+      append(item, append(node("div", "health-row"), node("h3", "", application.participant_id), badge(application.status)), keyValues([["Verified account", application.principal_id, true], ["Requested", when(application.created_at, true)]]));
+      if (application.message) item.append(node("p", "study-description", application.message));
+      if (application.review_reason) item.append(node("p", "muted", "Review response: " + application.review_reason));
+      if (application.status === "pending") {
+        const form = studyWatch(node("form")), reason = node("textarea"); reason.name = "reason"; reason.rows = 2; reason.maxLength = 1000;
+        const error = studyError(), approve = node("button", "button primary small", "Approve"), reject = node("button", "button small", "Reject"); approve.type = "submit"; reject.type = "button";
+        append(form, studyField("Response to participant (optional)", reason), error, append(node("div", "flex-row"), approve, reject));
+        const decide = (action) => studyMutate(form, error, {path: studyPath(study.id || study.project_id) + "/applications/" + encodeURIComponent(application.id) + "/" + action, body: {reason: reason.value.trim()}, entity: application}, action === "approve" ? "Participant approved." : "Request rejected.");
+        form.addEventListener("submit", (event) => {event.preventDefault(); decide("approve");}); reject.addEventListener("click", () => decide("reject")); item.append(form);
+      }
+      section.append(item);
+    });
+    const controls = node("div", "pagination");
+    const previous = button("Previous requests", () => {state.studyDirty = false; state.studyApplicationCursor = state.studyApplicationPrevious.pop() || null; refresh();}, "small"); previous.disabled = !state.studyApplicationPrevious.length;
+    const next = button("More requests", () => {state.studyDirty = false; state.studyApplicationPrevious.push(state.studyApplicationCursor); state.studyApplicationCursor = result.next_cursor; refresh();}, "small"); next.disabled = !result.next_cursor;
+    append(controls, previous, next); section.append(controls); panel.append(section);
+  }
+
   async function loadOperations() {
     if (!operator()) throw new Error("Platform operator access is required.");
     const result = await api("/pools"); const pools = list(result); const container = $("operations-panel"); container.replaceChildren();
@@ -624,7 +830,7 @@ if (result.next_cursor) panel.append(button("Load more artifacts", async () => {
   }
   async function initialize() {
     try {
-      const info = await api("/session"); state.session = info;
+      const info = await api("/session"); state.identityGeneration++; state.session = info;
       state.authenticated = info.authenticated !== false && !!info.principal;
       $("login-link").href = info.login_url === "/auth/login" ? info.login_url : "/auth/login";
       if (!state.authenticated) {$("login-panel").hidden = false; connection("Sign in required", false); return;}
@@ -641,10 +847,13 @@ if (result.next_cursor) panel.append(button("Load more artifacts", async () => {
       connection("Connection unavailable", false);
     }
   }
-  $("refresh-button").addEventListener("click", refresh);
+  $("refresh-button").addEventListener("click", () => {state.studyDirty = false; refresh();});
   $("create-button").addEventListener("click", openCreate);
   $("create-project").addEventListener("change", updateProjectFields);
   $("create-form").addEventListener("submit", submitCreate);
+  $("create-study-button").addEventListener("click", () => {if (state.session?.can_create_study === true) {$("create-study-dialog").showModal(); $("create-study-form").elements.name.focus();}});
+  $("create-study-form").addEventListener("submit", submitStudy);
+  $("create-study-form").addEventListener("input", () => {state.studyCreateRequest = null; notice("create-study-error", "");});
   $("action-form").addEventListener("submit", submitAction);
   $("member-form").addEventListener("submit", submitMember);
   document.querySelectorAll("[data-close]").forEach((b) => b.addEventListener("click", () => $(b.dataset.close).close()));
@@ -655,8 +864,8 @@ if (result.next_cursor) panel.append(button("Load more artifacts", async () => {
   $("logout-button").addEventListener("click", async () => {try {await api("/auth/logout", {method: "POST"}); expireSession(); $("login-panel").querySelector("p").textContent = "You have signed out. Sign in to retrieve current job authorization.";} catch (error) {notice("page-error", errorMessage(error));}});
   window.addEventListener("hashchange", route);
   document.addEventListener("visibilitychange", () => {if (!document.hidden && state.authenticated) refresh();});
-  setInterval(() => {if (state.authenticated && !document.hidden && (!state.streamLive || state.view === "operations")) refresh();}, 10000);
+  setInterval(() => {if (state.authenticated && !document.hidden && (!state.streamLive || ["operations", "studies", "study"].includes(state.view))) refresh();}, 10000);
   // Revalidate the session even while SSE is healthy; identity checks stay server-side.
-  setInterval(async () => {if (!state.authenticated) return; try {const session = await api("/session"); if (!session.authenticated) expireSession(); else state.session = session;} catch (error) {if (error.status === 401) expireSession();}}, 60000);
+  setInterval(async () => {if (!state.authenticated) return; const generation = state.identityGeneration; try {const session = await api("/session"); if (state.authenticated && generation === state.identityGeneration) acceptCurrentSession(session);} catch (error) {if (error.status === 401) expireSession();}}, 60000);
   initialize();
 })();

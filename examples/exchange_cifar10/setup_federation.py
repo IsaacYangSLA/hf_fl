@@ -7,7 +7,7 @@ from pathlib import Path
 import uuid
 
 from common import run_hf2l, write_json_exclusive
-from hf2l_exchange.auth import principal_id
+from hf2l_exchange.domain import principal_id
 from hf2l_exchange.client import ExchangeClient
 
 

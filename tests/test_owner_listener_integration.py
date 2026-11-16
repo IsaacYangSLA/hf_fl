@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -183,30 +182,18 @@ class LocalOwnerListenerIntegrationTests(unittest.TestCase):
 
 # Import only the shared fixture, so unittest does not collect another module's
 # integration test classes as additional tests here.
-_exchange_available = all(importlib.util.find_spec(name) is not None for name in (
-    "boto3", "moto", "sqlalchemy", "jwt", "fastapi", "hf2l_exchange"))
-if not _exchange_available and os.environ.get("EXCHANGE_REQUIRE_TESTS") == "1":
-    raise ImportError("Owner listener integration requires the exchange service/test dependencies")
-if _exchange_available:
-    _spec = importlib.util.spec_from_file_location(
-        "owner_listener_exchange_support", ROOT / "packages/exchange/tests/support.py")
-    _support = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(_support)
-    _ExchangeTestCase = _support.ExchangeTestCase
-else:
-    _ExchangeTestCase = unittest.TestCase
+from tests.support.native_exchange import ExchangeTestCase as _ExchangeTestCase, exchange_available as _exchange_available
 
 
 @unittest.skipUnless(_exchange_available and os.name == "posix",
-                     "Exchange integration dependencies and POSIX locks are required")
+                     "Native Go Exchange integration resources and POSIX locks are required")
 class ExchangeOwnerListenerIntegrationTests(_ExchangeTestCase):
     def sdk(self, subject):
         from hf2l_exchange.client import ExchangeClient
-        from hf2l_exchange.worker import tick
 
         client = ExchangeClient(
-            "http://127.0.0.1", self.auth(subject)["Authorization"].split(" ", 1)[1],
-            http=self.client, allow_local_http=True, sleep=lambda _: tick(self.transfers))
+            self.endpoint, self.auth(subject)["Authorization"].split(" ", 1)[1],
+            http=self.client, allow_local_http=True)
         self.addCleanup(client.close)
         return client
 
@@ -214,7 +201,7 @@ class ExchangeOwnerListenerIntegrationTests(_ExchangeTestCase):
         return ClientListener(
             store, repo_id=self.federation, participant=participant,
             state_dir=self.directory / ("client-" + participant),
-            source_id="http://127.0.0.1", training_id="owner-integration-increment-v1",
+            source_id=self.endpoint, training_id="owner-integration-increment-v1",
             train_model=train_increment,
         )
 
@@ -224,7 +211,7 @@ class ExchangeOwnerListenerIntegrationTests(_ExchangeTestCase):
                 repo_id=self.federation, output_dir=self.directory / "owner-output",
                 publish=True, minimum_participants=2, array_backend="numpy",
                 claim_lease_seconds=10, require_concurrent_publication=True),
-            state_dir=self.directory / "owner-listener", source_id="http://127.0.0.1",
+            state_dir=self.directory / "owner-listener", source_id=self.endpoint,
         )
 
     def test_owner_and_authenticated_clients_coordinate_two_fenced_rounds(self):

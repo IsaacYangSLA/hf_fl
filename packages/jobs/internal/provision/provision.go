@@ -318,6 +318,9 @@ func (p *Provisioner) validateCatalogTx(ctx context.Context, tx *store.Tx, spec 
 			return refused("runtime_image_not_approved")
 		}
 		for _, participant := range spec.Participants {
+			if _, e := store.StudyParticipantPrincipal(ctx, tx, spec.ProjectID, participant.ParticipantID); e != nil {
+				return e
+			}
 			row, e := tx.One(ctx, "SELECT * FROM jm_participant_bindings WHERE id = ?", participant.DatasetBinding)
 			if e != nil {
 				return e

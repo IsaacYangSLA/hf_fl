@@ -46,7 +46,8 @@ Private updates are accessible to their author and the authorized owner.
 
 ## 1. Install in the source checkout
 
-Use Python 3.11 or later. Run every command below from the repository root
+Use Python 3.11 or later for the application and Go 1.26 or later to build the
+Exchange server. Run every command below from the repository root
 using the project `.venv`. In this quick start, terminals A–D are on the
 same trusted operator's machine and share this installation. Create it if it
 does not exist:
@@ -56,9 +57,17 @@ python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 # CPU PyTorch; skip this line if the environment already has suitable PyTorch.
 .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-.venv/bin/python -m pip install -e './packages/exchange[server]' \
-  -e '.[examples,exchange,exchange-test]'
+.venv/bin/python -m pip install -e ./packages/exchange \
+  -e '.[examples,exchange,exchange-test]' \
+  boto3 'moto[s3,server]>=5,<6' 'PyJWT[crypto]>=2.9,<3'
+mkdir -p dist
+go -C packages/exchange build -trimpath -o ../../dist/hf2l-exchange ./cmd/hf2l-exchange
 ```
+
+Boto3 operates the temporary storage bucket; Moto supplies the optional local
+storage simulation. PyJWT and Cryptography create the example's test credentials.
+The Go build command produces `dist/hf2l-exchange`: `-C` selects its package
+directory, `-trimpath` removes build-machine paths, and `-o` selects the output.
 
 The examples extra supplies the model's Hugging Face serialization dependency;
 this scenario does not contact a Hugging Face repository. It does not require
@@ -96,11 +105,15 @@ NPZ paths, so the VGG plugin's synthetic-data fallback is never selected.
 
 ```bash
 .venv/bin/python examples/exchange_cifar10/start_service.py \
+  --exchange-binary "$PWD/dist/hf2l-exchange" \
   --work-dir work/exchange-cifar10/service --emulated-storage
 ```
 
 Wait for `Exchange ready`. Keep this terminal open through all rounds. The
-launcher runs the actual API and worker with SQLite and a local Moto S3 emulator.
+Python launcher is an operator tool: it starts the native Go API and worker
+with SQLite and a local Moto S3 emulator. It does not implement a Python
+Exchange server. The required `--exchange-binary` argument selects the built
+Go executable; `$PWD` is the current repository directory.
 It creates a unique versioned bucket and three private token files:
 
 ```text
@@ -372,6 +385,7 @@ authenticated, compatible S3 endpoint:
 ```bash
 # Configure the server's usual AWS credential chain outside the command line.
 .venv/bin/python examples/exchange_cifar10/start_service.py \
+  --exchange-binary "$PWD/dist/hf2l-exchange" \
   --work-dir work/exchange-cifar10/service-s3 \
   --s3-endpoint https://YOUR-S3-ENDPOINT --s3-region us-east-1
 ```

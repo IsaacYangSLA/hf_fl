@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -158,30 +157,18 @@ class LocalListenerIntegrationTests(unittest.TestCase):
 
 # Load only the shared resource fixture, avoiding importing/collecting the
 # existing end-to-end test classes a second time.
-_exchange_available = all(importlib.util.find_spec(name) is not None for name in (
-    "boto3", "moto", "sqlalchemy", "jwt", "fastapi", "hf2l_exchange"))
-if not _exchange_available and os.environ.get("EXCHANGE_REQUIRE_TESTS") == "1":
-    raise ImportError("Listener Exchange integration requires the exchange service/test dependencies")
-if _exchange_available:
-    _spec = importlib.util.spec_from_file_location(
-        "listener_exchange_test_support", ROOT / "packages/exchange/tests/support.py")
-    _support = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(_support)
-    _ExchangeTestCase = _support.ExchangeTestCase
-else:
-    _ExchangeTestCase = unittest.TestCase
+from tests.support.native_exchange import ExchangeTestCase as _ExchangeTestCase, exchange_available as _exchange_available
 
 
 @unittest.skipUnless(_exchange_available and os.name == "posix",
-                     "Exchange integration dependencies and POSIX locks are required")
+                     "Native Go Exchange integration resources and POSIX locks are required")
 class ExchangeListenerIntegrationTests(_ExchangeTestCase):
     def sdk(self, subject):
         from hf2l_exchange.client import ExchangeClient
-        from hf2l_exchange.worker import tick
 
         client = ExchangeClient(
-            "http://127.0.0.1", self.auth(subject)["Authorization"].split(" ", 1)[1],
-            http=self.client, allow_local_http=True, sleep=lambda _: tick(self.transfers))
+            self.endpoint, self.auth(subject)["Authorization"].split(" ", 1)[1],
+            http=self.client, allow_local_http=True)
         self.addCleanup(client.close)
         return client
 
@@ -189,7 +176,7 @@ class ExchangeListenerIntegrationTests(_ExchangeTestCase):
         return ClientListener(
             store, repo_id=self.federation, participant=participant,
             state_dir=self.directory / ("listener-" + participant),
-            source_id="http://127.0.0.1", training_id="test-increment-v1",
+            source_id=self.endpoint, training_id="test-increment-v1",
             train_model=train_increment,
         )
 

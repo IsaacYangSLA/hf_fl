@@ -109,7 +109,7 @@ const panels = diagrams.map(diagram => `
 
 const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HF²L · Call sequences</title>
+<title>HF²L · Historical call sequences</title>
 <style>
 :root{font-family:Arial,sans-serif;color:#162c46;background:#f2f5f9;color-scheme:light}
 *{box-sizing:border-box}body{margin:0}header{background:#142b46;color:#fff;padding:32px max(24px,calc((100vw - 1440px)/2)) 28px}
@@ -127,16 +127,16 @@ output{font-size:13px;color:#526880;min-width:52px}.viewport{overflow:auto;max-h
 details{border-top:1px solid #e2e9f1;padding:16px 24px}summary{cursor:pointer;color:#254a74;font-weight:600;font-size:14px}
 pre{overflow:auto;font-size:12px;line-height:1.6;color:#33465f;background:#f5f7fa;padding:18px;border-radius:6px;max-height:440px}
 .context{display:grid;grid-template-columns:1fr 1fr;gap:28px;font-size:14px;line-height:1.65;color:#50647d}.context h3{font-size:14px;color:#162c46;margin:0 0 6px}.context p{margin:0}
-a{color:#255c93}footer{font-size:12px;color:#61738b;margin-top:22px;padding-top:16px;border-top:1px solid #d6e0ec}
+a{color:#255c93}header a{color:#fff}footer{font-size:12px;color:#61738b;margin-top:22px;padding-top:16px;border-top:1px solid #d6e0ec}
 @media(max-width:640px){header{padding:24px}h1{font-size:27px}main{padding:16px}.panel-heading{padding:20px}.context{grid-template-columns:1fr;gap:18px}.viewport{padding:10px}}
 @media print{header{background:white;color:#162c46;padding:0 0 16px}header p{color:#50647d}main{max-width:none;padding:0}nav,.toolbar,details{display:none!important}.panel,.panel[hidden]{display:block;break-before:page;border:none}.panel-heading{padding:16px 0}.viewport{max-height:none;overflow:visible;padding:0}.viewport svg{width:100%!important;max-width:100%!important}.context{display:block}.context>div{margin-top:16px}footer{break-inside:avoid}}
 </style></head><body>
-<header><p class="eyebrow">HF²L / ARCHITECTURE V3 · EXCHANGE API V2</p><h1>From metadata to model publication</h1>
-<p>Call sequences traced from the current implementation. Follow the generic file exchange first, then see how federated learning uses the same service and storage.</p></header>
+<header><p class="eyebrow">HF²L / HISTORICAL PYTHON SERVICE · EXCHANGE API V2</p><h1>Historical call sequences</h1>
+<p>These diagrams record the earlier Python-service implementation. They preserve protocol and recovery design context, including obsolete Python worker and credential details. See the <a href="../ARCHITECTURE_V3.md">current architecture</a> and <a href="../EXCHANGE_V3.md">Exchange runbook</a> for the Go services.</p></header>
 <main><nav aria-label="Choose a call sequence">${diagrams.map(d => `<a href="#${d.id}">${escape(d.title)}</a>`).join('')}</nav>
 ${panels}
 <div class="context"><div><h3>Reading the diagrams</h3><p>Solid arrows are calls; dashed arrows are responses. Notes group prerequisites and intentional omissions. Routes are relative to the space prefix identified in each diagram. The API lane includes authentication, transactional application commands, and transfer orchestration.</p></div>
-<div><h3>Scope and current limitations</h3><p>These views cover the independent Exchange backend, multipart retry, cancellation and worker isolation, and owner-controlled FedAvg with acquisition recovery. Identity provisioning, HF/JFrog transports, and the complete failure state machine are outside this view. Existing implementation gaps remain: see the <a href="../ARCHITECTURE_V3.md#current-implementation-limitations">v3 limitations</a> and <a href="../EXCHANGE_V3.md">service runbook</a>.</p></div></div>
+<div><h3>Scope and current limitations</h3><p>These views cover the independent Exchange backend, multipart retry, cancellation and worker isolation, and owner-controlled FedAvg with acquisition recovery. Identity provisioning, HF/JFrog transports, and the complete failure state machine are outside this view. For current implementation limitations, see the <a href="../ARCHITECTURE_V3.md#current-implementation-limitations">v3 limitations</a> and <a href="../EXCHANGE_V3.md">service runbook</a>.</p></div></div>
 <footer>Rendered from editable Mermaid sources. All diagrams and source text are embedded; this page makes no network requests. <a href="README.md">Source map and regeneration instructions</a>.</footer>
 </main>
 <script>

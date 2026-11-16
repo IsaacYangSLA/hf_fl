@@ -1,83 +1,8 @@
-"""Transport- and persistence-independent exchange values and failures."""
+"""Lightweight identity helper shared by Exchange clients and project setup."""
 import hashlib
 import json
-from dataclasses import dataclass
-from typing import Mapping, Protocol, runtime_checkable
-
-from .vocabulary import ROLES, TERMINAL_RECORD_STATES
-
-
-class ExchangeError(Exception):
-    def __init__(self, status: int, code: str, detail: str = "", headers: Mapping[str, str] | None = None):
-        super().__init__(detail or code)
-        self.status = status
-        self.code = code
-        self.detail = detail or code
-        self.headers = dict(headers or {})
-
-
-Error = ExchangeError
 
 
 def principal_id(issuer: str, subject: str) -> str:
-    """Stable generic identity shared by transport auth and domain commands."""
+    """Derive the stable account identifier from its exact issuer and subject."""
     return hashlib.sha256(json.dumps([issuer, subject], separators=(",", ":")).encode()).hexdigest()
-
-
-@dataclass(frozen=True)
-class WorkloadIdentity:
-    grant_id: str
-    space_id: str
-    job_id: str
-    attempt_id: str
-    component_id: str
-    epoch: int
-    certificate_thumbprint: str
-    expires_at: float
-
-
-@dataclass(frozen=True)
-class Principal:
-    id: str
-    subject: str
-    bootstrap_admin: bool = False
-    workload: WorkloadIdentity | None = None
-
-
-@dataclass(frozen=True)
-class RecordIdentity:
-    id: str
-    space_id: str
-    kind: str
-    schema_revision_id: str
-
-
-@dataclass(frozen=True)
-class ReferenceVersion:
-    record_id: str
-    generation: int
-
-    @property
-    def token(self) -> str:
-        return str(self.generation)
-
-
-@dataclass(frozen=True)
-class ClaimHandle:
-    id: str
-    fence: int
-    lease_until: float
-
-
-@dataclass(frozen=True)
-class BlobDeclaration:
-    path: str
-    size: int
-    sha256: str
-    media_type: str = "application/octet-stream"
-
-
-@runtime_checkable
-class BlobProvider(Protocol):
-    """Operational health boundary; transfer operations use the storage module contract."""
-    def check(self) -> None: ...

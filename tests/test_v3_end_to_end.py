@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import contextlib
-import importlib.util
 import io
 import json
-import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -142,30 +140,18 @@ class LocalV3EndToEndTests(unittest.TestCase):
         self.assertFalse((trained / "fedavg_submission.json").exists())
 
 
-_fixture = Path(__file__).resolve().parents[1] / "packages/exchange/tests/support.py"
-_exchange_available = all(importlib.util.find_spec(name) is not None for name in (
-    "boto3", "moto", "sqlalchemy", "jwt", "fastapi", "hf2l_exchange"))
-if not _exchange_available and os.environ.get("EXCHANGE_REQUIRE_TESTS") == "1":
-    raise ImportError("The v3 Exchange integration requires the exchange service/test dependencies")
-if _exchange_available:
-    _spec = importlib.util.spec_from_file_location("v3_exchange_test_support", _fixture)
-    _support = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(_support)
-    _ExchangeTestCase = _support.ExchangeTestCase
-else:
-    _ExchangeTestCase = unittest.TestCase
+from tests.support.native_exchange import ExchangeTestCase as _ExchangeTestCase, exchange_available as _exchange_available
 
 
-@unittest.skipUnless(_exchange_available, "Exchange integration dependencies are optional")
+@unittest.skipUnless(_exchange_available, "Native Go Exchange integration resources are optional")
 class ExchangeV3EndToEndTests(_ExchangeTestCase):
     """The same typed NumPy application through authenticated, verified transfers."""
 
     def sdk(self, subject):
         from hf2l_exchange.client import ExchangeClient
-        from hf2l_exchange.worker import tick
         client = ExchangeClient(
-            "http://127.0.0.1", self.auth(subject)["Authorization"].split(" ", 1)[1],
-            http=self.client, allow_local_http=True, sleep=lambda _: tick(self.transfers))
+            self.endpoint, self.auth(subject)["Authorization"].split(" ", 1)[1],
+            http=self.client, allow_local_http=True)
         self.addCleanup(client.close)
         return client
 

@@ -90,43 +90,29 @@ class SDKTests(unittest.TestCase):
             client.register_type("space", "document", schema, publish_roles=[])
         self.assertEqual(bodies[-1]["publish_roles"], [])
 
-    def test_sdk_fedavg_registration_defaults_and_quota_update_through_api(self):
-        try:
-            from fastapi.testclient import TestClient
-            from hf2l_exchange.api import create_app
-            from hf2l_exchange.application import Service
-            from hf2l_exchange.config import DatabaseSettings, Settings
-            from hf2l_exchange.domain import Principal
-            from hf2l_exchange.models import KindPolicy
-            from hf2l_exchange.migrations import initialize
-        except ImportError:
-            self.skipTest("Server dependencies are optional for the standalone SDK")
-        from types import SimpleNamespace
-        settings = Settings(database=DatabaseSettings(url="sqlite:///" + str(self.root / "sdk.db")))
-        service = Service(settings)
-        self.addCleanup(service.engine.dispose)
-        initialize(service.engine)
-        authenticator = SimpleNamespace(authenticate=lambda _: Principal("root", "root", True))
-        app = create_app(settings, service=service, transfers=object(), authenticator=authenticator)
-        with TestClient(app, base_url="https://api.example") as http:
-            client = ExchangeClient("https://api.example", "test", http=http)
-            self.addCleanup(client.close)
-            space = client.create_space("training", profile="fedavg.v1")
-            for kind in ("training.update", "model.global"):
-                revision = client.register_type(space.id, kind, {"type": "object"})
-                self.assertEqual(revision.kind, kind)
-            with service.sessions() as session:
-                training = session.get(KindPolicy, (space.id, "training.update"))
-                global_model = session.get(KindPolicy, (space.id, "model.global"))
-                self.assertEqual((training.publish_roles, training.visibility), (["contributor"], "private"))
-                self.assertEqual((global_model.publish_roles, global_model.visibility), (["publisher"], "shared"))
-            changed = client.update_space_limits(space.id, quota_records=42, principal_quota_bytes=1234)
-            self.assertEqual(changed.quota_records, 42)
-            self.assertEqual(changed.principal_quota_bytes, 1234)
-            self.assertGreater(changed.generation, space.generation)
-            with self.assertRaises(ExchangeError) as rejected:
-                client.register_type(space.id, "training.update", {"type": "object"}, publish_roles=[])
-            self.assertEqual(rejected.exception.status, 422)
+    def test_space_profile_and_quota_update_wire_contract(self):
+        requests = []
+
+        def handler(request):
+            body = json.loads(request.content)
+            requests.append((request.method, request.url.path, body))
+            if request.method == "POST":
+                return httpx.Response(201, json={"id": "training", "name": body["name"],
+                    "profile": body["profile"], "generation": 1})
+            return httpx.Response(200, json={"id": "training", "name": "Training",
+                "profile": "fedavg.v1", "quota_records": body["quota_records"],
+                "principal_quota_bytes": body["principal_quota_bytes"], "generation": 2})
+
+        client = self.client(handler)
+        space = client.create_space("Training", profile="fedavg.v1")
+        self.assertEqual(space.profile, "fedavg.v1")
+        self.assertEqual(requests[0], ("POST", "/v2/spaces",
+                                      {"name": "Training", "profile": "fedavg.v1"}))
+        changed = client.update_space_limits(space.id, quota_records=42, principal_quota_bytes=1234)
+        self.assertEqual(requests[1], ("PATCH", "/v2/spaces/training",
+                                      {"quota_records": 42, "principal_quota_bytes": 1234}))
+        self.assertEqual((changed.quota_records, changed.principal_quota_bytes, changed.generation),
+                         (42, 1234, 2))
 
     def test_lost_create_response_reuses_durable_operation_key(self):
         state_path = self.root / "upload.json"

@@ -49,12 +49,12 @@ def _port():
         return listener.getsockname()[1]
 
 
-def _url(base, schema, reference=False):
+def _url(base, schema):
     parts = urlsplit(base.replace("postgresql+psycopg://", "postgresql://"))
     query = dict(parse_qsl(parts.query))
     query["options"] = (query.get("options", "") + " -csearch_path=" + schema).strip()
     result = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
-    return result.replace("postgresql://", "postgresql+psycopg://", 1) if reference else result
+    return result
 
 
 def _key(path):
@@ -78,6 +78,8 @@ def _ca(root, name):
         .public_key(key.public_key()).serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(minutes=5)).not_valid_after(now + timedelta(days=2))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(key.public_key()), critical=False)
         .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False,
             key_encipherment=False, data_encipherment=False, key_agreement=False,
             key_cert_sign=True, crl_sign=True, encipher_only=False, decipher_only=False), critical=True)
@@ -99,6 +101,8 @@ def _leaf(root, name, ca_key, ca_cert, server):
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(minutes=5)).not_valid_after(now + timedelta(days=1))
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_cert.public_key()), critical=False)
         .add_extension(x509.ExtendedKeyUsage([
             ExtendedKeyUsageOID.SERVER_AUTH if server else ExtendedKeyUsageOID.CLIENT_AUTH]), critical=True)
         .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False,
@@ -145,7 +149,6 @@ class GoFixture:
         self.base_database_url = database["databases"][config.get("database_key", "sdk")]
         self.base_database_url = self.base_database_url.replace("postgresql+psycopg://", "postgresql://")
         self.database_url = _url(self.base_database_url, self.schema)
-        self.reference_database_url = _url(self.base_database_url, self.schema, True)
         self.s3 = boto3.client("s3", endpoint_url=self.storage["endpoint"],
             aws_access_key_id=self.storage["access_key"], aws_secret_access_key=self.storage["secret_key"],
             region_name=self.storage.get("region", "us-east-1"),
@@ -178,7 +181,7 @@ class GoFixture:
             "schema": self.schema, "bucket": self.bucket, "binary": str(self.binary),
             "binary_sha256": self.binary_hash, "endpoint": self.endpoint,
             "managed_endpoint": self.managed_endpoint, "gateway_endpoint": self.gateway_endpoint,
-            "database_url": self.database_url, "reference_database_url": self.reference_database_url,
+            "database_url": self.database_url,
             "spaces": self.spaces, "processes": {name: proc.pid for name, proc in self.processes.items()},
             "preserved": self.preserved})
         private_json(self.root / "environment.json", self.env)

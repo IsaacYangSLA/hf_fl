@@ -20,39 +20,46 @@ application and Exchange fixes in the current implementation. The
 track resolved and remaining audit findings; historical validation results are
 labeled separately below.
 
-## Select an implementation
+## Server and client installation
 
-Org S can operate the native [Go Exchange API and worker](GO_EXCHANGE.md).
-The Python SDK used by Org P, Alice, and Bob is unchanged. The following
-installation and ASGI-specific launch examples describe the retained Python
-reference server; shared API, identity, storage, and recovery contracts apply
-to both. The beginner Compose stack remains on the reference server.
+Go is the only Exchange server implementation. The Python SDK, a client library
+used by Org P, Alice, and Bob, remains independently installable. The old Python
+servers and their server installation extras have been removed.
 
-Go cutover is explicit: stop competing writers/workers, back up state, run
-retained-schema compatibility preflight, and qualify the intended deployment.
-JSON Schema remains Draft 2020-12; unsupported Python regex extensions fail
-closed. See the Go guide before reusing an existing database.
+Use the [beginner walkthrough](../examples/first_federation/README.md) for a
+fresh teaching stack, or the [Go services Compose guide](../deploy/compose/go/README.md)
+when database, login, storage, and certificates already exist. Build the service
+on Linux with Go 1.26 or later as described in the [Go guide](GO_EXCHANGE.md).
+Run from the repository root. `mkdir -p` creates the output directory,
+`go -C` selects the module, `-trimpath` removes build-machine paths, and `-o`
+selects the executable output. `--help` prints command usage:
 
-## Deployment boundary and installation
+```bash
+mkdir -p dist
+go -C packages/exchange build -trimpath -o ../../dist/hf2l-exchange ./cmd/hf2l-exchange
+./dist/hf2l-exchange --help
+```
 
-Use a **fresh database and fresh S3 prefix**. The HTTP API is `/v2`; it does not
-serve `/v1`, upgrade legacy data, or provide an importer. The old
-`hf2l-exchange-service` command belongs to the
-[legacy v1 service](EXCHANGE_SERVICE.md). The new command is `hf2l-exchange`.
+Install that executable at the service account's configured command path. The
+commands below use the repository build at `./dist/hf2l-exchange`.
 
-From the repository root, using the project environment:
+SDK-only clients install `./packages/exchange`; it supplies no server command:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -e './packages/exchange[server]'
-.venv/bin/hf2l-exchange --help
+.venv/bin/python -m pip install ./packages/exchange
 ```
 
-SDK-only clients install `./packages/exchange`, without the `server` extra.
-Neither installation requires Torch, Hugging Face, NumPy or SafeTensors.
-PostgreSQL is the deployment database. SQLite is available for local development;
-it serializes writes and is not the scale-out configuration. S3 with bucket
-versioning is the only implemented blob provider.
+The client library and Go server need no machine-learning libraries. PostgreSQL
+is the deployment database. SQLite is available for isolated development/tests;
+it is not the scale-out configuration. S3 with bucket versioning is the only
+implemented blob provider.
+
+For a new deployment, use a **fresh database and fresh S3 prefix**. The HTTP API,
+the set of addresses and request rules clients use, remains `/v2`; it does not
+serve `/v1`, upgrade legacy v1 data, or provide an importer. Before changing a
+retained deployment, stop competing writers/workers, back up state, run the
+retained-schema compatibility check, and qualify the intended Go release.
 
 ## Configure and start
 
@@ -80,7 +87,7 @@ provider-default access token with a different header, audience or scope is
 rejected. Human login and token issuance belong to the identity provider.
 Managed workload tokens use the separate contract below.
 
-The Python reference S3 adapter uses Boto's normal credential provider chain unless both
+The native S3 adapter uses the AWS Go client's normal credential provider chain unless both
 `EXCHANGE_S3_ACCESS_KEY` and `EXCHANGE_S3_SECRET_KEY` are configured. The provider
 chain handles ambient `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
 `AWS_SESSION_TOKEN` together and retains provider-managed refresh for credentials
@@ -100,15 +107,19 @@ and public S3 addresses differ, set
 use the same signing credentials.
 
 Initialize only the new database, check dependencies, then supervise API and
-worker as separate processes:
+worker as separate processes. `--host` selects the listening address and `--port`
+the listening port. `--tls-cert` selects the server certificate and `--tls-key`
+its matching private key. The paths below are operator-provided files:
 
 ```bash
-.venv/bin/hf2l-exchange init-db
-.venv/bin/hf2l-exchange check-db
-.venv/bin/hf2l-exchange check-storage
-.venv/bin/hf2l-exchange serve --host 127.0.0.1 --port 8000 --workers 2
+./dist/hf2l-exchange init-db
+./dist/hf2l-exchange check-db
+./dist/hf2l-exchange check-storage
+./dist/hf2l-exchange check-compatibility
+./dist/hf2l-exchange serve --host 127.0.0.1 --port 8441 \
+  --tls-cert /etc/hf2l/exchange-server.crt --tls-key /etc/hf2l/exchange-server.key
 # Run independently of the API process:
-.venv/bin/hf2l-exchange worker
+./dist/hf2l-exchange worker
 ```
 
 Database commands require database settings only. The storage check requires
@@ -119,8 +130,8 @@ existing `0001_initial` or `0002_event_sequence` databases need an explicit upgr
 worker processes and back up the database before running:
 
 ```bash
-.venv/bin/hf2l-exchange migrate-db
-.venv/bin/hf2l-exchange check-db
+./dist/hf2l-exchange migrate-db
+./dist/hf2l-exchange check-db
 ```
 
 Restart the API and worker after both commands succeed. `init-db`, readiness,
@@ -133,18 +144,21 @@ revocation records; ordinary Exchange deployments use this same current schema.
 There is no downgrade command; restoring the backup is required before
 returning to a binary that accepts only `0001_initial`.
 
-Expose the API through HTTPS. The ASGI application requires the HTTPS request
-scheme, so configure trusted proxy forwarding when TLS terminates upstream.
-Apply connection/request timeouts and rate limits at that boundary. Configured
-identity/storage URLs and SDK service/grant URLs require HTTPS by default.
-With `EXCHANGE_ALLOW_LOCAL_HTTP=true`, the server configuration accepts HTTP for
-`localhost`, loopback IP addresses, and the test hostname `testserver`. Its S3
-grant check accepts `localhost`, `127.0.0.1`, `::1`, and `testserver`; the ASGI
-request check permits a loopback peer or the test peer name `testclient`.
-The SDK's `allow_local_http=True` permits only `localhost` or loopback IP
-addresses and rejects `testserver`. Those server test-name exceptions are not
-proof of loopback resolution. Use actual loopback addresses and bind the server
-to loopback for local development; keep HTTPS for deployments.
+Serve the API through HTTPS, which encrypts the connection and verifies server
+identity using certificates. `--tls-cert` selects the server certificate and
+`--tls-key` its private key. The native listener must receive the encrypted
+connection itself; a forwarded scheme header cannot establish that protection.
+If an approved request router sits in front, keep its connection to Exchange
+encrypted and verify the Exchange certificate. Apply connection/request timeouts
+and rate limits at the boundary.
+
+Configured identity/storage addresses and SDK service/grant addresses require
+HTTPS by default. `EXCHANGE_ALLOW_LOCAL_HTTP=true` enables an explicit test-only
+exception for actual loopback connections. The SDK has its own
+`allow_local_http=True` option. These exceptions do not permit an unencrypted
+connection between ordinary Docker containers. Keep HTTPS for deployments.
+The Go server accepts only `--workers 1`; it handles concurrent requests within
+that process. Verification/cleanup concurrency uses separate worker settings.
 
 `GET /health` is process liveness; `GET /ready` checks the schema revision and
 versioned storage. Startup does not migrate the database or require dependencies
@@ -181,7 +195,9 @@ upstream 4.47 still fails the retry contract.
 Only the configured bootstrap administrator creates spaces. The creator receives
 all four explicit roles. `generic.v1` is the default; `fedavg.v1` is optional and
 the selected profile cannot change. A space is the isolation boundary; there is
-no tenant administration hierarchy or inferred isolation from labels.
+no tenant administration hierarchy or inferred isolation from labels. The job
+manager's study-creation permission does not grant Exchange space creation or
+membership; space provisioning and its delegated roles remain separate.
 
 | Role | Data permissions | Administration |
 |---|---|---|
@@ -337,7 +353,10 @@ A publication/coordination retry must retain its original operation identity.
 The complete [generated HTTP contract](generated/exchange-api.json),
 [error inventory](generated/exchange-errors.json) and
 [server/worker environment table](generated/exchange-environment.md) are exported
-from the source with `hf2l-exchange export-contract`. The error inventory marks
+using `hf2l-exchange export-contract`. The command exports the API document and
+embedded ancillary references. After configuration changes, update the embedded
+environment reference alongside the Go configuration, rebuild, and export; the
+command does not derive that table from source. The error inventory marks
 dynamic forwarding explicitly; it is not a promise that every SDK error is an
 HTTP response.
 
@@ -361,9 +380,11 @@ positive integer `epoch`, and `cnf: {"x5t#S256": "CERTIFICATE_THUMBPRINT"}`,
 as well as the issuer, audience and timestamps. The token's `jti` identifies
 the persisted workload grant; any explicit `grant_id` must match it.
 
-In the Python reference, a managed ASGI app is created with `create_app(..., managed_ingress=True)`.
-Place it behind separate trusted mTLS termination and an authenticated private
-backend connection. The terminator supplies signed assertions binding the method,
+Start the separate managed listener with `hf2l-exchange serve-managed`, using
+its own server certificate and private key. Place it behind the trusted
+managed edge, which verifies both ends of the encrypted connection and checks
+the workload client certificate, and use an authenticated private backend
+connection. This client-certificate protection is called mutual TLS, or mTLS. The terminator supplies signed assertions binding the method,
 request target, Authorization value, certificate thumbprint and timestamp.
 `EXCHANGE_TRUSTED_BACKEND_SECRET` must contain at least 32 bytes; keep it with
 the trusted terminator and backend. Assertions expire outside a 30-second clock
@@ -602,13 +623,13 @@ quotas are retained-state limits, not simply concurrent-upload limits.
 Upload and completion use attempt-owned storage resources and renewable worker
 ownership. A stale attempt can finish remote I/O without gaining the right to
 commit or clean a successor's resources. Worker verification streams exact object
-versions with bounded memory. Verification and cleanup use separate thread pools
-with separately configured concurrency. Lease acquisition checks the attempt's
+versions with bounded memory. Verification and cleanup use separate bounded
+groups of concurrent Go tasks with independently configured limits. Lease acquisition checks the attempt's
 current state under the same space lock used by lifecycle mutations. Work that
 has changed categories since selection is skipped without acquiring a lease, so
 cleanup cannot enter a verification slot (audit B8 is resolved). A cancellation
 after verification lease acquisition remains fenced by the lifecycle checks and
-does not turn that running task into cleanup. Each Python reference worker pass still waits for
+does not turn that running task into cleanup. Each native worker pass waits for
 both selected batches to finish before selecting more work. Slow cleanup can
 therefore delay the next verification batch; the pools do not poll independently.
 
@@ -656,8 +677,8 @@ First inspect the bounded inventory; the default command is read-only and needs
 only database configuration:
 
 ```bash
-.venv/bin/hf2l-exchange repair-transfers
-.venv/bin/hf2l-exchange repair-transfers --attempt ATTEMPT_ID
+./dist/hf2l-exchange repair-transfers
+./dist/hf2l-exchange repair-transfers --attempt ATTEMPT_ID
 ```
 
 Before applying a repair, stop **all API and worker processes using this
@@ -671,7 +692,7 @@ Once both conditions are established, explicitly select up to 100 attempts and
 make the two independent operator assertions:
 
 ```bash
-.venv/bin/hf2l-exchange repair-transfers \
+./dist/hf2l-exchange repair-transfers \
   --attempt ATTEMPT_ID --apply --writers-stopped --provider-quiesced
 ```
 
@@ -732,31 +753,35 @@ records historical local suites, the actual manual cyclic CLI recipe, generated
 contract checks, package verification, and the configurations that were not
 exercised. The September 22 results below are preserved as historical evidence.
 
-Run the independent service tests and the legacy/application regression suite
-from the development environment:
+Run the native service suite and Python client/application checks from the
+repository root:
 
 ```bash
-.venv/bin/python -m pip install -e './packages/exchange[server,test]' \
-  -e '.[torch,hf,examples,exchange,service,exchange-test]'
-EXCHANGE_REQUIRE_TESTS=1 .venv/bin/python -m unittest discover -s packages/exchange/tests -v
-EXCHANGE_REQUIRE_TESTS=1 .venv/bin/python -m unittest discover -s tests -v
+go -C packages/exchange test -race -count=1 ./...
+.venv/bin/python -m unittest discover -s packages/exchange/tests -v
+.venv/bin/python -m unittest discover -s tests -v
 ```
 
-The live suite uses `EXCHANGE_TEST_DATABASE_URL` and
-`EXCHANGE_TEST_S3_ENDPOINT` plus dedicated test credentials. Tests own temporary
-schemas/buckets; never provide production database or bucket administration
-credentials. Minimal-install checks run in fresh SDK-only/server-only/core-only
-environments so accidental optional dependencies are detectable. The configured
-[Exchange test workflow](../.github/workflows/exchange_tests.yml) covers Python
-3.12, dependency isolation, generic integration and HF²L regressions, with
-PostgreSQL pinned by image digest for provider checks. MinIO is built with the
+The [Go Exchange guide](GO_EXCHANGE.md#developer-checks-and-evidence) specifies
+live database, storage, SDK, and native-restart checks and their private fixture
+configuration. Test resources need temporary-schema/bucket permissions; never
+provide production administration credentials. The Python suite now checks the
+SDK and application, not a retained Python server. Use the declared current test
+dependencies from the package and workflow rather than the removed `server`
+extra. Minimal installation checks separately verify client, core, and execution
+adapter dependencies.
+
+The [Go workflow](../.github/workflows/exchange_go_tests.yml) covers native
+formatting, dependency checks, builds, race checks, and configured integration
+gates. The [Python workflow](../.github/workflows/exchange_tests.yml) covers the
+retained SDK/application. The MinIO image uses the
 [shared source-build Dockerfile](../examples/first_federation/Dockerfile.minio)
-from upstream commit `7aac2a2c5b7c882e68c1ce017d8256be2feea27f`, verified
-against source-archive SHA-256
-`71794c2df26aad0cc99e8421c58b7aa2dd55969f979b0e7d1e931042e9fabcd6`.
-The Dockerfile also pins the build and runtime images by digest. The previous
-prebuilt MinIO registry digest is unavailable; it is retained only in historical
-records. Historical results below do not establish that current CI changes passed.
+and its recorded source/image hashes. A configured workflow is not a passing
+result; record the exact source, provider, and completed checks for a deployment.
+
+The following results are historical evidence from the removed Python service
+and earlier application versions. They do not describe the current test count,
+current packaging, or qualification of the native Go deployment.
 
 Local verification of the integrated sources on 2026-09-22 used the project
 `.venv` and Python 3.12. These are historical results from before the subsequent

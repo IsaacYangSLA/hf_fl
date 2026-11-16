@@ -11,6 +11,7 @@ you run today.
 | Understand the project and replaceable components | [Repository overview](../README.md) |
 | Deploy the beginner services and complete two rounds | [Your first federation](../examples/first_federation/README.md) |
 | Reuse a local trainer and configure storage | [Training guide](TRAINING_GUIDE.md) |
+| Sign up with an existing account and request Org P study approval | [Study enrollment](STUDY_ENROLLMENT.md) |
 | Automate participant training and owner aggregation | [Listeners](CLIENT_LISTENER.md) |
 | Configure Hugging Face webhook automation | [FedAvg workflow](FEDAVG_WORKFLOW.md) |
 | Run the CIFAR-10 demonstration | [Exchange CIFAR-10 example](../examples/exchange_cifar10/README.md) |
@@ -19,6 +20,7 @@ you run today.
 
 | Goal | Guide |
 | --- | --- |
+| Start Go Exchange and the optional dashboard with Docker Compose | [Go services Compose](../deploy/compose/go/README.md) |
 | Build and operate the native Exchange server/worker | [Go Exchange](GO_EXCHANGE.md) |
 | Deploy Exchange and use its API or SDK | [Exchange runbook](EXCHANGE_V3.md) |
 | Understand Exchange service responsibilities | [Service overview](EXCHANGE_SERVICE.md) |
@@ -40,6 +42,11 @@ you run today.
 - [Developer scenario index and evidence limits](../tests/support/scenarios.md).
 
 ## Historical records
+
+Current operator instructions are in the guides above. A historical design,
+test plan or successful run describes its recorded source and environment;
+it does not certify the present Go service implementation. The
+[validation index](validation/README.md) explains the retained evidence.
 
 The [design archive](history/README.md) contains superseded proposals and reviews.
 These validation records retain their original outcomes and limitations:

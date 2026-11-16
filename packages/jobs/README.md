@@ -1,16 +1,11 @@
-# HF²L job manager
+# HF²L job manager and Python execution adapters
 
-`hf2l-jobs` provides an independently packaged control plane for multiple federated learning jobs in one deployment: authorized job creation and history, a durable resource queue, lifecycle reconciliation, a packaged web dashboard, and trusted Linux execution components.
+The job manager server is implemented in Go. It provides authorized job creation
+and history, resource queues, lifecycle management, a browser dashboard, and
+trusted execution services. The Python manager/server implementation has been
+removed; installing this Python package does not install a server.
 
-Managed jobs use FedAvg with a separate Exchange space, immutable source snapshot, workload identity, state, logs, and artifacts per job. Training plugins execute inside a qualified CPU sandbox. Participant data remains on participant machines.
-
-## Native Go manager
-
-The Go implementation covers the manager API, authentication, scheduling,
-lifecycle, provisioning, node/participant services, gateways/proxies, collection,
-and retention. It embeds the same dashboard and uses the existing manager schema
-and API contracts. It does not invoke a Python manager through HTTP, RPC, or a
-manager subprocess.
+## Build the Go services
 
 From the repository root, on Linux with Go 1.26 or later:
 
@@ -20,34 +15,54 @@ go -C packages/jobs build -trimpath -o ../../dist/hf2l-jobs ./cmd/hf2l-jobs
 ./dist/hf2l-jobs --help
 ```
 
-Read the [Go build, deployment and cutover guide](../../docs/GO_JOB_MANAGER.md).
-The independent Exchange service and sandboxed Python FL training/build
-application adapters remain separate dependencies. Runtime qualification and
-operational acceptance are required before enabling admission.
+Read the [Go manager guide](../../docs/GO_JOB_MANAGER.md),
+[Go Docker Compose guide](../../deploy/compose/go/README.md), and
+[managed deployment guide](../../deploy/jobs/README.md). The dashboard and
+application interface, scheduling controller, node services, transfer gateway,
+and execution proxies are Go components. Their configuration and deployment
+remain explicit operator tasks.
 
-## Python reference installation
+## Python training/build adapters
 
-The Python implementation remains available for compatibility checks and
-controlled rollback. From a checkout, install its dependencies into a dedicated
-environment:
+The `hf2l-jobs` Python distribution now contains only the sandboxed application
+adapters and their immutable input contracts. A sandbox is the isolated execution
+environment that constrains a job's files, resource use, and network access.
+Python 3.11 or later is required.
+
+Install the adapter package in the approved training image, alongside the HF²L
+application and Exchange client library. From the repository root:
 
 ```sh
-python -m pip install -e 'packages/exchange[server]' -e '.[examples]' -e 'packages/jobs[server]'
-hf2l-jobs --help
+python -m pip install ./packages/jobs
+python -m hf2l_jobs.runtime --help
 ```
 
-The distributions require Python 3.11 or later. CI checks clean manager/server wheels on Python 3.11–3.14; functional cohort scope and exact versions are in the [validation report](../../docs/validation/2026-10-09-multi-job-implementation.md). PostgreSQL is the deployment database; SQLite supports isolated tests. Trusted bootstrap includes separate bounded source-filesystem and model-object pools.
+The equivalent installed command is `hf2l-jobs-runtime`. There is no Python
+`hf2l-jobs` server command. The Go executor launches the fixed
+`python -m hf2l_jobs.runtime --config /run/hf2l/runtime.json` command inside its
+qualified sandbox. The configuration identifies one training or offline-build
+operation; it cannot select a manager server.
 
-## Operation
+The package's required dependency is Pydantic, the library that checks the
+adapter input fields. The optional `build` dependencies provide the approved
+Python build frontend and package-format checks for offline wheel builds. A
+wheel is an installable Python package archive. Source hooks run only in the
+isolated build worker, using verified local inputs and approved dependencies.
+Training libraries belong in qualified worker images, not in Go service images.
 
-The Go binary retains the operational command names and trusted configuration
-shape below. Select the executable explicitly; do not run competing Go and
-Python controllers against the same retained jobs.
+## Managed execution
 
-The package exposes `hf2l-jobs init-db`, `migrate-db`, `serve`, `controller`, `node-agent`, `node-api`, `managed-node`, `participant-agent`, `gateway`, `exchange-edge`, `proxy`, `runtime`, and trusted local `admin` commands. The server serves both `/api/jobs/v1` and its packaged dashboard. Node.js is not required. Services require explicit trusted configuration and schema initialization/migration; installing the package does not provision PostgreSQL, identity providers, certificates, storage, or persistent service units.
+Each managed job has its own Exchange space, immutable source snapshot,
+execution identity, state, logs, and artifacts. The Go manager coordinates the
+job; Python adapters run approved training, evaluation, and aggregation.
+Participant data remains under participant control.
 
-See the repository [operator guide](../../docs/JOB_MANAGER.md) for configuration, resource admission, source/image approvals, authentication, lifecycle actions, and retention. See the [deployment guide](../../deploy/jobs/README.md) for the sandbox qualification and service topology. The [design](../../docs/MULTI_JOB_DESIGN.md) defines the isolation and lifecycle contracts.
+Runtime qualification and operational acceptance are required before enabling
+job admission. The current managed executor supports the qualified processor-only
+`runsc-cpu-v1` profile and its assigned local request-forwarding socket. It rejects
+nonzero graphics-processor limits. Native participant training on graphics
+processors remains a separate workflow.
 
-## Compatibility
-
-Existing standalone HF²L CLI workflows and unmanaged Exchange deployments remain separate. Managed jobs use their own control-plane database and explicitly configured workload authorization. Managed execution currently supports the qualified, networkless `runsc-cpu-v1` CPU profile and an assigned Unix operation proxy. The executor refuses nonzero GPU limits. Standalone native GPU training is separate; managed GPU and Kubernetes execution require their own implementation and qualification.
+Removing the Python servers does not change the Go database schema or authorize
+reinitializing retained databases. Follow the Go operational guides for backups,
+explicit migrations, service startup, and deployment checks.

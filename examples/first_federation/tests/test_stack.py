@@ -12,6 +12,10 @@ import tempfile
 import unittest
 from unittest import mock
 
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+from cryptography.x509.oid import ExtendedKeyUsageOID
+
 SOURCE = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("first_federation_stack", SOURCE / "stack.py")
 stack = importlib.util.module_from_spec(SPEC)
@@ -39,10 +43,13 @@ class StackConfigurationTests(unittest.TestCase):
             config = stack.load_json(runtime / "config.json")
             accounts = stack.load_json(runtime / "accounts.json")
             self.assertEqual(stat.S_IMODE(runtime.stat().st_mode), 0o700)
-            for name in ("config.json", "accounts.json", "compose.env", "exchange.env", "db-init.sql"):
+            for name in ("config.json", "accounts.json", "compose.env", "exchange.env", "db-init.sql",
+                         "backend-server.key"):
                 self.assertEqual(stat.S_IMODE((runtime / name).stat().st_mode), 0o600)
             self.assertEqual(config["issuer"], "https://auth.example.org/realms/hf2l")
             self.assertEqual(config["client_id"], "hf2l-cli")
+            self.assertEqual(config["format"], 2)
+            self.assertEqual(config["implementation"], "go")
             self.assertFalse((runtime / "identities.json").exists())
             passwords = [row["password"] for row in accounts["accounts"].values()]
             passwords.append(accounts["keycloak_admin"]["password"])
@@ -52,6 +59,31 @@ class StackConfigurationTests(unittest.TestCase):
             self.assertIn("EXCHANGE_S3_ENDPOINT=https://objects.example.org\n",
                           (runtime / "exchange.env").read_text())
             self.assertNotIn("ALLOW_LOCAL_HTTP", (runtime / "exchange.env").read_text())
+
+    def test_backend_identity_has_real_chain_and_matching_private_key(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Path(temporary) / "operator"
+            self.initialize(runtime)
+            ca = x509.load_pem_x509_certificate((runtime / "backend-ca.crt").read_bytes())
+            leaf = x509.load_pem_x509_certificate((runtime / "backend-server.crt").read_bytes())
+            leaf.verify_directly_issued_by(ca)
+            self.assertTrue(ca.extensions.get_extension_for_class(x509.BasicConstraints).value.ca)
+            self.assertFalse(leaf.extensions.get_extension_for_class(x509.BasicConstraints).value.ca)
+            self.assertEqual(
+                leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+                .get_values_for_type(x509.DNSName), ["exchange-api"])
+            self.assertIn(ExtendedKeyUsageOID.SERVER_AUTH,
+                          leaf.extensions.get_extension_for_class(x509.ExtendedKeyUsage).value)
+            private = serialization.load_pem_private_key(
+                (runtime / "backend-server.key").read_bytes(), password=None)
+            public_format = dict(encoding=serialization.Encoding.DER,
+                                 format=serialization.PublicFormat.SubjectPublicKeyInfo)
+            self.assertEqual(private.public_key().public_bytes(**public_format),
+                             leaf.public_key().public_bytes(**public_format))
+            self.assertFalse((runtime / "backend-ca.key").exists())
+            environment = (runtime / "compose.env").read_text()
+            self.assertIn("HF2L_SERVICE_UID=", environment)
+            self.assertIn("HF2L_SERVICE_GID=", environment)
 
     def test_internal_ca_mode_and_nonstandard_https_port(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -96,7 +128,7 @@ class StackConfigurationTests(unittest.TestCase):
             instance.runtime = Path(temporary)
             instance.compose = mock.Mock(side_effect=[
                 mock.Mock(stdout="[]"),
-                mock.Mock(stdout="example-dependency==1.0\\n"),
+                mock.Mock(stdout="go1.26.8\npath hf_fl/packages/exchange\n"),
             ])
             instance.record_release()
             receipt = stack.load_json(instance.runtime / "release.json")
@@ -104,6 +136,8 @@ class StackConfigurationTests(unittest.TestCase):
             self.assertEqual(len(receipt["source_tree_sha256"]), 64)
             self.assertEqual(receipt["source_revision"], receipt["source_revision"].strip())
             self.assertNotIn(chr(0), "".join(receipt["source_files"]))
+            self.assertIn("go1.26.8", receipt["go_build_info"])
+            self.assertNotIn("server_dependencies", receipt)
 
     def test_missing_python_default_ca_uses_installed_os_bundle(self):
         installed = stack.system_ca_file()
@@ -187,6 +221,26 @@ class StackConfigurationTests(unittest.TestCase):
         self.assertEqual(len(scopes["basic-id"]["mappers"]), 1)
         self.assertEqual(scopes["basic-id"]["mappers"][0]["protocolMapper"], "oidc-sub-mapper")
         self.assertEqual(scopes["exchange-id"]["mappers"][0]["config"]["included.custom.audience"], "exchange")
+
+    def test_legacy_runtime_is_rejected_before_docker_or_credential_changes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Path(temporary)
+            stack.write_json(runtime / "config.json", {"format": 1})
+            stack.private_write(runtime / "accounts.json", "keep-existing-credentials\n")
+            original = (runtime / "accounts.json").read_bytes()
+            with mock.patch.object(stack.Stack, "_docker_command") as docker:
+                with self.assertRaisesRegex(ValueError, "new configuration directory"):
+                    stack.Stack(runtime)
+            docker.assert_not_called()
+            self.assertEqual((runtime / "accounts.json").read_bytes(), original)
+
+    def test_storage_initialization_uses_setup_container_not_go_server(self):
+        instance = object.__new__(stack.Stack)
+        instance.compose = mock.Mock()
+        instance.initialize_storage()
+        arguments = instance.compose.call_args.args
+        self.assertEqual(arguments[:5], ("run", "--rm", "--no-deps", "bootstrap", "python"))
+        self.assertNotIn("from hf2l_exchange.config", arguments[-1])
 
     def test_reset_needs_explicit_confirmation_before_mutating(self):
         instance = object.__new__(stack.Stack)

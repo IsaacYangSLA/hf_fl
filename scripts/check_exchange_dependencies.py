@@ -1,7 +1,7 @@
 """Check exchange source boundaries or a deliberately minimal installed environment.
 
-Run from any directory. Installation checks are intended for clean SDK/server
-virtualenvs; source checks also work in the full HF2L development environment.
+Run from any directory. Installation checks are intended for clean SDK
+virtual environments; source checks also work in the full HF2L development environment.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import sys
 
 ML_MODULES = {"torch", "numpy", "safetensors", "huggingface_hub", "hf2l"}
 SERVER_MODULES = {"fastapi", "uvicorn", "sqlalchemy", "psycopg", "boto3", "botocore", "jwt", "jsonschema"}
-SDK_FILES = {"__init__.py", "client.py", "client_types.py", "control.py", "transfer_client.py", "client_state.py"}
+SDK_FILES = {"__init__.py", "client.py", "client_types.py", "transfer_client.py", "client_state.py", "domain.py"}
 
 
 def _imports(path: Path):
@@ -44,10 +44,11 @@ def check_source(root: Path) -> list[str]:
         return [f"No exchange package sources found at {source}"]
     problems = []
     for path in files:
+        if path.name not in SDK_FILES:
+            problems.append(f"Python Exchange package contains a non-SDK module: {path.name}")
         relative = path.relative_to(source)
         is_domain = relative.parts[0] in {"domain", "domain.py"}
-        is_sdk = len(relative.parts) == 1 and relative.name in SDK_FILES
-        forbidden = ML_MODULES | (SERVER_MODULES if is_sdk else set())
+        forbidden = ML_MODULES | SERVER_MODULES
         if is_domain:
             forbidden |= SERVER_MODULES | {"httpx"}
         for line, imported in _imports(path):
@@ -77,21 +78,18 @@ def check_installation(mode: str) -> list[str]:
     dependencies = _installed_requirements()
     if dependencies != ["httpx"]:
         problems.append(f"SDK unconditional dependencies must be [httpx], got {dependencies}")
-    forbidden = ML_MODULES | (SERVER_MODULES if mode == "sdk" else set())
+    forbidden = ML_MODULES | SERVER_MODULES
     for name in sorted(forbidden):
         if importlib.util.find_spec(name) is not None:
             problems.append(f"{mode} environment unexpectedly contains {name}")
     for module in ("hf2l_exchange", "hf2l_exchange.client", "hf2l_exchange.client_types"):
         importlib.import_module(module)
-    if mode == "server":
-        importlib.import_module("hf2l_exchange.api")
-        importlib.import_module("hf2l_exchange.cli")
     return problems
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("source", "sdk", "server"), default="source")
+    parser.add_argument("--mode", choices=("source", "sdk"), default="source")
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     args = parser.parse_args()
     problems = check_source(args.root)

@@ -198,11 +198,27 @@ class RejectHeavy(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, RejectHeavy())
 from hf2l.cli import main
 for args in [[], ['--help']] + [[command, '--help'] for command in
-        ('init', 'download', 'upload', 'train', 'round', 'allowlist', 'exchange', 'export-contract')]:
+        ('init', 'download', 'upload', 'train', 'round', 'allowlist', 'export-contract')]:
     assert main(args) == 0, args
 """
         result = subprocess.run([sys.executable, "-c", script], cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_removed_exchange_command_is_rejected_without_optional_imports(self):
+        script = """
+import importlib.abc
+import sys
+class RejectOptional(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.split('.')[0] in {'torch', 'transformers', 'huggingface_hub', 'httpx', 'hf2l_exchange'}:
+            raise AssertionError('Unexpected optional import: ' + fullname)
+sys.meta_path.insert(0, RejectOptional())
+from hf2l.cli import main
+assert main(['exchange', '--help']) == 2
+"""
+        result = subprocess.run([sys.executable, "-c", script], cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertIn("invalid choice: 'exchange'", result.stderr)
 
     def test_export_contract_matches_validators(self):
         from hf2l.cli import main

@@ -217,6 +217,32 @@ func (m *Manager) TrustedAdmin(ctx context.Context, actor, operation string, val
 	e := m.DB.WithTx(ctx, true, func(tx *store.Tx) error {
 		var err error
 		switch operation {
+		case "study-creator-set":
+			if err = adminKeys(values, []string{"principal", "enabled"}, nil); err != nil {
+				return err
+			}
+			id, err = adminText(values["principal"], 256)
+			if err != nil {
+				return err
+			}
+			enabled, ok := values["enabled"].(bool)
+			if !ok {
+				return adminInvalid()
+			}
+			now := m.now()
+			// Keep revoked rows so creation and revocation always lock the same identity.
+			if _, err = tx.Exec(ctx, "INSERT INTO jm_study_creators (principal_id, enabled, created_at, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (principal_id) DO NOTHING", id, false, now, now); err != nil {
+				return err
+			}
+			old, err := tx.One(ctx, "SELECT * FROM jm_study_creators WHERE principal_id=?"+tx.ForUpdate(), id)
+			if err != nil {
+				return err
+			}
+			before := Object{"principal_id": id, "enabled": old["enabled"]}
+			if err = tx.Update(ctx, "jm_study_creators", Object{"principal_id": id}, Object{"enabled": enabled, "updated_at": now}); err != nil {
+				return err
+			}
+			return RecordAdminAudit(ctx, tx, actor, operation, "study_creator", id, before, Object{"principal_id": id, "enabled": enabled}, now)
 		case "project-create":
 			if err = adminKeys(values, []string{"id", "name", "quota"}, []string{"retention_days"}); err != nil {
 				return err

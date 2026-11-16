@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import contextlib
-import importlib.util
 import io
 from pathlib import Path
 import tempfile
@@ -12,8 +11,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-import torch
-from safetensors.torch import load_file, save_file
+import numpy as np
+from safetensors.numpy import load_file, save_file
 
 from hf2l.backends.base import (BackendCapabilities, ClaimHandle, PublicationConsistency,
                                 PublicationUncertain, ResolvedReference, RoundContext)
@@ -162,20 +161,15 @@ class BackendContractTests(unittest.TestCase):
         state.remember.assert_not_called()
 
 
-# Load the shared isolated-resource fixture without coupling application production
-# code to the independently packaged service's test modules.
-_fixture = Path(__file__).resolve().parents[1] / "packages/exchange/tests/support.py"
-_spec = importlib.util.spec_from_file_location("fedavg_exchange_test_support", _fixture)
-_support = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_support)
+from tests.support.native_exchange import ExchangeTestCase, exchange_available
 
 
-class FedAvgServiceTests(_support.ExchangeTestCase):
+@unittest.skipUnless(exchange_available, "Native Go Exchange integration dependencies are optional")
+class FedAvgServiceTests(ExchangeTestCase):
     def sdk(self, subject):
         from hf2l_exchange.client import ExchangeClient
-        from hf2l_exchange.worker import tick
-        client = ExchangeClient("http://127.0.0.1", self.auth(subject)["Authorization"].split(" ", 1)[1],
-                                http=self.client, allow_local_http=True, sleep=lambda _: tick(self.transfers))
+        client = ExchangeClient(self.endpoint, self.auth(subject)["Authorization"].split(" ", 1)[1],
+                                http=self.client, allow_local_http=True, sleep=lambda _: self.worker_once())
         self.addCleanup(client.close)
         return client
 
@@ -195,7 +189,7 @@ class FedAvgServiceTests(_support.ExchangeTestCase):
         owner = ExchangeStore(None, None, client=self.sdk("owner"), wait_seconds=15)
         initial = self.directory / "initial"
         initial.mkdir()
-        save_file({"weight": torch.tensor([0.0])}, initial / "model.safetensors")
+        save_file({"weight": np.asarray([0.0], dtype=np.float32)}, initial / "model.safetensors")
         write_json(initial / "config.json", {"model_type": "test"})
         write_json(initial / ROUND_FILE, {"schema_version": 2, "backend": "exchange", "round": 0,
             "checkpoint_files_sha256": artifact_hashes(initial, ["config.json", "model.safetensors"])})
@@ -204,7 +198,7 @@ class FedAvgServiceTests(_support.ExchangeTestCase):
         for name, count in (("alice", 1), ("bob", 3), ("dave", 9)):
             folder = self.directory / name
             folder.mkdir()
-            save_file({"weight": torch.tensor([float(count)] * (2 if name == "dave" else 1))}, folder / "model.safetensors")
+            save_file({"weight": np.asarray([float(count)] * (2 if name == "dave" else 1), dtype=np.float32)}, folder / "model.safetensors")
             write_json(folder / "config.json", {"model_type": "test"})
             write_json(folder / SUBMISSION_FILE, {
                 "schema_version": 2, "backend": "exchange", "repo_id": sid, "base_revision": base,
@@ -235,7 +229,7 @@ class FedAvgServiceTests(_support.ExchangeTestCase):
         self.assertEqual(set(result.metadata["inputs"]), set(submitted))
         downloaded = self.directory / "result"
         observer.download_snapshot(sid, result.id, downloaded)
-        torch.testing.assert_close(load_file(downloaded / "model.safetensors")["weight"], torch.tensor([2.5]))
+        np.testing.assert_allclose(load_file(downloaded / "model.safetensors")["weight"], np.asarray([2.5], dtype=np.float32))
         self.assertEqual(owner.client.resolve(sid, "round1").record_id, result.id)
         self.assertFalse((self.directory / "output.run-state.json").exists())
         with self.assertRaises(ExchangeError) as caught:

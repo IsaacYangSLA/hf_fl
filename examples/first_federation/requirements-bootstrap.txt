@@ -1,0 +1,2 @@
+# One-shot storage initialization only; no Python server dependencies.
+boto3>=1.35,<2

@@ -11,7 +11,9 @@ each participant and the aggregator.
 
 ## Install and authenticate
 
-HF²L, Exchange, and the job manager require Python 3.11 or later.
+The HF²L application, Exchange client library, and job execution adapters require
+Python 3.11 or later. Exchange and job-manager servers are Go programs; build
+them with Go 1.26 or later or use the [Go Compose guide](../deploy/compose/go/README.md).
 [Python 3.10 reached end of life](https://peps.python.org/pep-0619/#3-10-lifespan)
 on October 1, 2026, and no longer receives Python updates.
 Create a local environment in this source checkout. Base installation supports
@@ -31,18 +33,66 @@ and BF16 aggregation. BF16 owners must also select `--array-backend torch`;
 installing Torch does not change the CLI's NumPy default. These integration
 changes are unreleased; earlier published packages do not necessarily expose the interfaces described here.
 
-The independent Exchange SDK and server are separate installations:
+The Exchange software development kit (SDK) is the Python client library.
+Install it independently, or together with the HF²L Exchange adapter:
 
 ```bash
 # Generic SDK, without HF²L or ML dependencies:
 .venv/bin/python -m pip install -e './packages/exchange'
-# Or install the server and HF²L adapter together:
-.venv/bin/python -m pip install -e './packages/exchange[server]' -e '.[exchange]'
+# Or install the SDK and HF²L adapter together:
+.venv/bin/python -m pip install -e ./packages/exchange -e '.[exchange]'
 ```
 
 The unified `.venv/bin/hf2l --help` lists the application commands. Existing
 `python -m hf2l.client_download`, owner commands and console aliases remain
-supported. `.venv/bin/hf2l-exchange --help` lists the independent service commands.
+supported. The independently built Go `hf2l-exchange --help` lists server
+commands; installing the Python SDK does not install a server executable. See
+the [Go Exchange guide](GO_EXCHANGE.md) for its build and startup instructions.
+
+## Choose what to replace
+
+A model-store adapter translates the common download, submission, and publication
+operations into a particular storage service. The command factory currently
+registers exactly four choices: `huggingface` for Hugging Face Hub, `jfrog` for
+JFrog Artifactory, `local` for a trusted local filesystem, and `exchange` for
+the independent Exchange service. The shared Python contract is `ModelStore`
+in [`hf2l/core/ports.py`](../hf2l/core/ports.py); built-in constructors are
+registered in [`hf2l/backends/factory.py`](../hf2l/backends/factory.py).
+A custom adapter must implement that contract and be explicitly wired into the
+application; passing an arbitrary module name to `--backend` does not load it.
+
+Amazon Simple Storage Service (S3), an object-storage service, is not an HF²L
+`--backend` choice. Object storage configured behind Exchange belongs to the
+Exchange server deployment. HF²L clients still select `exchange`, authenticate
+to that service, and use its endpoint rather than accessing a storage bucket.
+
+A training plugin is reviewed local Python code that loads, trains, or evaluates
+a model. Participants own their training code, data loading, and compute
+resources. Replace the example plugin or use the independent download/train/upload
+steps for your own model; matching checkpoint files alone do not implement the
+model's executable behavior. Initialization may publish model source files for
+reference, but HF²L does not automatically import that remote code. Each
+participant installs and reviews the model and training code locally.
+
+The owner runs the aggregation process with access to the submitted checkpoints.
+`FedAvgRunner` in [`hf2l/fedavg_runner.py`](../hf2l/fedavg_runner.py) selects and
+validates inputs and controls publication. `FedAvg` in
+[`hf2l/round/aggregator.py`](../hf2l/round/aggregator.py) chooses their weights;
+[`hf2l/checkpoint/aggregate.py`](../hf2l/checkpoint/aggregate.py) reduces the
+checkpoint arrays. Exchange stores artifacts and coordinates publication;
+it does not train or average the model. The aggregation interface can be
+replaced in a Python integration, but the command registry implements only
+federated averaging (FedAvg), the weighted mean of accepted client checkpoints.
+
+Raw training data stays with the participant when the trainer keeps it local.
+The upload step sends the complete checkpoint artifacts and a submission
+manifest, a metadata record containing the base revision, participant, declared
+example count, checksums, and supplied training metadata. Review that metadata
+before upload: the built-in data loaders disclose a dataset filename, and custom
+plugins may disclose other values. Model weights and metrics can also reveal
+information about training data. This workflow provides neither secure
+aggregation, which hides individual updates from the aggregator, nor differential
+privacy, which bounds what an output can reveal about an individual record.
 
 ### Local store
 
@@ -139,6 +189,39 @@ with a durable `--run-state` path; an owner listener handles claims itself.
 The service's event feed is separate from the HF webhook relay, and listeners
 use polling. See the [Exchange runbook](EXCHANGE_V3.md) for space setup,
 token scopes, claim recovery, and deployment limits.
+
+## Local, separate-organization, and proxy deployments
+
+For an offline experiment, use the local adapter, synthetic plugin data, and
+already installed Python dependencies. All actors must access the same trusted
+local filesystem; the local adapter is not a service for participants on different
+machines. Offline training with a remote adapter still needs a reachable service
+for download and upload. A locally supplied dataset avoids dataset downloads;
+it does not remove model-store network traffic.
+
+For participants in separate organizations, each organization installs its own
+reviewed model and training code, keeps its data local, and uses its own identity
+on the chosen model service. All participants in one FedAvg round use the same
+repository or Exchange space and immutable base revision. There is no automatic
+bridge between separate Hub, Artifactory, or Exchange deployments. The owner
+must arrange shared read access, submission permissions, and access to published
+global models before starting clients.
+
+A network proxy forwards outbound requests to a service. The regular Exchange
+Python client uses HTTPX, its HTTP request library, with environment-based proxy
+and certificate settings enabled. Configure the proxy and trusted certificates
+for both service requests and artifact transfers, which may use another host.
+Hugging Face and JFrog transfers use the installed Hugging Face client's network
+configuration. HF²L does not provide a `--proxy` option or provision network access.
+
+The job manager's managed execution proxy is a different integration: it exposes
+a local socket, a file used for communication between local processes, and keeps
+upstream credentials outside the workload. The Exchange Python client supports
+that integration through `ExchangeClient.for_execution`. The standard HF²L
+`--backend exchange` factory accepts an endpoint and token; it does not select
+managed socket mode. Use the job runtime's client construction described in the
+[job-manager guide](JOB_MANAGER.md) for managed workloads rather than inventing
+an endpoint or token for that mode.
 
 ## Owner: initialize a repository
 
@@ -299,7 +382,8 @@ such as `r0000-alice-a1b2c3d4e5f6` instead of opening a PR:
   --num-examples 12500
 ```
 
-Both backends write `base_revision`, `submission_revision`, and SHA-256 values
+All four adapters use a manifest containing `base_revision`,
+`submission_revision`, and SHA-256 values
 for every checkpoint artifact into `fedavg_submission.json`.
 
 ## Client option B: trusted training plugin
@@ -638,11 +722,20 @@ optional allowlist, participant IDs are distinct, example counts are positive,
 and checkpoint schemas match. It verifies required schema-2 hashes and any
 supplied schema-1 hashes in both selection modes. On Hub it also checks that
 every PR descends from the base. It computes
-dataset-size-weighted FedAvg:
+dataset-size-weighted FedAvg. In the formula below, `i` identifies one accepted
+participant, `num_examples_i` is that participant's declared positive training
+example count, and `theta_i` is one floating-point model value from its submitted
+checkpoint. `sum` adds across all accepted participants, `*` means multiplication,
+`/` means division, and `theta_next` is the resulting global model value:
 
 ```text
 theta_next = sum(num_examples_i * theta_i) / sum(num_examples_i)
 ```
+
+The example counts are declarations by participants, not independently measured
+by the owner. The base checkpoint supplies the required structure; its weights
+are not an extra participant in the mean. The output round record preserves
+selected input revisions and coefficients so the owner can inspect that history.
 
 Use `--weighting uniform` only when equal client weighting is intended. Integer
 and Boolean tensors are copied from the base only when every client matches
@@ -777,27 +870,44 @@ creates the unified `hf2l` command and these retained console-command aliases:
 - `hf2l-client-listen`
 - `hf2l-create-allowlist`
 - `hf2l-owner-fedavg`
-- `hf2l-exchange-service`
 
 For example, `hf2l-client-download` is equivalent to
-`python -m hf2l.client_download`. `hf2l-exchange-service` is the legacy v1
-service command; the independent package installs `hf2l-exchange` for `/v2`.
+`python -m hf2l.client_download`. The old Python Exchange service and
+`hf2l-exchange-service` command have been removed. The `/v2` server is the Go
+`hf2l-exchange` executable; client and training commands remain Python.
 
 ## Local validation
 
-No live HF account is needed for the local suites. Install the three editable
-distributions and their testing/training extras first:
+No live Hugging Face account is needed for the local suites. Go 1.26 or later
+must be on `PATH`, the list of directories searched for executable commands.
+Native integration tests launch a prebuilt Exchange server in temporary
+directories; they do not build it automatically. Install the three editable
+Python distributions and their testing/training dependencies first:
 
 ```bash
-.venv/bin/python -m pip install -e './packages/exchange[server,test]' \
-  -e './packages/jobs[server,test]' \
-  -e '.[torch,hf,examples,exchange,service,exchange-test]'
-.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m pip install -e './packages/exchange' \
+  -e './packages/jobs[build]' \
+  -e '.[torch,hf,examples,exchange,exchange-test]'
+mkdir -p work/native
+(cd packages/exchange && go build -o "$PWD/../../work/native/hf2l-exchange" ./cmd/hf2l-exchange)
+export HF2L_EXCHANGE_GO_BINARY="$PWD/work/native/hf2l-exchange"
+EXCHANGE_REQUIRE_TESTS=1 .venv/bin/python -m unittest discover -s tests -v
 EXCHANGE_REQUIRE_TESTS=1 .venv/bin/python -m unittest discover -s packages/exchange/tests -v
 .venv/bin/python -m unittest discover -s packages/jobs/tests -v
 ```
 
+`HF2L_EXCHANGE_GO_BINARY` names the absolute path to the native server used by
+integration fixtures. `EXCHANGE_REQUIRE_TESTS=1` makes missing native-integration
+requirements fail collection instead of silently skipping those tests. The
+`exchange-test` extra supplies Moto, an object-storage emulator, and the token
+and transfer test dependencies; it does not install a Python Exchange server.
+A passing emulated-storage suite does not establish real-provider conformance.
+
 The [Exchange validation guide](EXCHANGE_V3.md#validation-status-and-deployment-limits)
-describes provider checks and deployment limits. The CI workflows define the
-current test cohorts; dated reports in [docs/validation](validation/) record
-historical executions and their scope.
+describes provider checks and deployment limits. The continuous integration
+(CI) workflows define the current test groups. Package metadata requires Python
+3.11 or later; the workflows exercise Python 3.11 through 3.14 for the runtime
+wheel and selected Python 3.12/3.14 application groups. Those checks do not
+establish every optional dependency combination on every Python version.
+Dated reports in [docs/validation](validation/) record historical executions
+and their scope.

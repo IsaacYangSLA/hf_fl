@@ -63,7 +63,7 @@ func TestExplicitMigrationAndCompleteSchema(t *testing.T) {
 		t.Fatalf("check %s %v", revision, err)
 	}
 	rows, err := db.All(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-	if err != nil || len(rows) != 24 {
+	if err != nil || len(rows) != 27 {
 		t.Fatalf("tables %d %v", len(rows), err)
 	}
 	for _, name := range []string{"auth_login_attempts", "auth_logout_replays", "jm_auth_sessions"} {

@@ -7,22 +7,38 @@ training code.
 
 The Python SDK remains the client interface for Org P, Alice, and Bob. Their
 existing `ExchangeClient` calls and HF²L Exchange-backed trainers use the same
-`/v2` API. The Python server remains a reference implementation and a rollback
-option. Installing a binary does not migrate or qualify a deployment.
+`/v2` API. Go is the only Exchange server implementation in this source tree.
+The Python package contains the client library, not a server or server command.
+Installing a binary does not migrate or qualify a deployment.
 
 ## Who does what
 
 | Role | Responsibility |
 | --- | --- |
 | Org S | Build/install the server, configure identity, PostgreSQL and S3, supervise API/worker, back up state, and qualify a cutover. |
-| Org P | Agree on the trainer/model, manage delegated project membership, publish checkpoints, and aggregate participant updates using the existing client tools. |
+| Org P | Agree on the trainer/model, manage delegated space membership, publish checkpoints, and aggregate participant updates using the existing client tools. |
 | Alice and Bob | Install the Python SDK/application, run the agreed trainer on their own machines and private data, and submit updates. |
+
+An Exchange space is a named boundary for membership, records, and file
+attachments. Only the configured bootstrap administrator creates spaces; Org P
+can administer membership after receiving the space's explicit `admin` role.
+The job manager's study-creation permission is separate: it does not authorize
+Exchange space creation or grant Exchange membership.
 
 Org S and Org P need no SSH or filesystem access to independent participant
 machines. Exchange transports metadata and files; it does not deploy trainers
 to participants. The [beginner walkthrough](../examples/first_federation/README.md)
-continues to use its supplied Python-reference Compose stack. Follow it as
-written unless deliberately qualifying a Go service deployment.
+provides a complete teaching stack with the Go Exchange, login, database, and
+object-storage services. Its Python bootstrap helper configures those services;
+it is not a Python Exchange server.
+
+## Docker Compose
+
+The [Go services Compose guide](../deploy/compose/go/README.md) provides a
+native Go Exchange API and worker, plus an optional Go manager/dashboard.
+It uses separately configured PostgreSQL, identity, storage, and certificates;
+it does not install those dependencies or deploy training infrastructure.
+For a fresh teaching stack, use the beginner walkthrough instead.
 
 ## Build and install
 
@@ -50,10 +66,10 @@ Use mode 0700 for a private test binary and 0600 for private configuration.
 A build inherited from a group-writable umask can otherwise produce an unsafe
 executable mode.
 
-The Python wheel also installs a command
-named `hf2l-exchange`; verify which executable is being started.
+The `hf2l-exchange` command is supplied only by the Go executable.
+The Python package no longer installs that command or a `server` extra.
 
-Clients still install the Python SDK, without the server extra:
+Clients install the Python SDK separately:
 
 ```sh
 python3 -m venv .venv
@@ -73,7 +89,11 @@ the service's private environment, outside source control.
 
 PostgreSQL is the deployment metadata store. SQLite is for development and
 tests. **Versioned S3-compatible storage is the only Exchange blob backend.**
-MinIO and the documented patched SeaweedFS are S3 implementations.
+MinIO and the documented patched SeaweedFS are S3 implementations. These are
+implemented provider choices, not a promise that any database or any product
+advertised as S3-compatible can be substituted unchanged. A different provider
+requires implementation work and qualification against the versioned-object,
+multipart-upload, retry, and cleanup contracts in the operator runbook.
 Hugging Face, JFrog, and local filesystem stores are alternatives in the
 [HF²L training layer](../README.md#model-storage-four-backends), not selectable
 Exchange storage implementations.
@@ -116,7 +136,7 @@ The worker requires database/storage settings, not public JWT verification.
 | `repair-transfers` | Reviewed operator recovery of interrupted provider mutations. |
 | `init-db`, `migrate-db`, `check-db` | Explicit database lifecycle. |
 | `check-storage`, `check-compatibility` | Storage probe and retained-schema compatibility preflight. |
-| `export-contract` | Write generated contract artifacts without starting a listener. |
+| `export-contract` | Export the API document and embedded reference artifacts without starting a listener. |
 
 Use each command's `--help` for options. Put the command before its flags.
 The Go HTTP process accepts only
@@ -154,9 +174,10 @@ a workload.
 
 ## Compatibility, cutover, and rollback
 
-Go and Python use the existing `/v2` wire protocol and current Exchange schema.
-This is not a v1 importer or a production-cutover instruction. Keep the
-reference binary/environment available until the actual deployment qualifies.
+The Go service and Python clients use the existing `/v2` wire protocol and
+current Exchange schema. The removed Python servers are not a deployment or
+recovery option. This is not a v1 importer. Back up retained state and qualify
+the intended Go binary before changing an existing deployment.
 
 JSON Schema validation remains Draft 2020-12. Common Python regular-expression
 patterns are supported; Python-specific extensions cannot all be translated
@@ -183,16 +204,17 @@ does not emulate a fixed Python Unicode version.
 | Group nesting above 256 | `regex_nesting_limit` |
 | Translation expansion above 1 MiB | `regex_expansion_limit` |
 
-Observed toolchain Unicode versions differ:
+Historical comparison results showed different Unicode tables in these
+toolchains; the Python server used for that comparison has been removed:
 
 | Runtime used in compatibility probes | Unicode tables |
 | --- | --- |
-| Python 3.11.17 reference | 14 |
+| Historical Python 3.11.17 comparison | 14 |
 | Go 1.26.10 | 15 |
 | Go 1.27.3 | 17 |
 
 For example, Kawi U+11F02 matches native `\w`/`\b` and U+11F50 matches
-native `\d` on both Go versions, while the Python reference rejects them.
+native `\d` on both Go versions, while that historical Python runtime rejected them.
 Cyrillic U+1C89/U+1C8A case folding differs additionally between Go versions.
 A surrounding JSON Schema `not` can reverse the resulting acceptance decision.
 
@@ -211,9 +233,10 @@ Exhaustion rejects the entire schema evaluation with
 match that a surrounding `not` could invert into acceptance.
 Use supported patterns for new schemas. Preflight checks every retained
 revision: adding a new revision does not clear an incompatible older one.
-Do not edit or delete immutable type history just to pass preflight. Remain
-on the Python reference or use an operator-reviewed fresh namespace and
-export/migration plan, qualified before cutover. No automatic rewrite occurs.
+Do not edit or delete immutable type history just to pass preflight. Stop the
+upgrade if retained data is incompatible. Restore the tested previous deployment
+or use an operator-reviewed fresh namespace and export/migration plan, qualified
+before cutover. No automatic rewrite occurs, and no Python server is shipped.
 
 1. Record source/binary/dependency hashes and back up the database and exact
    S3 version/prefix metadata. Exercise a restore independently.
@@ -228,9 +251,10 @@ export/migration plan, qualified before cutover. No automatic rewrite occurs.
    workload/edge/gateway behavior and their runtime.
 5. Start the selected implementation with scoped credentials, then enable
    admission only after dependency checks and acceptance pass.
-6. For rollback, stop Go mutations and workers, reconcile uncertain effects,
-   and verify retained-state compatibility before starting the Python
-   reference. Restore the tested backup if state is incompatible.
+6. To return to an earlier approved Go release, stop mutations and workers,
+   reconcile uncertain effects, and verify that release accepts retained state.
+   Restore the tested backup when required. Do not start a removed Python server
+   or two competing versions against the same data.
 
 Malformed retained mutation ledgers fail closed: null/non-array ledgers,
 non-string markers, or duplicate markers cannot be silently normalized by
@@ -266,16 +290,18 @@ inside a disposable test database:
 | Private gateway backend | `EXCHANGE_GO_GATEWAY_TEST_DATABASE_URL` |
 | HTTP API | `HF2L_EXCHANGE_HTTP_TEST_DATABASE_URL` |
 
-CI points all four settings at its owned test database. Set both
-`HF2L_EXCHANGE_TEST_PYTHON` and `HF2L_GO_EXCHANGE_REFERENCE_PYTHON` to the same
-Python environment with the current reference server/SQLAlchemy for persistence
-and coordination oracles. Do not point fixtures at a production database.
+CI points all four settings at its owned disposable test database. Native tests
+compare retained rows and schema behavior with frozen historical fixtures, then
+exercise current native persistence and coordination. PostgreSQL-specific cases
+run only when their explicit test database setting is supplied; a skipped case
+is not a passing PostgreSQL result. Never point these fixtures at a production
+database.
 
 The [Go Exchange CI workflow](../.github/workflows/exchange_go_tests.yml)
 checks formatting, module checksums, build/vet, and SQLite/PostgreSQL race tests
 on Go 1.26 and 1.27. Its integration gate uses the unchanged Python SDK
-against the actual Go HTTPS service with PostgreSQL and MinIO. Python-reference regression checks
-remain in the [existing workflow](../.github/workflows/exchange_tests.yml).
+against the actual Go HTTPS service with PostgreSQL and MinIO. Python SDK and
+application checks remain in the [Python workflow](../.github/workflows/exchange_tests.yml).
 
 A configured workflow or test fixture is not a recorded passing result.
 Keep release and qualification evidence tied to the tested revision.
@@ -289,9 +315,9 @@ The storage receipt contains `endpoint`, `access_key`, `secret_key`, and
 bucket/version/multipart privileges.
 
 Install the current Python SDK plus HTTPX, Cryptography, PyJWT, Psycopg, and
-Boto3 for the live SDK harness. The retained-state gate additionally uses the
-Python reference server dependencies to verify continuation in both directions;
-this test dependency is not a Go-server runtime dependency.
+Boto3 for the live SDK harness. The retained-state gate restarts the native Go
+service and continues uploads/downloads through the Python SDK; it does not
+install or start a Python server.
 
 ```sh
 HF2L_GO_EXCHANGE_SDK_CONFIG=/etc/hf2l/private-sdk-test.json \
@@ -302,7 +328,7 @@ HF2L_GO_EXCHANGE_SDK_PYTHON=/opt/hf2l-test/bin/python \
 HF2L_GO_EXCHANGE_RETAINED_CONFIG=/etc/hf2l/private-retained-test.json \
 HF2L_GO_EXCHANGE_RETAINED_PYTHON=/opt/hf2l-test/bin/python \
   go -C packages/exchange test -race -count=1 -timeout=20m \
-  -run '^TestRetainedStatePythonAndGo$' -v ./integration
+  -run '^TestRetainedStateNativeRestart$' -v ./integration
 ```
 
 A separate provider gate tests the native S3 adapter directly, including exact
@@ -322,7 +348,7 @@ owned fixture resources.
 The SDK gate starts actual native public/managed/private HTTPS listeners and
 the native worker; it creates uniquely owned PostgreSQL/S3 namespaces and
 waits for normal transfer-grant drain during cleanup. The retained-state gate
-checks Python → Go and Go → Python continuation. Missing fixture configuration
+checks native-service restart and retained-state continuation. Missing fixture configuration
 skips these opt-in developer gates; CI supplies it explicitly. Neither gate
 proves model quality or qualified sandbox execution.
 

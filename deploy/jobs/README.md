@@ -1,19 +1,26 @@
 # Job manager deployment
 
 For the native binary and cutover procedure, start with the [Go manager guide](../../docs/GO_JOB_MANAGER.md).
-This runbook supplies shared topology, qualification, and operational contracts;
-select the intended Go or reference Python executable explicitly. Runtime helpers
-and sandboxed Python FL application adapters retain their existing role.
+This runbook supplies topology, qualification, and operational contracts for
+the Go services. The Python manager and Exchange servers have been removed.
+Python runtime helpers and sandboxed training/build adapters retain their
+existing role.
 
 The Go transfer gateway uses the independent Exchange private HTTPS backend.
 The [native Go Exchange service](../../docs/GO_EXCHANGE.md) can supply that
 backend with `serve-gateway-backend`; keep API, managed ingress, and private
-transfer listeners distinct. The Python reference remains a rollback option.
+transfer listeners distinct. Recovery uses an approved compatible Go release
+and its tested state backup; there is no Python server fallback.
 Apply the Go guide’s [backend configuration](../../docs/GO_JOB_MANAGER.md#independent-exchange-private-transfer-backend)
 before using the gateway configuration fragments below. Its control interface
 is separate from both the public Exchange API and the managed workload ingress.
 
 Use this runbook to configure the HF²L manager, its PostgreSQL database, controller, trusted node agent, shared Exchange service, transfer gateway, and per-execution proxies. The repository provides runtime helpers and service commands; it does not provide a complete production stack installer. Read the [operator guide](../../docs/JOB_MANAGER.md) for configuration, catalog approvals, job creation, and lifecycle actions.
+
+For containerized Go API/dashboard processes, see the
+[Go services Compose guide](../compose/go/README.md). That services-only example
+does not containerize the privileged execution runtime or start a controller,
+and is not a complete managed-job deployment.
 
 ## Trusted service boundaries
 
@@ -89,7 +96,8 @@ For an IP endpoint use `-verify_ip` with its actual address. Include approved in
 
 ## CPU runtime setup
 
-The administrator helper `runtime/setup.py` requires Linux x86_64, Python 3.12 or later, cgroup v2, Docker, systemd, and approved noninteractive `sudo` access to the explicit runtime operations. The manager distribution itself supports Python 3.11 or later.
+The administrator helper `runtime/setup.py` requires Linux x86_64, Python 3.12 or later, cgroup v2, Docker, systemd, and approved noninteractive `sudo` access to the explicit runtime operations. The manager server is built with Go 1.26 or later. Its Python execution-adapter
+package supports Python 3.11 or later.
 
 Choose a new short absolute runtime directory owned by the operator, at least three path components below `/`, with enough space for its dedicated Docker data and bounded job volumes. Unix socket path limits apply. The helper refuses system Docker roots and foreign/unmarked directories. Verified runtime executables are staged in an owned `/opt/hf2l-jobs-runtime-<id>` directory so unprivileged runtime sidecars can traverse them without broadening private home-directory permissions. It neither rewrites `/etc/docker` nor restarts the system Docker service.
 
@@ -119,7 +127,7 @@ Install/start success reports `ready_for_qualification`; it does not establish a
 
 ## Build the trusted runtime image
 
-The deployment builder `runtime/build_image.py` stages the trusted application, Exchange, and manager wheels plus an exact, hashed dependency wheelhouse on the trusted host. This builds the deployment runtime, not a submitted job's package hooks. Its Docker build is offline (`--network=none`).
+The deployment builder `runtime/build_image.py` stages the trusted training application, Exchange SDK, and execution-adapter wheels plus an exact, hashed dependency wheelhouse on the trusted host. This builds the deployment runtime, not a submitted job's package hooks. Its Docker build is offline (`--network=none`).
 
 The image builder targets CPython 3.14/`cp314`, with CPU Torch `2.14.1+cpu`; other Python/image ABI combinations require qualification. Preload and independently approve the immutable Python 3.14 base image in the owned daemon. Pass the deployment's actual operator-approved immutable local base image ID with `--base-image`; the builder requires it explicitly and does not assume a previously qualified image exists.
 
@@ -281,14 +289,26 @@ Use the actual report path printed by `qualify.py`. Point trusted executor confi
 
 ### Qualify physical backing I/O
 
-The initial isolation profile also needs node-local backing-device qualification. Run the repository helper as the same trusted nonroot node operator, after the original profile publication:
+The initial isolation profile also needs node-local backing-device qualification.
+Build the native executor qualification runner from the repository root.
+`-o` selects its output executable; install that executable at an operator-owned
+path. `--executor-binary` selects that exact runner for the Python measurement
+helper, which records its hash in the report. Run the helper as the same trusted
+nonroot node operator, after the original profile publication:
 
 ```sh
+mkdir -p dist
+go -C packages/jobs build -trimpath -o ../../dist/hf2l-jobs-qualify-io ./cmd/hf2l-jobs-qualify-io
 python3 deploy/jobs/runtime/qualify_readonly_io.py \
+  --executor-binary /absolute/path/to/hf2l-jobs-qualify-io \
   --profile /srv/hf2l/runtime/executor-profile.json \
   --root /srv/hf2l/validation/readonly-io \
   --base-image sha256:YOUR_ACTUAL_APPROVED_BASE_IMAGE_DIGEST
 ```
+
+Replace `/absolute/path/to/hf2l-jobs-qualify-io` with the installed runner path;
+it is not a supplied executable location. The helper measures I/O and writes the
+report, while the native executor creates, runs, and cleans the test executions.
 
 Use an operator-approved immutable Python-capable image already loaded in this explicit daemon; the helper does not pull an image. Its root must be private, inside the qualified owned resource root, and outside the source checkout, with at least 512 MiB free for bounded synthetic canaries. It probes uncached reads from source, dataset, build, and image backing paths while a sibling continues, validates actual executor device limits, and checks owned cleanup.
 
@@ -466,7 +486,7 @@ Managed Exchange edge configuration:
 }
 ```
 
-The `exchange-edge` CLI listener obtains the actual TLS peer certificate and authenticates its forwarding into the private managed Exchange backend with the configured backend secret. Stock Uvicorn does not supply this peer-identity contract by itself. Keep the managed backend inaccessible to jobs and public users.
+The `exchange-edge` CLI listener obtains the actual TLS peer certificate and authenticates its forwarding into the private managed Exchange backend with the configured backend secret. Keep the managed backend inaccessible to jobs and public users.
 
 ### Private node callback listener
 
@@ -821,22 +841,20 @@ The central manager checks current job access and locally approved binding/ident
 
 ## Exchange backend and service launch
 
-Initialize/migrate the independent Exchange database with `hf2l-exchange migrate-db`. Configure its human issuer/audience, workload issuer/key/audience, provisioner/download-broker principals, database, private blob storage, and backend secret as described in the operator guide.
+Initialize only a new Exchange database with `hf2l-exchange init-db`; use
+`hf2l-exchange migrate-db` only for a supported retained database after backup
+and writer shutdown. Configure its human issuer/audience, workload issuer/key/audience, provisioner/download-broker principals, database, private blob storage, and backend secret as described in the operator guide.
 
 Start the ordinary trusted provisioner/public Exchange ingress and the separate private managed backend with explicit HTTPS:
 
 ```sh
-python -m uvicorn hf2l_exchange.api:create_app --factory \
-  --host 127.0.0.1 --port 8441 \
-  --ssl-certfile /etc/hf2l/tls/exchange-admin.pem \
-  --ssl-keyfile /etc/hf2l/secrets/exchange-admin-key.pem \
-  --no-proxy-headers --no-access-log
+hf2l-exchange serve --host 127.0.0.1 --port 8441 \
+  --tls-cert /etc/hf2l/tls/exchange-admin.pem \
+  --tls-key /etc/hf2l/secrets/exchange-admin-key.pem
 
-python -m uvicorn hf2l_exchange.api:create_managed_app --factory \
-  --host 127.0.0.1 --port 8442 \
-  --ssl-certfile /etc/hf2l/tls/exchange-backend.pem \
-  --ssl-keyfile /etc/hf2l/secrets/exchange-backend-key.pem \
-  --no-proxy-headers --no-access-log
+hf2l-exchange serve-managed --host 127.0.0.1 --port 8442 \
+  --tls-cert /etc/hf2l/tls/exchange-backend.pem \
+  --tls-key /etc/hf2l/secrets/exchange-backend-key.pem
 ```
 
 Expose only the intended public manager/ordinary ingress through approved HTTPS routing. The managed edge and gateway require mTLS, and the managed backend stays private. Certificate hostnames must match configured endpoint URLs. Loopback examples suit the single-host pilot. For remote agents, bind the managed edge/gateway and node callback listeners to approved private interfaces or use TCP TLS pass-through that preserves actual client-certificate verification at these listeners.
@@ -906,3 +924,62 @@ The helper refuses daemon stop while containers are running and preserves owned 
 CPU `runsc-cpu-v1` is the implemented managed profile. The executor refuses nonzero GPU limits; GPU fields in resource schemas and scheduling ledgers do not provide a GPU runtime. GPU and Kubernetes execution require separate implementation and qualification. Standalone native GPU training remains a separate workflow. Participant training and raw datasets remain at participant machines; managed participant pools and dataset bindings require local approval.
 
 The [implementation validation record](../../docs/validation/2026-10-09-multi-job-implementation.md) records exact tested versions, runtime provenance, service topology, test results, and cleanup. Production OIDC/provider, TLS certificates, private storage, and service supervision remain operator-supplied deployment configuration.
+
+## Study creation and resource handoff
+
+A **study creator** is an account that Org S, the service operator, permits to
+create studies through the dashboard. Org S grants this separate servicewide
+permission to selected accounts using the [trusted creation commands](../../docs/JOB_MANAGER.md#grant-or-revoke-study-creation).
+An existing project administrator does not automatically receive it. Org P,
+the study lead, can then use **Studies** and **Create study** without an operator
+creating each study. The creator administers only the newly created study;
+the role grants no access to other studies or private jobs and no authority over
+service accounts, shared resources, or service settings.
+
+New studies start with registration closed, participant approval required,
+zero resource quotas (resource allowances), and 14-day job retention (how long
+finished jobs' stored output is kept). Org S must still configure quotas,
+resource pools (shared capacity), and execution services before training can
+run. Creation alone does not start automated training. Revoking creation
+permission blocks new creation immediately, including existing signed-in
+sessions, while preserving independent existing study-admin memberships.
+
+
+For an existing manager database, back up state and apply the documented upgrade
+to database revision `0005_study_creators` before restarting the new manager.
+This upgrade preserves existing study administration but does not grant global
+study-creation permission to existing administrators. Creation and participant
+registration are separate: registration eligibility requires the study's
+approval process and does not grant study/job administration or authorize
+execution. Managed execution still needs its approved source, runtime, and
+locally approved dataset configuration.
+
+
+## Provisioner credential renewal
+
+The provisioner is the trusted manager component that prepares Exchange state
+for managed jobs. Its `admin_token_file` setting names a private file containing
+the provider-issued bearer credential used for those administrative requests.
+A bearer credential authorizes whoever presents it, so keep the file owned by
+the service account with owner-only read/write permissions and outside Git.
+The value must retain the configured issuer, intended Exchange audience, and
+approved provisioner identity. A workload credential for a particular job is
+not a substitute for this administrative credential.
+
+The Go provisioner uses a refreshable file provider: its Exchange client reads
+the credential file when making requests. Obtain a replacement from the trusted
+identity provider before the old credential expires, write a new private file
+in the same private directory, then atomically replace the configured file.
+Atomic replacement changes the directory entry in one operation, so a reader
+sees either complete old contents or complete new contents. Preserve the service
+owner and restrictive permissions; do not replace it with a symbolic link.
+New requests can use the renewed file without restarting the controller. A
+request already sent can still contain the old credential, so retain appropriate
+validity overlap when the provider supports it and monitor authorization errors.
+
+The client can reread a file; it does not mint credentials or run the identity
+provider's renewal flow. Configure an operator-owned renewal procedure, track
+expiration, and alert before renewal fails. A fixed token string supplied
+directly to a custom client is not refreshable. Do not reinitialize databases,
+rerun destructive bootstrap steps, discard ownership ledgers, or release job
+capacity to recover from an expired administrative credential.

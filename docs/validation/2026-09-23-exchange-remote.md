@@ -1,5 +1,11 @@
 # Exchange remote validation — 2026-09-23
 
+> Historical record: this document describes its original source revision and
+> validation scope, including service implementations and commands that may no
+> longer ship. It does not certify the current Go services. Use the
+> [current architecture](../ARCHITECTURE_V3.md) and
+> [documentation index](../README.md) for current guidance.
+
 > **Historical record.** Findings, commands, counts, and environment details
 > below describe the September 23 baseline only. The linked remediation records
 > subsequent fixes; unresolved findings here are not a current defect inventory.
@@ -185,8 +191,8 @@ their generated URLs omit `X-Amz-Security-Token`. A plain boto3 environment-chai
 control retains the token.
 
 Evidence: `logs/audit-b2-b8.log`; synthetic credentials, zero network requests.
-Relevant code: [config.py](../../packages/exchange/src/hf2l_exchange/config.py)
-and [storage.py](../../packages/exchange/src/hf2l_exchange/storage.py).
+Relevant code: [config.py](https://github.com/IsaacYangSLA/hf_fl/blob/e5b9dc52be155f281cac6ec8cb41d20a8c25e8cb/packages/exchange/src/hf2l_exchange/config.py)
+and [storage.py](https://github.com/IsaacYangSLA/hf_fl/blob/e5b9dc52be155f281cac6ec8cb41d20a8c25e8cb/packages/exchange/src/hf2l_exchange/storage.py).
 
 Suggested correction: preserve boto3's credential resolution unless explicit
 Exchange overrides are provided. If explicit temporary credentials are supported,
@@ -221,8 +227,8 @@ and acquisition accepts the changed state.
 
 Evidence: `logs/audit-b2-b8.log`; real application, transfer, worker and SQLite
 logic, with a recording storage double and a deterministic scheduling hook.
-Relevant code: [transfers.py](../../packages/exchange/src/hf2l_exchange/transfers.py)
-and [worker.py](../../packages/exchange/src/hf2l_exchange/worker.py).
+Relevant code: [transfers.py](https://github.com/IsaacYangSLA/hf_fl/blob/e5b9dc52be155f281cac6ec8cb41d20a8c25e8cb/packages/exchange/src/hf2l_exchange/transfers.py)
+and [worker.py](https://github.com/IsaacYangSLA/hf_fl/blob/e5b9dc52be155f281cac6ec8cb41d20a8c25e8cb/packages/exchange/src/hf2l_exchange/worker.py).
 
 Suggested correction: enforce the expected lifecycle category transactionally
 during acquisition and skip/requeue changed selections. Cover cancellation between

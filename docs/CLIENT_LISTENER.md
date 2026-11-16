@@ -6,6 +6,16 @@ owner listener waits for enough eligible updates on the current immutable base,
 runs FedAvg, and publishes the next global model. Both support all four
 model-store backends: `huggingface`, `jfrog`, `exchange`, and `local`.
 
+A model-store adapter connects the common model operations to one storage
+service. These are the four choices registered by the command factory; object
+storage behind Exchange is not a fifth listener backend. A plugin is reviewed
+local Python code for training or evaluation. Each participant runs its own
+plugin against its own data; the owner runs averaging and any evaluation in its
+own environment. Exchange stores and coordinates checkpoints and does not run
+these computations. Submitted checkpoints and supplied metadata are visible to
+the authorized owner; keeping raw data local does not make updates private from
+that owner.
+
 They poll through the shared `ModelStore` interface. No event broker, webhook
 endpoint, or extra service is required. The Exchange event feed and HF PR
 webhook relay remain separate mechanisms. Run one polling process per

@@ -1,5 +1,11 @@
 # Repository remediation — 2026-10-08
 
+> Historical record: this document describes its original source revision and
+> validation scope, including service implementations and commands that may no
+> longer ship. It does not certify the current Go services. Use the
+> [current architecture](../ARCHITECTURE_V3.md) and
+> [documentation index](../README.md) for current guidance.
+
 > **Historical record.** These remediation results and reproduction commands
 > describe the October 8 working tree and macOS run. They are not current test
 > results or instructions to choose a present validation host. Original temporary
@@ -20,10 +26,10 @@ provider or model account was used.
 | Automatic and fenced FedAvg validate each client's floating tensors before choosing participants and weights. Invalid inputs are skipped; explicit invalid selections and unsafe global/reduction values still fail. Schema-1 checksum maps are verified when supplied. | [`test_runner_hardening.py`](../../tests/test_runner_hardening.py), existing checkpoint/round suites, and Exchange fenced-round regressions |
 | Algorithm parameter comparisons distinguish JSON booleans from numbers while retaining numeric equivalence and object key-order independence. | [`test_json_values.py`](../../tests/test_json_values.py) and runner parameter regressions |
 | Manual cyclic download/train/upload handoffs validate immutable predecessors, checkpoint digests, source identity, and bounded lineage. FedAvg rejects cyclic submissions; listeners retain their global FedAvg workflow. | [`test_cyclic_handoffs.py`](../../tests/test_cyclic_handoffs.py), existing workflow/store contracts, and the actual README CLI recipe below |
-| SQLite event IDs remain monotonic after pruning. Revision `0002_event_sequence` upgrades the frozen baseline, preserves retained rows and cursor floors, and fails closed for unknown ledgers. | Seven [`test_event_sequence.py`](../../packages/exchange/tests/test_event_sequence.py) regressions and existing migration/application tests |
+| SQLite event IDs remain monotonic after pruning. Revision `0002_event_sequence` upgrades the frozen baseline, preserves retained rows and cursor floors, and fails closed for unknown ledgers. | Seven [`test_event_sequence.py`](https://github.com/IsaacYangSLA/hf_fl/blob/e5b9dc52be155f281cac6ec8cb41d20a8c25e8cb/packages/exchange/tests/test_event_sequence.py) regressions and existing migration/application tests |
 | JFrog detached submissions and tags reject reserved mutable reference aliases. | [`test_jfrog_revision_safety.py`](../../tests/test_jfrog_revision_safety.py) |
 | Python stdout from plugin imports, training, and evaluation is redirected to stderr around plugin calls, preserving command and listener output. | [`test_plugin_output.py`](../../tests/test_plugin_output.py) and listener/CLI suites |
-| S3 readiness probes use the configured object prefix and still fail on denied access or disabled versioning. | Four [`test_readiness_prefix.py`](../../packages/exchange/tests/test_readiness_prefix.py) regressions |
+| S3 readiness probes use the configured object prefix and still fail on denied access or disabled versioning. | Four [`test_readiness_prefix.py`](https://github.com/IsaacYangSLA/hf_fl/blob/e5b9dc52be155f281cac6ec8cb41d20a8c25e8cb/packages/exchange/tests/test_readiness_prefix.py) regressions |
 | Case-collision fixtures and listener temporary directories support the native macOS filesystem and temporary-path aliases. Production symlink rejection remains enforced. | Protocol, listener, CLI, and authenticated Exchange integration tests under the default macOS temporary directory |
 
 Model cards, current guides, generated schemas, and the FedAvg diagrams were

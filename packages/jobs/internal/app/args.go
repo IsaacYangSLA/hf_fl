@@ -35,9 +35,10 @@ var commandDescriptions = map[string]string{
 	"admin":             "Trusted local deployment administration",
 }
 var adminDescriptions = map[string]string{
+	"study-creator-set":     "Grant or revoke permission to create new studies",
 	"project-create":        "Create a project with explicit quota and retention",
 	"project-update":        "Update a project's quota or retention policy",
-	"project-member":        "Grant or revoke project creation permission",
+	"project-member":        "Grant or revoke membership in an existing project",
 	"object-store-pool-set": "Approve configured versioned object-store capacity",
 	"storage-pool-set":      "Qualify configured manager filesystem capacity",
 	"pool-set":              "Register or update explicitly allocatable capacity",
@@ -127,8 +128,12 @@ func Parse(args []string, w io.Writer) (Arguments, bool, error) {
 		af := flag.NewFlagSet(a.Operation, flag.ContinueOnError)
 		af.SetOutput(io.Discard)
 		var id, name, quota, project, principal, role, file string
+		var enabled bool
 		retention := 90
 		switch a.Operation {
+		case "study-creator-set":
+			af.StringVar(&principal, "principal", "", "Stable human principal identifier")
+			af.BoolVar(&enabled, "enabled", false, "Explicitly enable or revoke study creation")
 		case "project-create", "project-update":
 			af.StringVar(&id, "id", "", "Project identifier")
 			af.StringVar(&name, "name", "", "Project display name")
@@ -157,6 +162,12 @@ func Parse(args []string, w io.Writer) (Arguments, bool, error) {
 		seen := map[string]bool{}
 		af.Visit(func(v *flag.Flag) { seen[v.Name] = true })
 		switch a.Operation {
+		case "study-creator-set":
+			if principal == "" || !seen["enabled"] {
+				return a, false, ErrArguments
+			}
+			a.Values["principal"] = principal
+			a.Values["enabled"] = enabled
 		case "project-create":
 			if id == "" || name == "" || quota == "" {
 				return a, false, ErrArguments

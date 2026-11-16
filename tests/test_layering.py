@@ -118,7 +118,7 @@ LAYERS: tuple[Layer, ...] = (
     # These demo composition scripts need specific Exchange helpers. Keep the
     # grants on the scripts so sibling examples cannot import server internals.
     Layer("CIFAR-10 setup composition", ("examples.exchange_cifar10.setup_federation",),
-          ("hf2l_exchange.auth", "hf2l_exchange.client")),
+          ("hf2l_exchange.domain", "hf2l_exchange.client")),
     Layer("CIFAR-10 service composition", ("examples.exchange_cifar10.start_service",),
           ("hf2l_exchange.transfer_client",)),
     # First-federation composition and contract tests use public client and
@@ -133,7 +133,7 @@ LAYERS: tuple[Layer, ...] = (
     Layer("first federation project contract tests", ("examples.first_federation.tests.test_project",),
           ("examples", "hf2l.data_utils", "hf2l_exchange.client_types", "hf2l_exchange.domain")),
     Layer("installed examples", ("examples",), ("examples", "hf2l.data_utils")),
-    Layer("cli", ("hf2l.cli",), ("hf2l", "hf2l_exchange.cli")),
+    Layer("cli", ("hf2l.cli",), ("hf2l",)),
     Layer("legacy commands", LEGACY_COMMANDS, ("hf2l",)),
     Layer("relay", ("hf2l.relay",), ("hf2l.common",)),
     Layer("legacy exchange protocol", ("hf2l.exchange.protocol",),
@@ -142,43 +142,7 @@ LAYERS: tuple[Layer, ...] = (
           ("hf2l.exchange.protocol",), frozenset({"httpx"})),
     Layer("legacy exchange", tuple(LEGACY_EXCHANGE_MODULES), ("hf2l.exchange",)),
     Layer("exchange SDK", SDK_MODULES, SDK_MODULES, frozenset({"httpx"})),
-    Layer("exchange vocabulary", ("hf2l_exchange.vocabulary",), (), STDLIB_ONLY),
-    Layer("exchange domain", ("hf2l_exchange.domain",), ("hf2l_exchange.vocabulary",), STDLIB_ONLY),
-    Layer("exchange profiles", ("hf2l_exchange.profiles",), ("hf2l_exchange.domain",), STDLIB_ONLY),
-    Layer("exchange settings", ("hf2l_exchange.config",), (), STDLIB_ONLY),
-    Layer("exchange application", ("hf2l_exchange.application",),
-          ("hf2l_exchange.domain", "hf2l_exchange.models", "hf2l_exchange.profiles",
-           "hf2l_exchange.schemas", "hf2l_exchange.vocabulary"), frozenset({"sqlalchemy"})),
-    Layer("exchange persistence", ("hf2l_exchange.models", "hf2l_exchange.migrations"),
-          ("hf2l_exchange.domain", "hf2l_exchange.vocabulary"), frozenset({"sqlalchemy"})),
-    Layer("exchange schema validation", ("hf2l_exchange.schemas",),
-          ("hf2l_exchange.domain", "hf2l_exchange.vocabulary"), frozenset({"jsonschema", "referencing"})),
-    Layer("exchange identity", ("hf2l_exchange.auth",),
-          ("hf2l_exchange.domain", "hf2l_exchange.vocabulary"), frozenset({"jwt"})),
-    Layer("exchange storage", ("hf2l_exchange.storage",),
-          ("hf2l_exchange.domain", "hf2l_exchange.vocabulary"), frozenset({"boto3", "botocore"})),
-    Layer("exchange transfer orchestration", ("hf2l_exchange.transfers",),
-          ("hf2l_exchange.domain", "hf2l_exchange.models", "hf2l_exchange.storage",
-           "hf2l_exchange.vocabulary"), frozenset({"sqlalchemy"})),
-    # Managed descriptors are generic transfer policy. Keep this adapter apart
-    # from manager lifecycle, job plugins, and the transactional application.
-    Layer("exchange managed transfer descriptors", ("hf2l_exchange.managed_transfers",),
-          ("hf2l_exchange.domain", "hf2l_exchange.models", "hf2l_exchange.storage"), STDLIB_ONLY),
-    Layer("exchange worker", ("hf2l_exchange.worker",),
-          ("hf2l_exchange.models", "hf2l_exchange.vocabulary"), frozenset({"sqlalchemy"})),
-    Layer("exchange HTTP composition", ("hf2l_exchange.api",),
-          ("hf2l_exchange.application", "hf2l_exchange.auth", "hf2l_exchange.config",
-           "hf2l_exchange.domain", "hf2l_exchange.migrations", "hf2l_exchange.storage",
-           "hf2l_exchange.transfers", "hf2l_exchange.managed_transfers", "hf2l_exchange.vocabulary")),
-    # This private process composes existing Exchange policy and storage; it
-    # must not acquire a dependency on either the FL application or manager.
-    Layer("exchange private gateway HTTP composition", ("hf2l_exchange.gateway_api",),
-          ("hf2l_exchange.api", "hf2l_exchange.application", "hf2l_exchange.auth",
-           "hf2l_exchange.config", "hf2l_exchange.domain", "hf2l_exchange.migrations",
-           "hf2l_exchange.storage", "hf2l_exchange.transfers")),
-    Layer("exchange CLI composition", ("hf2l_exchange.cli",), ("hf2l_exchange",)),
-    Layer("exchange contract export", ("hf2l_exchange.contracts",),
-          ("hf2l_exchange.api", "hf2l_exchange.config", "hf2l_exchange.vocabulary")),
+    Layer("exchange domain", ("hf2l_exchange.domain",), (), STDLIB_ONLY),
     Layer("exchange package", ("hf2l_exchange",), (), STDLIB_ONLY),
     # Historical target names stay covered for the WP0 adversarial parser tests;
     # V3 does not create a second SDK under the legacy service package.
@@ -440,6 +404,22 @@ class LayeringTests(unittest.TestCase):
         unassigned = [str(s.module.path) for s in self.sources if layer_of(s.module.name) is None]
         self.assertEqual([], unassigned, "modules without an allowlist row; add one to LAYERS")
 
+    def test_python_server_implementations_are_absent(self) -> None:
+        """The Python packages contain clients and execution adapters, not servers."""
+        forbidden = {
+            "hf2l.exchange", "hf2l_exchange.api", "hf2l_exchange.application",
+            "hf2l_exchange.auth", "hf2l_exchange.cli", "hf2l_exchange.config",
+            "hf2l_exchange.contracts", "hf2l_exchange.gateway_api", "hf2l_exchange.models",
+            "hf2l_exchange.migrations", "hf2l_exchange.profiles", "hf2l_exchange.schemas",
+            "hf2l_exchange.storage", "hf2l_exchange.transfers", "hf2l_exchange.worker",
+        }
+        for source in self.sources:
+            self.assertFalse(any(covers(name, source.module.name) for name in forbidden),
+                             f"Removed Python server module returned: {source.module.name}")
+            for imported in source.imports:
+                self.assertFalse(any(covers(name, imported.target) for name in forbidden),
+                                 f"{source.module.path}:{imported.line}: removed server import {imported.target}")
+
     def test_generic_exchange_has_no_ml_framework_dependencies(self) -> None:
         self._assert_clean(exchange_framework_violations)
 
@@ -590,7 +570,7 @@ class GateSelfTests(unittest.TestCase):
     def test_cifar10_composition_scripts_accept_their_required_exchange_imports(self) -> None:
         scripts = {
             "examples.exchange_cifar10.setup_federation": (
-                "from hf2l_exchange.auth import principal_id\n"
+                "from hf2l_exchange.domain import principal_id\n"
                 "from hf2l_exchange.client import ExchangeClient\n"
             ),
             "examples.exchange_cifar10.start_service": (
@@ -609,7 +589,7 @@ class GateSelfTests(unittest.TestCase):
             ),
             "examples.exchange_cifar10.start_service": (
                 "hf2l_exchange.api", "hf2l_exchange.application", "hf2l_exchange.storage",
-                "hf2l_exchange.auth", "hf2l_exchange.client",
+                "hf2l_exchange.domain", "hf2l_exchange.client",
             ),
         }
         for name, targets in forbidden.items():
@@ -626,7 +606,7 @@ class GateSelfTests(unittest.TestCase):
             "examples.other.setup_federation", "examples.other.start_service",
         )
         text = (
-            "from hf2l_exchange.auth import principal_id\n"
+            "from hf2l_exchange.domain import principal_id\n"
             "from hf2l_exchange.client import ExchangeClient\n"
             "from hf2l_exchange.transfer_client import require_tls\n"
         )
@@ -701,10 +681,11 @@ class GateSelfTests(unittest.TestCase):
         self.assertEqual(2, len(edge_violations(source)))
         self.assertEqual(1, len(third_party_violations(source)))
 
-    def test_server_cannot_import_fl_even_lazily(self) -> None:
-        source = self._source("hf2l_exchange.application", "def bad():\n    from hf2l.core import ports\n    import torch\n")
-        self.assertEqual(1, len(edge_violations(source)))
-        self.assertEqual(1, len(exchange_framework_violations(source)))
+    def test_removed_server_modules_have_no_production_layer(self) -> None:
+        for module in ("hf2l_exchange.api", "hf2l_exchange.application", "hf2l_exchange.auth",
+                       "hf2l_exchange.worker", "hf2l_exchange.managed_transfers"):
+            with self.subTest(module=module):
+                self.assertIsNone(layer_of(module))
 
     def test_legacy_service_is_bounded_and_cannot_expand_into_new_application(self) -> None:
         self.assertIsNone(layer_of("hf2l.exchange.new_feature"))
@@ -713,9 +694,10 @@ class GateSelfTests(unittest.TestCase):
         current = self._source("hf2l.fedavg_runner", "from hf2l.exchange.api import Service\n")
         self.assertEqual(1, len(edge_violations(current)))
 
-    def test_transactional_application_cannot_import_http_or_sdk(self) -> None:
-        source = self._source("hf2l_exchange.application", "from hf2l_exchange.api import create_app\nfrom hf2l_exchange.client import ExchangeClient\n")
-        self.assertEqual(2, len(edge_violations(source)))
+    def test_identity_helper_cannot_import_service_or_client(self) -> None:
+        source = self._source("hf2l_exchange.domain", "from hf2l_exchange.client import ExchangeClient\nimport httpx\n")
+        self.assertEqual(1, len(edge_violations(source)))
+        self.assertEqual(1, len(third_party_violations(source)))
         self.assertIsNone(layer_of("hf2l_exchange.unassigned_feature"))
 
     def test_distribution_source_path_resolves_to_importable_package(self) -> None:
@@ -723,21 +705,15 @@ class GateSelfTests(unittest.TestCase):
         self.assertEqual(module.name, "hf2l_exchange.client")
         self.assertEqual(str(module.path), "packages/exchange/src/hf2l_exchange/client.py")
 
-    def test_managed_transfer_adapter_has_a_narrow_generic_layer(self) -> None:
-        source = self._source("hf2l_exchange.managed_transfers",
-                              "from hf2l_exchange.domain import ExchangeError\n"
-                              "from hf2l_exchange.models import database_time\n"
-                              "from hf2l_exchange.storage import part_size_for\n")
+    def test_client_transfer_adapter_stays_in_the_sdk_layer(self) -> None:
+        source = self._source("hf2l_exchange.transfer_client",
+                              "from hf2l_exchange.client_types import Attachment\nimport httpx\n")
         self.assertEqual([], edge_violations(source))
         self.assertEqual([], third_party_violations(source))
-        forbidden = self._source("hf2l_exchange.managed_transfers",
-                                 "from hf2l_exchange.application import Service\n"
-                                 "import hf2l_jobs\n")
+        forbidden = self._source("hf2l_exchange.transfer_client",
+                                 "from hf2l_exchange.storage import Store\nimport boto3\n")
         self.assertEqual(1, len(edge_violations(forbidden)))
         self.assertEqual(1, len(third_party_violations(forbidden)))
-        api = self._source("hf2l_exchange.api",
-                           "from hf2l_exchange.managed_transfers import ManagedTransferService\n")
-        self.assertEqual([], edge_violations(api))
 
     def test_registry_imports_providers_only_when_called(self) -> None:
         eager = self._source("hf2l.backends.factory", "import hf2l.backends.huggingface\n")

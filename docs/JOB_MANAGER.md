@@ -3,9 +3,10 @@
 **Status:** implemented CPU v1 runbook; runtime qualification is required for each deployment.
 
 For the native Go binary, use the [Go build and cutover guide](GO_JOB_MANAGER.md).
-The API, authorization, lifecycle, and resource policies below are shared.
-The Python installation instructions apply to the retained reference manager;
-the Go guide also specifies its private Exchange transfer-backend integration.
+The API, authorization, lifecycle, and resource policies below apply to that
+Go implementation. Python remains in the client/training and sandbox-adapter
+packages; the Python manager server has been removed. The Go guide also specifies
+its private Exchange transfer-backend integration.
 
 The job manager runs independent managed FedAvg jobs in one deployment. Each job has an immutable specification, authorized source snapshot, separate Exchange space, workload identities, state, logs, and artifacts. Resource availability determines admission from the durable queue.
 
@@ -13,16 +14,28 @@ The packaged dashboard is served at `/dashboard/`; the API base is `/api/jobs/v1
 
 ## 1. Install and initialize
 
-For the Python reference manager, install the application, Exchange server, and manager into the deployment's dedicated Python environment:
+Build the native manager on Linux with Go 1.26 or later. From the repository
+root, `mkdir -p` creates the output directory; `go -C` selects the module;
+`-trimpath` removes build-machine paths; and `-o` selects the output executable:
 
 ```sh
-python -m pip install -e 'packages/exchange[server]' -e '.[examples]' -e 'packages/jobs[server]'
-hf2l-jobs --help
+mkdir -p dist
+go -C packages/jobs build -trimpath -o ../../dist/hf2l-jobs ./cmd/hf2l-jobs
+./dist/hf2l-jobs --help
 ```
 
-The Python reference manager requires Python 3.11 or later. CI checks clean Python manager/server wheels on Python 3.11–3.14; functional cohorts and exact patch versions are recorded in the validation report. The deployment image builder separately targets CPython 3.14; its image must be qualified on the intended runtime. Manager processes do not import job training plugins. The approved runtime image must contain the FL dependencies needed by its jobs. Managed execution currently uses CPU `runsc-cpu-v1`; the executor refuses nonzero GPU limits. Standalone native GPU training does not qualify managed GPU execution.
+Install that executable into the service account's configured command path.
+For the API/dashboard under Docker Compose, use the
+[Go services Compose guide](../deploy/compose/go/README.md). Python package
+installation does not install a manager server. The Python execution-adapter
+package requires Python 3.11 or later. The deployment image builder separately
+targets CPython 3.14; its image must be qualified on the intended runtime. Manager
+processes do not import job training plugins. The approved runtime image must
+contain the FL dependencies needed by its jobs. Managed execution currently uses
+CPU `runsc-cpu-v1`; the executor refuses nonzero GPU limits. Standalone native GPU
+training does not qualify managed GPU execution.
 
-Configure `HF2L_JOBS_DATABASE_URL` for a dedicated manager PostgreSQL database. Initialize a new database with `hf2l-jobs init-db`; apply upgrades with `hf2l-jobs migrate-db`. Services check the schema instead of silently changing it at startup. The current manager revision is `0003_administrative_audit`; upgrades preserve the original ledger, trusted artifact locators and log-storage charges, and add sanitized trusted-administration audit records. Legacy artifacts without a trusted locator remain metadata-only until a trusted collector supplies one; arbitrary old locator strings are not parsed as paths. SQLite is an isolated test backend.
+Configure `HF2L_JOBS_DATABASE_URL` for a dedicated manager PostgreSQL database. Initialize a new database with `hf2l-jobs init-db`; apply upgrades with `hf2l-jobs migrate-db`. Services check the schema instead of silently changing it at startup. The current manager revision is `0005_study_creators`; upgrades preserve the original ledger, trusted artifact locators and log-storage charges, and include sanitized trusted-administration audit records, study registration/application tables, and separately revocable study-creation grants. The upgrade from `0004_study_enrollment` preserves existing studies and memberships without automatically granting creation permission. The explicit upgrade from `0003_administrative_audit` preserves existing memberships and leaves study signup disabled until Org P enables it. Legacy artifacts without a trusted locator remain metadata-only until a trusted collector supplies one; arbitrary old locator strings are not parsed as paths. SQLite is an isolated test backend.
 
 Trusted operational settings use `hf2l-jobs <command> --config /etc/hf2l/jobs.json`, or `HF2L_JOBS_OPERATIONAL_CONFIG_FILE`. The configuration's top-level sections are `executor`, `node`, `provisioner`, `service`, `gateway`, `proxy`, `retention`, `boundaries`, `controller`, `secrets`, `nodes`, and `participants`. Each command validates its required section fields; the deployment examples are fragments to merge into that command's complete configuration. Job requests cannot replace this trusted configuration.
 
@@ -62,7 +75,72 @@ Project membership permits job creation. The creator receives job-admin membersh
 
 A platform operator can inspect resource health and manage pools through `GET /api/jobs/v1/pools` and `PUT /api/jobs/v1/pools/{id}`. Job content still requires explicit job membership. Revoking job membership blocks subsequent reads, downloads, and stream refetches. Inaccessible jobs return 404.
 
+### Study creation and ownership
+
+Org S is the service operator; Org P leads a study, the collaboration stored as
+a project. A **study creator** is an account with servicewide permission to create
+studies. This role is above an ordinary account and below service administration.
+Org S grants it to selected accounts through trusted administration, then Org P
+can open **Studies**, choose **Create study**, and enter a study name in the
+dashboard.
+Being administrator of an existing project does not itself grant creation
+permission, and signing in alone grants no creation or study-access permission.
+
+The creator receives administrator membership only in the study just created.
+Creation permission grants no access to another study, its private jobs, or
+service administration. Creators cannot set resource quotas (resource
+allowances), manage resource pools (shared capacity), change service identity
+settings, or grant creation permission to others. Revocation prevents further
+creation immediately, including through existing signed-in sessions; it does
+not remove separately recorded administrator memberships in existing studies.
+
+A newly created study starts with registration closed, participant approval
+required, all resource quotas zero, and job retention of 14 days. Retention is
+the period finished jobs' stored output is kept. Org P opens registration
+when ready and approves participants. Org S must still assign usable quotas and
+resource pools and configure the execution services before training can run.
+Study creation does not itself start automated training.
+
+### Participant signup and study approval
+
+The Go manager supports [signup and study participation requests](STUDY_ENROLLMENT.md).
+Org S configures trusted login and optionally brokers GitHub/Hugging Face accounts.
+Org P, acting as project administrator, enables study signup and must approve
+every participant. Applicants sign in and submit their own requests through
+**Studies** in the dashboard; login alone grants no participation or job access.
+
+For an existing project not yet using study signup, first enablement requires
+no nonterminal project jobs and makes the approval
+policy permanent. Registration can later close/reopen without revoking existing
+approvals. Approval grants participant eligibility only; it does not grant job
+creation, project administration, existing private-job access, or node/dataset
+approval. This initial interface cannot revoke an approved application.
+Projects not opted into study signup retain their existing administrative workflow.
+
 ## 3. Trusted bootstrap
+
+### Grant or revoke study creation
+
+Run these commands as the trusted service operator. `hf2l-jobs` is the manager
+command-line program; `admin` selects trusted administration. `--config` selects
+the settings file; `/etc/hf2l/jobs.json` is the example file location.
+`study-creator-set` changes an account's creation permission. `--principal`
+selects the stable authenticated account identifier; replace `STABLE_ID` with
+the principal ID returned by `/auth/session`, the signed-in session-information
+address. `--enabled=true` grants creation permission, while `--enabled=false`
+revokes it. Each space separates a command or argument; `=` attaches the true
+or false value to `--enabled`.
+
+```sh
+hf2l-jobs admin --config /etc/hf2l/jobs.json study-creator-set --principal STABLE_ID --enabled=true
+hf2l-jobs admin --config /etc/hf2l/jobs.json study-creator-set --principal STABLE_ID --enabled=false
+```
+
+Org S grants once per selected account, rather than creating or delegating each
+study. Existing study-admin memberships survive revocation of this separate
+creation permission. Resource and service administration remain with Org S.
+
+### Projects and resources
 
 Use the local `hf2l-jobs admin` commands to create projects, grant submitter permission, register explicitly allocatable pools, and approve source/image/dataset/secret-reference catalogs: Register the manager source filesystem and the distinct model-object allocation with `storage-pool-set` and `object-store-pool-set` as described in the deployment guide before enabling admission.
 
@@ -174,7 +252,7 @@ Create `bob-dataset.json` with the same shape, changing `id` to `bob-mnist`, `pa
 
 Fetch `GET /api/jobs/v1/catalog` to discover the caller's authorized project/source/image/dataset choices. Use the dashboard creation form or `POST /api/jobs/v1/jobs` with an immutable specification and a unique `Idempotency-Key`.
 
-The [immutable input schema](../packages/jobs/src/hf2l_jobs/domain.py) defines the accepted fields and bounds. A specification contains `project_id`, `name`, `source_id`, `source_commit`, `runtime_image`, `plugin`, finite JSON `options`, approved `secret_refs`, `participants`, `components`, an absolute `target_round`, and `max_duration_seconds`. Exactly one component is the owner. Each component requests a pool, CPU millicores, memory bytes, disk bytes, and the approved sandbox profile. Inline credentials, arbitrary commands, host mounts, executor flags, and unknown fields are rejected. `source_commit` must be a full 40- or 64-hex Git object ID; `target_round` is 1–1,000,000 and `max_duration_seconds` is 1–2,592,000 (30 days). These input bounds do not guarantee that requested resources or storage fit the approved pools.
+The [immutable input schema](../packages/jobs/internal/domain/spec.go) defines the accepted fields and bounds. A specification contains `project_id`, `name`, `source_id`, `source_commit`, `runtime_image`, `plugin`, finite JSON `options`, approved `secret_refs`, `participants`, `components`, an absolute `target_round`, and `max_duration_seconds`. Exactly one component is the owner. Each component requests a pool, CPU millicores, memory bytes, disk bytes, and the approved sandbox profile. Inline credentials, arbitrary commands, host mounts, executor flags, and unknown fields are rejected. `source_commit` must be a full 40- or 64-hex Git object ID; `target_round` is 1–1,000,000 and `max_duration_seconds` is 1–2,592,000 (30 days). These input bounds do not guarantee that requested resources or storage fit the approved pools.
 
 Successful creation returns HTTP 202, the queued job, and its detail URL. Repeating the same idempotency key with the same specification returns the same job only while the caller still has current project/job authorization; changing the body conflicts. Revoked membership does not regain access through idempotency replay. To change source, training options, participants, or limits, create another job.
 
@@ -322,6 +400,24 @@ The runtime must enforce private source/state/cache volumes, read-only source/im
 
 ### Exchange managed configuration
 
+A **Unix socket** is a local communication endpoint addressed by a filesystem
+path. Managed Python execution receives an assigned request-proxy socket. The
+Exchange client’s `for_execution` constructor creates a client bound to that
+socket and one Exchange space, the isolated model-exchange area for the job.
+It uses the fixed internal address `http://proxy`, supplies no caller token,
+and ignores environment proxy settings. That address names the local proxy;
+it is not a public Exchange endpoint. The trusted proxy supplies the execution
+identity and restricts requests to the assigned space.
+
+An ordinary `ExchangeClient` instead uses an Exchange endpoint and account
+token for network requests, and can use proxy settings from the environment.
+The standard HF²L command factory constructs that ordinary client; selecting
+an Exchange endpoint does not select a managed execution socket. Approved
+managed adapters must use the execution-provided client construction so that
+requests pass through the assigned local proxy. These client modes do not
+relax the execution sandbox or its network restrictions.
+
+
 Configure the shared Exchange server explicitly for the same workload issuer/key and Exchange audience as the manager broker:
 
 | Exchange variable | Required binding |
@@ -344,7 +440,7 @@ The [first-federation Compose stack](../examples/first_federation/README.md) con
 | Manager requirement | Beginner stack |
 | --- | --- |
 | Exchange variables in the table above | Not set |
-| Managed backend (`create_managed_app`) and `exchange-edge` | Not run; only the public API runs behind Caddy |
+| Native managed backend (`hf2l-exchange serve-managed`) and `exchange-edge` | Not run; only the public API runs behind Caddy |
 | Dashboard OIDC client: authorization code with PKCE, exact `HF2L_JOBS_OIDC_REDIRECT_URI`, RS256 `at+jwt` tokens with the `hf2l-jobs` audience and `jobs` scope | Realm has only the public `hf2l-cli` device-login client with the `exchange` audience |
 | Dedicated manager PostgreSQL database (`HF2L_JOBS_DATABASE_URL`) | Stack PostgreSQL holds Exchange and Keycloak only and is not published to the host |
 | Free `exchange-edge` port | Private TLS mode publishes Caddy on 8443, the example `exchange-edge` port |
@@ -353,7 +449,7 @@ The repository does not include or qualify this combination. Deploy Exchange wit
 
 ## 7. Retention and recovery
 
-Default raw logs, source snapshots, and checkpoints expire 90 days after termination, configurable per project. Metadata, outcome, history, ACLs, and provenance remain until authorized purge. Expired artifacts appear as expired entries. Retained storage remains charged until physical deletion is confirmed. Gang admission and static-fit validation reserve collection capacity of component disk plus 4 MiB before execution. Logical artifact bytes transfer to child records while the unused parent remainder stays charged for physical blocks and directory metadata; parent plus children retain the conservative cap. The full execution-state disk budget also remains charged until purge. Project storage quotas are conservative capacity bounds, not exact payload billing. Central source-fetch accounting settles actual snapshot filesystem blocks and owned metadata after temporary-workspace cleanup. Node-private source/build copies retain their conservative Git/filesystem peak reservation until confirmed purge, deduplicated across attempts for the same job/component. These ledgers cover separate physical copies and can retain different amounts.
+Raw logs, source snapshots, and checkpoints expire after termination according to the project retention setting. Dashboard-created studies start at 14 days; the trusted-bootstrap example above uses 90 days. Org S can configure retention per project. Metadata, outcome, history, ACLs, and provenance remain until authorized purge. Expired artifacts appear as expired entries. Retained storage remains charged until physical deletion is confirmed. Gang admission and static-fit validation reserve collection capacity of component disk plus 4 MiB before execution. Logical artifact bytes transfer to child records while the unused parent remainder stays charged for physical blocks and directory metadata; parent plus children retain the conservative cap. The full execution-state disk budget also remains charged until purge. Project storage quotas are conservative capacity bounds, not exact payload billing. Central source-fetch accounting settles actual snapshot filesystem blocks and owned metadata after temporary-workspace cleanup. Node-private source/build copies retain their conservative Git/filesystem peak reservation until confirmed purge, deduplicated across attempts for the same job/component. These ledgers cover separate physical copies and can retain different amounts.
 
 An explicitly purged job is omitted from current, queue, and history lists. An authorized direct `GET /jobs/{id}` retains a minimal audit tombstone containing identity/outcome/timestamps without the specification, participants, or resource summary. Current job ACLs still apply to that tombstone; unrelated or revoked readers receive 404. Purge does not restore expired content.
 

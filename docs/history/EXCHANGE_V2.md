@@ -1,5 +1,11 @@
 # Exchange v2: service, SDK and operations
 
+> Historical record: this document describes its original source revision and
+> validation scope, including service implementations and commands that may no
+> longer ship. It does not certify the current Go services. Use the
+> [current architecture](../ARCHITECTURE_V3.md) and
+> [documentation index](../README.md) for current guidance.
+
 > **Historical snapshot.** Independent Exchange v2 operational snapshot before v3 integration.
 > Commands, settings and validation results below describe that snapshot; consult the current runbook before operating the integrated service.
 > Current guidance: [architecture](../ARCHITECTURE_V3.md),

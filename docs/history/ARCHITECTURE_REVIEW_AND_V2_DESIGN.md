@@ -1,5 +1,11 @@
 # Architecture review and Exchange v2 design
 
+> Historical record: this document describes its original source revision and
+> validation scope, including service implementations and commands that may no
+> longer ship. It does not certify the current Go services. Use the
+> [current architecture](../ARCHITECTURE_V3.md) and
+> [documentation index](../README.md) for current guidance.
+
 > **Historical snapshot.** Exchange v2 design decided on 2026-09-22 against `714fd66`.
 > Sibling-checkout references and implementation decisions below describe the original v2 work before v3 integration.
 > Current guidance: [architecture](../ARCHITECTURE_V3.md),

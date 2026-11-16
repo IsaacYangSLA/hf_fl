@@ -1,5 +1,11 @@
 # Architecture review: hf2l at 714fd66
 
+> Historical record: this document describes its original source revision and
+> validation scope, including service implementations and commands that may no
+> longer ship. It does not certify the current Go services. Use the
+> [current architecture](../ARCHITECTURE_V3.md) and
+> [documentation index](../README.md) for current guidance.
+
 > **Historical snapshot.** Pre-cutover review and proposed rewrite at `714fd66`.
 > References to HEAD, source line numbers, counts, findings and planned work below belong to that baseline; proposed work is not a completion claim.
 > Current guidance: [architecture](../ARCHITECTURE_V3.md),

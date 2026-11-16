@@ -1,5 +1,11 @@
 # Exchange remediation — 2026-09-23
 
+> Historical record: this document describes its original source revision and
+> validation scope, including service implementations and commands that may no
+> longer ship. It does not certify the current Go services. Use the
+> [current architecture](../ARCHITECTURE_V3.md) and
+> [documentation index](../README.md) for current guidance.
+
 > **Historical record.** This report describes the September 23 working-tree
 > remediation and its recorded test runs. Its commands, counts, provider hashes,
 > and cleanup state apply to that snapshot, not later revisions. Evidence paths

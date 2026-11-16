@@ -179,10 +179,28 @@ func hash(v any) (string, error) {
 	return hex.EncodeToString(d[:]), nil
 }
 func (m *Manager) withJob(ctx context.Context, actor, id, role string, write bool, fn func(*store.Tx, Object, Object) error) error {
+	return m.withJobLocked(ctx, actor, id, role, write, false, fn)
+}
+
+func (m *Manager) withJobLocked(ctx context.Context, actor, id, role string, write, lockProject bool, fn func(*store.Tx, Object, Object) error) error {
 	if e := principal(actor); e != nil {
 		return e
 	}
 	return m.DB.WithTx(ctx, write, func(tx *store.Tx) error {
+		// Retry can reactivate a historical terminal job. Serialize it with
+		// first study activation, taking the same project-before-job order.
+		if write && lockProject {
+			initial, e := tx.One(ctx, "SELECT project_id FROM jm_jobs WHERE id=?", id)
+			if e != nil {
+				return e
+			}
+			if initial == nil {
+				return domain.Err(404, "job_not_found")
+			}
+			if _, e = tx.One(ctx, "SELECT id FROM jm_projects WHERE id=?"+tx.ForUpdate(), initial["project_id"]); e != nil {
+				return e
+			}
+		}
 		suffix := ""
 		if write {
 			suffix = tx.ForUpdate()
@@ -352,8 +370,12 @@ func requireVersion(job Object, expected int64) error {
 	return nil
 }
 func (m *Manager) command(ctx context.Context, actor, id, role, k string, expected int64, kind string, data Object, allowPurged bool, action func(*store.Tx, Object) error) (Object, error) {
+	return m.commandWithProjectLock(ctx, actor, id, role, k, expected, kind, data, allowPurged, false, action)
+}
+
+func (m *Manager) commandWithProjectLock(ctx context.Context, actor, id, role, k string, expected int64, kind string, data Object, allowPurged, lockProject bool, action func(*store.Tx, Object) error) (Object, error) {
 	var result Object
-	e := m.withJob(ctx, actor, id, role, true, func(tx *store.Tx, job, member Object) error {
+	e := m.withJobLocked(ctx, actor, id, role, true, lockProject, func(tx *store.Tx, job, member Object) error {
 		body := copyObject(data)
 		body["expected_version"] = expected
 		var err error

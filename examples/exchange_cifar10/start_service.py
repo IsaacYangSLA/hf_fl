@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run an isolated, temporary Exchange service for the two-client CIFAR-10 demo.
+"""Run an isolated, temporary native Go Exchange for the two-client CIFAR-10 demo.
 
 Keep this process running in its own terminal. Ctrl-C stops its API, worker and
 optional Moto subprocess, and deletes only the unique S3 bucket it created.
@@ -37,6 +37,8 @@ class StopRequested(Exception):
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--exchange-binary", type=Path, required=True,
+                        help="Reviewed native Go hf2l-exchange executable")
     parser.add_argument("--work-dir", type=Path, required=True,
                         help="New or empty directory; contains private tokens, SQLite and logs")
     storage = parser.add_mutually_exclusive_group(required=True)
@@ -77,8 +79,9 @@ def private_json(path: Path, value: dict[str, Any]) -> None:
 
 
 class Processes:
-    def __init__(self, work: Path, env: dict[str, str], stopped: threading.Event):
+    def __init__(self, work: Path, env: dict[str, str], stopped: threading.Event, exchange_binary: Path):
         self.work, self.env, self.stopped = work, env, stopped
+        self.exchange_binary = exchange_binary
         self.logs = ExitStack()
         self.children: list[tuple[str, subprocess.Popen]] = []
         self.background: list[tuple[str, subprocess.Popen]] = []
@@ -100,7 +103,7 @@ class Processes:
                 raise RuntimeError(f"{name} exited ({child.returncode}); inspect {self.work / (name + '.log')}")
 
     def run_cli(self, command: str) -> None:
-        child = self.start(command, [sys.executable, "-m", "hf2l_exchange.cli", command], background=False)
+        child = self.start(command, [str(self.exchange_binary), command], background=False)
         deadline = time.monotonic() + 90
         while child.poll() is None:
             self.check()
@@ -151,8 +154,11 @@ def cleanup_bucket(s3: Any, bucket: str) -> None:
 
 
 def run(args: argparse.Namespace) -> int:
-    # Optional dependencies are intentionally imported after argument parsing so
-    # --help works before installing the Exchange server and emulator extras.
+    exchange_binary = args.exchange_binary.expanduser().resolve(strict=True)
+    if not exchange_binary.is_file() or not os.access(exchange_binary, os.X_OK):
+        raise ValueError("--exchange-binary must name an executable native Go Exchange")
+    # These are operator-tool dependencies, not a Python Exchange server.
+    # Import them after argument parsing so --help works before installation.
     import boto3
     from botocore.config import Config
     from cryptography.hazmat.primitives import serialization
@@ -221,13 +227,13 @@ def run(args: argparse.Namespace) -> int:
                EXCHANGE_WORKER_POLL_SECONDS="1", PYTHONUNBUFFERED="1")
     stopped = threading.Event()
     original_handlers = {sig: signal.signal(sig, lambda *_: stopped.set()) for sig in (signal.SIGINT, signal.SIGTERM)}
-    processes = Processes(work, env, stopped)
+    processes = Processes(work, env, stopped, exchange_binary)
     s3 = None
     bucket_created = False
     exit_code = 0
     private_json(work / "runtime.json", {"bucket": bucket, "storage_endpoint": storage_endpoint,
                                          "token_expires_at": now + args.token_ttl_hours * 3600,
-                                         "ephemeral": True})
+                                         "ephemeral": True, "exchange_binary": str(exchange_binary)})
     try:
         if args.emulated_storage:
             processes.start("storage", [sys.executable, "-m", "moto.server", "-H", "127.0.0.1",
@@ -245,9 +251,9 @@ def run(args: argparse.Namespace) -> int:
         processes.check()
         processes.run_cli("init-db")
         processes.run_cli("check-storage")
-        processes.start("api", [sys.executable, "-m", "hf2l_exchange.cli", "serve", "--host", "127.0.0.1",
+        processes.start("api", [str(exchange_binary), "serve", "--host", "127.0.0.1",
                                  "--port", str(args.port)])
-        processes.start("worker", [sys.executable, "-m", "hf2l_exchange.cli", "worker"])
+        processes.start("worker", [str(exchange_binary), "worker"])
         await_http(processes, endpoint, "/ready")
         processes.check()
         private_json(work / "service.json", {"endpoint": endpoint, "issuer": ISSUER, "allow_local_http": True,

@@ -1,32 +1,28 @@
-# Call sequence diagrams
+# Historical call sequence diagrams
+
+These retained diagrams describe the earlier Python-service implementation,
+originally traced at `e090800`, with later federated-round annotations. They
+preserve protocol and recovery design context; Python credential helpers,
+thread pools and method names are historical implementation details. They do
+not qualify the current native Go services. Use the
+[current architecture](../ARCHITECTURE_V3.md), [Go Exchange guide](../GO_EXCHANGE.md)
+and [Exchange runbook](../EXCHANGE_V3.md) for current implementation and operations.
 
 Open [call-sequences.html](call-sequences.html) in a browser. The page contains
-four rendered SVG diagrams and their Mermaid source, with navigation, zoom,
-SVG download, and print support. It works offline without a CDN or web server.
-
-These diagrams describe the public Exchange `/v2` SDK transfer paths and the
-HF²L Exchange adapter. They were originally traced against implementation commit
-`e090800`; later source annotations and rendering limits are recorded below.
-They show normal paths and selected recovery paths, including multipart retries,
-worker category changes, and acquisition recovery. The [architecture limitations](../ARCHITECTURE_V3.md#current-implementation-limitations)
-and [Exchange runbook](../EXCHANGE_V3.md) remain the detailed operational references.
-The FedAvg validation annotations were synchronized on October 8, 2026 to
-reflect verification of supplied schema-1 hashes and finite-input filtering.
-This update preserves the existing SVG layout; it does not claim a new Mermaid
-render or live-provider validation. The round diagram describes synchronous
-FedAvg; [manual cyclic handoffs](../TRAINING_GUIDE.md#cyclic-federated-learning-without-fedavg)
-use a separate caller-controlled sequence.
-Authentication tokens come from an external identity provider; space membership,
-types, policy, and the private versioned bucket are prerequisites. Public access
-tokens are validated against the configured issuer, audience and `exchange` scope;
-FedAvg participant identity comes from the authenticated member's server binding.
+four rendered SVG images and their editable Mermaid sequence descriptions,
+with navigation, zoom, image download and print support. It works offline.
+Source links below use the fixed pre-removal repository baseline. The image
+geometry is retained; this documentation update does not claim a new rendering
+or live-provider validation. The round diagram describes synchronous FedAvg;
+[manual cyclic handoffs](../TRAINING_GUIDE.md#cyclic-federated-learning-without-fedavg)
+follow a separate caller-controlled sequence.
 
 | Sequence | Editable Mermaid | Rendered SVG | Main source paths |
 |---|---|---|---|
-| Upload and publish | [exchange-upload.mmd](exchange-upload.mmd) | [SVG](exchange-upload.svg) | [SDK](../../packages/exchange/src/hf2l_exchange/client.py), [transfers](../../packages/exchange/src/hf2l_exchange/transfers.py), [worker](../../packages/exchange/src/hf2l_exchange/worker.py) |
-| Read and download | [exchange-download.mmd](exchange-download.mmd) | [SVG](exchange-download.svg) | [transfer client](../../packages/exchange/src/hf2l_exchange/transfer_client.py), [authorization](../../packages/exchange/src/hf2l_exchange/auth.py), [storage](../../packages/exchange/src/hf2l_exchange/storage.py) |
-| Worker and cleanup | [exchange-worker.mmd](exchange-worker.mmd) | [SVG](exchange-worker.svg) | [worker](../../packages/exchange/src/hf2l_exchange/worker.py), [transfers](../../packages/exchange/src/hf2l_exchange/transfers.py), [cancellation](../../packages/exchange/src/hf2l_exchange/application.py) |
-| Federated round | [fedavg-round.mmd](fedavg-round.mmd) | [SVG](fedavg-round.svg) | [client steps](../../hf2l/client_steps.py), [runner](../../hf2l/fedavg_runner.py), [adapter](../../hf2l/backends/exchange.py), [application transactions](../../packages/exchange/src/hf2l_exchange/application.py), [FedAvg profile](../../packages/exchange/src/hf2l_exchange/profiles.py) |
+| Upload and publish | [exchange-upload.mmd](exchange-upload.mmd) | [SVG](exchange-upload.svg) | [SDK](https://github.com/IsaacYangSLA/hf_fl/blob/e5b9dc52be155f281cac6ec8cb41d20a8c25e8cb/packages/exchange/src/hf2l_exchange/client.py), [transfers](../../packages/exchange/internal/transfers/transfers.go), [worker](../../packages/exchange/internal/worker/worker.go) |
+| Read and download | [exchange-download.mmd](exchange-download.mmd) | [SVG](exchange-download.svg) | [transfer client](https://github.com/IsaacYangSLA/hf_fl/blob/e5b9dc52be155f281cac6ec8cb41d20a8c25e8cb/packages/exchange/src/hf2l_exchange/transfer_client.py), [authorization](../../packages/exchange/internal/auth/auth.go), [storage](../../packages/exchange/internal/storage/s3.go) |
+| Worker and cleanup | [exchange-worker.mmd](exchange-worker.mmd) | [SVG](exchange-worker.svg) | [worker](../../packages/exchange/internal/worker/worker.go), [transfers](../../packages/exchange/internal/transfers/transfers.go), [cancellation](../../packages/exchange/internal/service/records.go) |
+| Federated round | [fedavg-round.mmd](fedavg-round.mmd) | [SVG](fedavg-round.svg) | [client steps](https://github.com/IsaacYangSLA/hf_fl/blob/e5b9dc52be155f281cac6ec8cb41d20a8c25e8cb/hf2l/client_steps.py), [runner](https://github.com/IsaacYangSLA/hf_fl/blob/e5b9dc52be155f281cac6ec8cb41d20a8c25e8cb/hf2l/fedavg_runner.py), [adapter](https://github.com/IsaacYangSLA/hf_fl/blob/e5b9dc52be155f281cac6ec8cb41d20a8c25e8cb/hf2l/backends/exchange.py), [application transactions](../../packages/exchange/internal/service/records.go), [FedAvg profile](../../packages/exchange/internal/profiles/profiles.go) |
 
 The API lane groups HTTP routing, authentication, application commands, and
 transfer orchestration. The database represents the configured metadata store;
@@ -58,7 +54,7 @@ or LocalStore. No diagram step represents a human approval receipt; the public
 HF²L CLI has no such built-in gate. Membership and policy checks in the API lane
 remain mandatory.
 
-## Regenerate
+## Regenerate historical renderings
 
 Edit the `.mmd` files, then run the [renderer](../../scripts/render_call_sequences.mjs)
 from the repository root. Rendering uses Node.js, a local Chrome/Chromium binary,

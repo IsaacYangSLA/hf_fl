@@ -1,15 +1,13 @@
-"""Immutable job inputs and control-plane value types."""
+"""Immutable input contracts for sandboxed training and build adapters."""
 from __future__ import annotations
 
 import hashlib
 import json
 import math
 import re
-from datetime import datetime, timezone
 from enum import Enum
 from types import MappingProxyType
 from typing import Any, Literal, Mapping
-from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_serializer, field_validator, model_validator
 
@@ -17,14 +15,6 @@ IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 PLUGIN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?::[A-Za-z_][A-Za-z0-9_]*)?$")
 FORBIDDEN_OPTIONS = {"command", "commands", "cmd", "mount", "mounts", "host_path", "docker_flags", "executor_flags", "runtime_flags", "privileged", "network_mode"}
 SECRET_KEY = re.compile(r"(^|_)(password|passwd|secret|token|credentials|private_key|access_key|api_key)($|_)", re.I)
-
-
-def new_id() -> str:
-    return uuid4().hex
-
-
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def thaw(value: Any) -> Any:
@@ -251,76 +241,3 @@ class JobSpec(FrozenInput):
     @property
     def digest(self) -> str:
         return spec_hash(self)
-
-
-class JobState(str, Enum):
-    QUEUED = "QUEUED"
-    PROVISIONING = "PROVISIONING"
-    STARTING = "STARTING"
-    RUNNING = "RUNNING"
-    RECONCILING = "RECONCILING"
-    NEEDS_ATTENTION = "NEEDS_ATTENTION"
-    CANCELLING = "CANCELLING"
-    SUCCEEDED = "SUCCEEDED"
-    FAILED = "FAILED"
-    CANCELLED = "CANCELLED"
-
-
-TERMINAL_STATES = frozenset({"SUCCEEDED", "FAILED", "CANCELLED"})
-ACTIVE_STATES = frozenset(set(item.value for item in JobState) - TERMINAL_STATES)
-JOB_ROLES = frozenset({"reader", "operator", "admin"})
-ROLE_LEVEL = {"reader": 1, "operator": 2, "admin": 3}
-
-class Error(Exception):
-    """Stable structured manager error without leaking internal details."""
-    def __init__(self, status: int, code: str, details: Any = None):
-        super().__init__(code)
-        self.status = self.status_code = status
-        self.code = code
-        self.details = details
-
-ServiceError = Error
-
-
-class ArtifactLocator(FrozenInput):
-    """Trusted, structured location; never a URL or unrestricted host path.
-
-    This validates shape only. The download broker must check current job ACL,
-    resource ownership and transfer ownership before resolving the location.
-    """
-    kind: Literal["exchange", "local"]
-    space_id: str | None = None
-    record_id: str | None = None
-    attachment_id: str | None = None
-    resource_id: str | None = None
-    relative_path: str | None = None
-
-    @field_validator("space_id", "record_id", "attachment_id", "resource_id")
-    @classmethod
-    def opaque_identifiers(cls, value):
-        return validate_identifier(value) if value is not None else None
-
-    @field_validator("relative_path")
-    @classmethod
-    def confined_relative_path(cls, value):
-        if value is None:
-            return value
-        if len(value) > 1024 or not value or value.startswith("/") or "\\" in value or any(ord(c) < 32 for c in value):
-            raise ValueError("Artifact location must be a confined relative file path")
-        pieces = value.split("/")
-        if len(pieces) > 64 or any(piece in ("", ".", "..") for piece in pieces):
-            raise ValueError("Artifact location cannot traverse outside its owned resource")
-        return value
-
-    @model_validator(mode="after")
-    def binding(self):
-        exchange = (self.space_id, self.record_id, self.attachment_id)
-        local = (self.resource_id, self.relative_path)
-        if self.kind == "exchange" and (not all(exchange) or any(local)):
-            raise ValueError("Exchange artifacts require only space, record and attachment identifiers")
-        if self.kind == "local" and (not all(local) or any(exchange)):
-            raise ValueError("Local artifacts require only an owned resource identifier and relative path")
-        return self
-
-    def to_dict(self):
-        return self.model_dump(mode="json", exclude_none=True)

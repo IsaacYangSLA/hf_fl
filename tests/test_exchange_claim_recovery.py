@@ -5,10 +5,8 @@ renewal, completion, and idempotent replay all use the actual service.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
-import os
-from pathlib import Path
+import sqlite3
 import unittest
 from urllib.parse import urlsplit
 
@@ -22,26 +20,13 @@ from hf2l.hub_helpers import artifact_hashes, regular_file_paths, write_json
 from hf2l.round.config import RoundConfig
 
 
-_fixture = Path(__file__).resolve().parents[1] / "packages/exchange/tests/support.py"
-_exchange_available = all(importlib.util.find_spec(name) is not None for name in (
-    "boto3", "moto", "sqlalchemy", "jwt", "fastapi", "httpx", "cryptography", "hf2l_exchange"))
-if not _exchange_available and os.environ.get("EXCHANGE_REQUIRE_TESTS") == "1":
-    raise ImportError("The Exchange claim recovery tests require the exchange service/test dependencies")
+from tests.support.native_exchange import ExchangeTestCase as _ExchangeTestCase, exchange_available as _exchange_available
+
 if _exchange_available:
     import httpx
-    from sqlalchemy import select
 
     from hf2l.backends.exchange import ExchangeStore
     from hf2l_exchange.client import ExchangeClient, ExchangeError
-    from hf2l_exchange.models import Coordination
-    from hf2l_exchange.worker import tick
-
-    _spec = importlib.util.spec_from_file_location("exchange_claim_recovery_support", _fixture)
-    _support = importlib.util.module_from_spec(_spec)
-    _spec.loader.exec_module(_support)
-    _ExchangeTestCase = _support.ExchangeTestCase
-else:
-    _ExchangeTestCase = unittest.TestCase
 
 
 class FaultTransport:
@@ -86,8 +71,8 @@ class ExchangeClaimRecoveryTests(_ExchangeTestCase):
         self.run_count = 0
 
     def sdk(self, subject):
-        sdk = ExchangeClient("http://127.0.0.1", self.auth(subject)["Authorization"].split(" ", 1)[1],
-                             http=self.transport, allow_local_http=True, sleep=lambda _: tick(self.transfers))
+        sdk = ExchangeClient(self.endpoint, self.auth(subject)["Authorization"].split(" ", 1)[1],
+                             http=self.transport, allow_local_http=True, sleep=lambda _: self.worker_once())
         self.addCleanup(sdk.close)
         return sdk
 
@@ -144,9 +129,11 @@ class ExchangeClaimRecoveryTests(_ExchangeTestCase):
         ))
 
     def attempts(self):
-        with self.service.read_sessions.begin() as session:
-            return [(a.id, a.fence, a.state) for a in session.scalars(
-                select(Coordination).where(Coordination.space_id == self.sid).order_by(Coordination.fence))]
+        with sqlite3.connect(self.database_path, timeout=30) as database:
+            return database.execute(
+                "SELECT id, fence, state FROM v2_coordinations WHERE space_id = ? ORDER BY fence",
+                (self.sid,),
+            ).fetchall()
 
     def seed_saved_claim(self, *, terminal=None, remember=False):
         state = RunState(self.state_path)
@@ -159,8 +146,8 @@ class ExchangeClaimRecoveryTests(_ExchangeTestCase):
             if terminal == "abandoned":
                 self.store.abandon_claim(self.sid, handle)
             elif terminal == "expired":
-                with self.service.sessions.begin() as session:
-                    session.get(Coordination, handle.id).lease_until = 1
+                with sqlite3.connect(self.database_path, timeout=30) as database:
+                    database.execute("UPDATE v2_coordinations SET lease_until = ? WHERE id = ?", (1, handle.id))
             return json.loads(self.state_path.read_text()), handle
         finally:
             state.close()

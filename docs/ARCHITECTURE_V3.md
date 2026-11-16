@@ -37,6 +37,10 @@ committed as `60e4bf8` on `redesign`, rebased onto local `main` (already up to
 date), and fast-forward merged into local `main`. That operation did not push,
 deploy a service or publish a package.
 
+The table below records that original integration. Its Python server paths and
+server tests are historical: the current server implementation is Go, and the
+retained Python package is client-only. See the current package boundaries below.
+
 | V2 design requirement | Incorporated implementation | Verification anchor |
 |---|---|---|
 | Independent SDK and optional server dependencies | `packages/exchange/pyproject.toml`, `src/hf2l_exchange/client.py` | `packages/exchange/tests/test_boundaries.py`, `scripts/check_exchange_dependencies.py` |
@@ -102,13 +106,19 @@ does not claim every lower-priority suggestion in every theme was implemented.
 
 ## Component boundaries
 
-Three Python distributions define the installation boundaries:
+The server executables and Python distributions have separate installation
+boundaries:
 
-| Distribution | Code and command | Responsibility |
+| Package or executable | Code and command | Responsibility |
 |---|---|---|
-| `hf2l` | `hf2l/`; `hf2l` | FL documents, checkpoint operations, four model backends, client training and owner aggregation, durable polling |
-| `hf2l-exchange` | `packages/exchange/src/hf2l_exchange/`; `hf2l-exchange` | Unchanged Python SDK plus reference server for authenticated metadata, blob transfer and coordination |
-| `hf2l-jobs` | `packages/jobs/src/hf2l_jobs/`; `hf2l-jobs` | Reference manager implementation and retained sandboxed FL application adapters |
+| `hf2l` Python distribution | `hf2l/`; `hf2l` | FL documents, checkpoint operations, four model backends, client training and owner aggregation, durable polling. |
+| `hf2l-exchange` Python distribution | `packages/exchange/src/hf2l_exchange/`; no server command | Client library and shared identity helper. |
+| `hf2l-jobs` Python distribution | `packages/jobs/src/hf2l_jobs/`; `hf2l-jobs-runtime` | Sandboxed training/build application adapters. |
+| `hf2l-exchange` Go executable | `packages/exchange/cmd/hf2l-exchange` | Exchange servers, worker, storage maintenance, and administration. |
+| `hf2l-jobs` Go executable | `packages/jobs/cmd/hf2l-jobs` | Manager server, scheduling, lifecycle, and trusted execution services. |
+
+The Python manager, independent Exchange server, and legacy Exchange v1 server
+have been removed. Python package installation cannot start these services.
 
 The native Go Exchange is built from `packages/exchange/cmd/hf2l-exchange`
 using `packages/exchange/go.mod`. Its API, authorization, persistence,
@@ -129,16 +139,19 @@ The independent Exchange service stays a separate deployment. Existing
 sandboxed Python training/build adapters retain their application validation
 and fixed worker-command contract.
 
-Go and reference Python implementations share the current manager schema and
-external contracts. Select one controller and reconcile retained state before
-cutover; cross-language unit/SQL compatibility does not establish a new
-deployment's runtime qualification. See the [Go manager guide](GO_JOB_MANAGER.md)
-for build, private transfer-backend integration, verification, and rollback
-boundaries.
+The Go services preserve established external contracts. The manager's current
+schema revision is `0004_study_enrollment`, adding explicit study registration
+and applicant approval. The Exchange revision remains `0003_workload_grants`.
+[Study enrollment](STUDY_ENROLLMENT.md) grants participant eligibility separately
+from job and project permissions. Run one controller and reconcile retained
+state before changing service releases;
+frozen compatibility fixtures do not establish a new deployment's runtime
+qualification. See the [Go manager guide](GO_JOB_MANAGER.md) for build, private
+transfer-backend integration, verification, and release-recovery boundaries.
 
 The core FL workflows can run against Hugging Face, JFrog or LocalStore without
 deploying Exchange or the job manager. The root's `exchange` extra installs the
-independent SDK; server dependencies are optional. Managed jobs compose the FL
+independent SDK; server programs are built separately in Go. Managed jobs compose the FL
 application and Exchange with their own control-plane database, per-job spaces,
 workload identities and execution state. The diagram below expands the FL and
 Exchange paths; it does not depict the job manager's service topology. See the
@@ -166,7 +179,7 @@ flowchart TB
     Port --> JFrog[JFrog adapter]
     Port --> Adapter[Exchange FL adapter]
     Adapter --> SDK
-    SDK --> API[Exchange HTTP API /v2]
+    SDK --> API[Native Go Exchange HTTP API /v2]
     API --> Commands[Transactional application commands]
     Commands --> Profiles[Generic policy or trusted FedAvg profile]
     Commands --> DB[(Metadata database)]
@@ -207,7 +220,42 @@ The root distribution installs NumPy and SafeTensors. Torch and Hugging Face are
 optional extras loaded at the point of use. NumPy handles supported non-BF16
 checkpoints; BF16 requires the Torch backend. Training examples require their
 training dependencies. The independent SDK has HTTPX as its runtime dependency;
-its server extra adds database, web, storage and identity libraries.
+it has no server installation extra. The Exchange and manager service
+executables are built separately from their Go command directories. Python
+listeners, training code and the optional
+[owner-side webhook relay](../examples/hf_webhook_relay.py) remain caller-owned
+programs rather than implementations of the manager or Exchange service.
+
+## Study and storage boundaries
+
+A **study** is a manager collaboration, stored as a project. An Exchange
+**space** is a separate membership, record and file boundary. The standalone
+beginner federation uses an Exchange space; manager-backed work adds study
+policy and job lifecycle. Neither resource grants access to the other merely
+because the names match.
+
+Org S is the shared service and account operator. Org P is the collaboration
+owner and aggregator. Alice in Org A and Bob in Org B train as participants.
+A **study creator** has servicewide permission, granted or revoked by Org S,
+to create a study through the dashboard by supplying a name. The creator
+becomes that study's administrator. Existing per-study administrators do not
+automatically receive study-creation permission. Revocation immediately blocks
+new study creation for existing logins and preserves separately granted
+administration of existing studies.
+
+New dashboard studies begin with registration closed, mandatory participant
+approval, six resource and retention quotas set to zero, and 14-day artifact
+retention. Study creation supplies no training capacity. Org P must enable
+registration and approve participants; optional training-code review does not
+replace that enrollment approval. See [study creation and ownership](JOB_MANAGER.md#study-creation-and-ownership)
+and [study enrollment](STUDY_ENROLLMENT.md).
+
+The model-store factory, the function that constructs the chosen artifact
+transport, is [make_store](../hf2l/backends/factory.py). It accepts exactly
+`huggingface`, `jfrog`, `exchange` and `local`. Versioned S3-compatible object
+storage is below Exchange, not a fifth model-store choice. MinIO and the
+qualified patched SeaweedFS deployment are storage implementations behind that
+same interface. See [the storage runbook](EXCHANGE_V3.md) for provider limits.
 
 ## Core contracts and invariants
 
@@ -266,7 +314,7 @@ their responsibility.
 ### Blob transfer and recovery
 
 The Exchange storage seam is `BlobStore` in
-[storage.py](../packages/exchange/src/hf2l_exchange/storage.py); the shipped
+[storage interface](../packages/exchange/internal/storage/storage.go); the shipped
 implementation is `S3BlobStore` with the `s3-multipart-v1` protocol.
 AWS S3, MinIO and compatible services are deployment choices for that adapter,
 not three independent storage implementations. They must supply the required
@@ -514,12 +562,12 @@ explicitly changes their publication policy for peer handoffs.
 ### B2 — AWS environment session tokens are dropped
 
 **Resolved.**
-[Storage configuration](../packages/exchange/src/hf2l_exchange/config.py) leaves
-ambient AWS credentials to Boto's provider chain, preserving session tokens and
+[Storage configuration](../packages/exchange/internal/config/config.go) leaves
+ambient AWS credentials to the AWS Go client's provider chain, preserving session tokens and
 refreshable credential providers. Explicit `EXCHANGE_S3_ACCESS_KEY` and
 `EXCHANGE_S3_SECRET_KEY` must be supplied together; temporary explicit credentials
 also use `EXCHANGE_S3_SESSION_TOKEN`. The
-[S3 client factory](../packages/exchange/src/hf2l_exchange/storage.py) applies the
+[S3 client factory](../packages/exchange/internal/storage/s3.go) applies the
 same credential configuration to internal clients and public-endpoint signers.
 See the [runbook](EXCHANGE_V3.md) for configuration details.
 
@@ -583,14 +631,14 @@ provide atomic publication or prevent replacement of a permitted revision.
 ### B8 — Verification slots are not isolated from cleanup races
 
 **Resolved.** The
-[worker](../packages/exchange/src/hf2l_exchange/worker.py) dispatches verification
-and cleanup to separate pools.
-[Transfers.process](../packages/exchange/src/hf2l_exchange/transfers.py) now checks
+[native worker](../packages/exchange/internal/worker/worker.go) dispatches verification
+and cleanup to separate bounded groups of concurrent tasks.
+[Transfer processing](../packages/exchange/internal/transfers/transfers.go) checks
 the requested category against the refreshed attempt state while acquiring its
 lease under the same space lock used by lifecycle mutations. A category mismatch
 is skipped without acquiring a lease, so a cancellation between selection and
 dispatch cannot move cleanup into a verification slot. Cancellation after lease
-acquisition remains subject to existing lifecycle fencing. The Python reference worker still
+acquisition remains subject to existing lifecycle fencing. The native worker
 waits for both selected batches before its next pass; slow cleanup can delay
 subsequent verification batches.
 
@@ -600,11 +648,11 @@ Exchange v2 requires a fresh metadata database and storage prefix. It neither
 serves `/v1` nor imports legacy Exchange data. V3 keeps this deployment rule and
 does not reinterpret the old service's database.
 
-The old `hf2l.exchange` service and its command remain available as a clearly
-identified legacy surface for regression and explicit legacy use. New
-`--backend exchange` application operations use the independent `/v2` service.
-Do not point that adapter at the old service. Existing HF/JFrog document formats,
-module entry points and console aliases remain supported during this integration.
+The old `hf2l.exchange` server and command have been removed, along with the
+Python independent Exchange and manager servers. `--backend exchange` application
+operations use the native Go `/v2` service through the Python SDK. Existing
+Hugging Face/JFrog model backends and their document formats remain independent
+of this server-language change.
 
 The unified `hf2l` command composes existing client/owner tools; service commands
 remain available through `hf2l-exchange`. Package version, architecture revision,
@@ -614,22 +662,23 @@ schema change.
 
 ## Acceptance and verification
 
-Generated contract files are checked against their source generators:
+The native Exchange executable, built as `dist/hf2l-exchange` by the
+[Go build guide](GO_EXCHANGE.md), exports its embedded service contract
+artifacts. The Python `hf2l` command exports the federated-learning document
+schemas. In the commands below, `docs/generated` is the contract output
+directory and `fl-documents.json` is the document-schema output file.
 
 ```bash
-.venv/bin/hf2l-exchange export-contract --output-dir docs/generated
+./dist/hf2l-exchange export-contract --output-dir docs/generated
 .venv/bin/hf2l export-contract --output docs/generated/fl-documents.json
 ```
 
-The Exchange command emits `exchange-api.json`, `exchange-errors.json` and
-`exchange-environment.md` without IdP or S3 configuration. The FL command emits
-the accepted document schemas. These artifacts describe actual interfaces;
-they do not introduce a new manifest version. OpenAPI reflects declared routes
-and request schemas; currently untyped response bodies are not a complete set of
-generated response DTOs. The error artifact records literal error/status pairs
-and identifies dynamic forwarding sites; it does not claim every possible
-provider or forwarded error is statically enumerated. FastAPI's default
-validation models remain visible in the generated API document.
+Exchange exports its API description, error inventory and environment reference
+without contacting an identity provider or object storage. The native service
+embeds these artifacts; exporting them is not a new scan of every Go route,
+configuration read or dynamically forwarded provider error. Changes must keep
+the embedded contract data, documented commands and implementation consistent.
+The exports do not introduce a new network protocol or checkpoint format.
 
 Programmatic orchestration uses the typed runner rather than constructing argv:
 

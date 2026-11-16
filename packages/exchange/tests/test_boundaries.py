@@ -1,6 +1,7 @@
 """Architectural boundaries that remain valid in the full development venv."""
 from __future__ import annotations
 
+import importlib.metadata
 import importlib.util
 from pathlib import Path
 import unittest
@@ -18,6 +19,16 @@ class DependencyBoundaryTests(unittest.TestCase):
 
     def test_sdk_distribution_has_only_transport_dependency(self):
         self.assertEqual(checker._installed_requirements(), ["httpx"])
+
+    def test_distribution_contains_clients_without_python_server_or_command(self):
+        for name in ("api", "application", "auth", "cli", "config", "contracts",
+                     "gateway_api", "managed_transfers", "migrations", "models",
+                     "profiles", "schemas", "storage", "transfers", "worker"):
+            with self.subTest(module=name):
+                self.assertIsNone(importlib.util.find_spec("hf2l_exchange." + name))
+        distribution = importlib.metadata.distribution("hf2l-exchange")
+        self.assertNotIn("hf2l-exchange", [entry.name for entry in distribution.entry_points])
+        self.assertNotIn("server", distribution.metadata.get_all("Provides-Extra", []))
 
 
 if __name__ == "__main__":

@@ -5,3 +5,6 @@
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
 
 .binding-block{border:1px solid var(--line);padding:10px;border-radius:8px}.binding-block .binding-option{border:0;padding:0 0 10px}.binding-block>select{width:100%;font-size:11px}.binding-block .form-grid{margin-top:12px;gap:10px}.binding-block .form-grid label{font-size:11px}
+
+/* Study applications use the same trusted-session and accessible form styles. */
+.study-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px}.study-intro{margin:0 0 20px}.study-description{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.75;font-size:13px;color:#41536d}.study-grid .badge{margin-bottom:8px}.study-grid .job-name{margin-top:18px}.study-back{margin-bottom:18px}#studies-panel>.detail-card{margin-bottom:20px}#studies-panel form>.button{margin-top:18px}.study-checkbox{display:flex;align-items:center;gap:10px;font-size:12px;margin:18px 0}.study-checkbox input{min-height:unset}.study-application{border-top:1px solid var(--line);padding:22px 0}.study-application h3{margin:0}.study-application .key-values{margin-top:15px}.study-application .flex-row{margin-top:15px}.badge.approved{color:#197f60;background:#e8f7f0}.badge.rejected{color:#b33949;background:#fcecf0}.badge.withdrawn{color:#68768a;background:#eef1f5}

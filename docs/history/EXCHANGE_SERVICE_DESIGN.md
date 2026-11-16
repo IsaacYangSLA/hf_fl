@@ -1,5 +1,11 @@
 # General metadata exchange and blob storage
 
+> Historical record: this document describes its original source revision and
+> validation scope, including service implementations and commands that may no
+> longer ship. It does not certify the current Go services. Use the
+> [current architecture](../ARCHITECTURE_V3.md) and
+> [documentation index](../README.md) for current guidance.
+
 > **Historical snapshot.** Original legacy Exchange service design.
 > Proposals, implementation status and operational claims below belong to that design and its original implementation.
 > Current guidance: [architecture](../ARCHITECTURE_V3.md),

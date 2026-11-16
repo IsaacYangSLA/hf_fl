@@ -107,6 +107,9 @@ func (s *Service) PruneExpired(ctx context.Context) (map[string]int64, error) {
 	return result, err
 }
 func (s *Service) BeginLogin(ctx context.Context) (LoginStart, error) {
+	return s.beginLogin(ctx, "")
+}
+func (s *Service) beginLogin(ctx context.Context, brokerAlias string) (LoginStart, error) {
 	s.cleanupMu.Lock()
 	if !s.now().Before(s.cleanupAfter) {
 		_, err := s.PruneExpired(ctx)
@@ -135,7 +138,14 @@ func (s *Service) BeginLogin(ctx context.Context) (LoginStart, error) {
 	}
 	h := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(h[:])
-	target, e := s.Provider.AuthorizationURL(ctx, state, nonce, challenge)
+	var target string
+	if brokerAlias == "" {
+		target, e = s.Provider.AuthorizationURL(ctx, state, nonce, challenge)
+	} else if provider, ok := s.Provider.(brokerAuthorizationProvider); ok {
+		target, e = provider.AuthorizationURLForBroker(ctx, state, nonce, challenge, brokerAlias)
+	} else {
+		return LoginStart{}, failure(503, "signup_provider_unavailable")
+	}
 	if e != nil {
 		return LoginStart{}, e
 	}

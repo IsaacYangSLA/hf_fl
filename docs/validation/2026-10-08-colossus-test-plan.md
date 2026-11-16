@@ -1,5 +1,11 @@
 # Colossus test plan — 2026-10-08
 
+> Historical record: this document describes its original source revision and
+> validation scope, including service implementations and commands that may no
+> longer ship. It does not certify the current Go services. Use the
+> [current architecture](../ARCHITECTURE_V3.md) and
+> [documentation index](../README.md) for current guidance.
+
 > **Historical plan.** This is the October 8 execution plan; its expected
 > counts, Python range, service images, and host instructions belong to that
 > snapshot. Observed outcomes and the actual MinIO substitution are recorded in

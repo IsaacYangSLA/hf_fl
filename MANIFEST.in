@@ -1,7 +1,7 @@
 include README.md
 include requirements.txt
 recursive-include docs *.md *.json
-recursive-include examples *.py *.json
+recursive-include examples *.py *.json *.yaml *.txt Caddyfile Dockerfile*
 recursive-include hf2l *.py
 recursive-include tests *.py *.json *.safetensors *.md
 recursive-include scripts *.py
@@ -16,6 +16,13 @@ recursive-include packages/jobs/src *.py
 recursive-include packages/jobs/src/hf2l_jobs/static *
 recursive-include packages/jobs/src/hf2l_jobs/templates *
 recursive-include packages/jobs/tests *.py
-recursive-include deploy/jobs *.py *.md Dockerfile
+recursive-include deploy/jobs *.py *.md *.go *.json go.mod go.sum Dockerfile*
+recursive-include deploy/compose *.md *.yaml Dockerfile
+recursive-include packages/exchange *.go *.json *.sql *.md *.txt go.mod go.sum
+recursive-include packages/jobs *.go *.json *.sql *.md *.txt go.mod go.sum
+recursive-include packages/exchange/internal *.py
+recursive-include packages/exchange/integration *.py
+recursive-include packages/jobs/internal *.py
+recursive-include packages/jobs/integration *.py
 global-exclude *.py[cod]
 global-exclude __pycache__

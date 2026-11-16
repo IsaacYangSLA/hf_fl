@@ -1,5 +1,11 @@
 # Exchange review remediation
 
+> Historical record: this document describes its original source revision and
+> validation scope, including service implementations and commands that may no
+> longer ship. It does not certify the current Go services. Use the
+> [current architecture](../ARCHITECTURE_V3.md) and
+> [documentation index](../README.md) for current guidance.
+
 > **Historical snapshot.** Legacy Exchange remediation after the `8f7fee7` assessment.
 > Working-tree status, test results and schema-v2 migration instructions below describe that legacy remediation, not the independent Exchange deployment.
 > Current guidance: [architecture](../ARCHITECTURE_V3.md),

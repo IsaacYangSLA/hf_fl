@@ -51,6 +51,12 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 		}
 		http.Redirect(w, r, "/dashboard/", 303)
 		return nil
+	case "/signup":
+		return s.signupPage(w, r)
+	case "/auth/providers":
+		return s.signupProviders(w, r)
+	case "/auth/signup":
+		return s.signup(w, r)
 	case "/auth/login":
 		return s.login(w, r)
 	case "/auth/callback":
@@ -190,10 +196,16 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) error {
 		if e != nil {
 			return e
 		}
+		principal := v["principal"].(map[string]any)["principal_id"].(string)
+		canCreate, e := s.manager.CanCreateStudy(r.Context(), principal)
+		if e != nil {
+			return e
+		}
+		v["can_create_study"] = canCreate
 		return writeJSON(w, 200, v)
 	}
 	if r.Header.Get("Authorization") == "" {
-		return writeJSON(w, 200, map[string]any{"authenticated": false, "login_url": "/auth/login"})
+		return writeJSON(w, 200, map[string]any{"authenticated": false, "can_create_study": false, "login_url": "/auth/login"})
 	}
 	actor, e := s.actor(r, false, true)
 	if e != nil {
@@ -203,7 +215,11 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) error {
 	if actor.PlatformOperator {
 		permissions = append(permissions, "platform_operator")
 	}
-	return writeJSON(w, 200, map[string]any{"authenticated": true, "principal": map[string]any{"principal_id": actor.ID, "display_name": actor.Subject}, "permissions": permissions, "csrf_token": nil, "login_url": "/auth/login"})
+	canCreate, e := s.manager.CanCreateStudy(r.Context(), actor.ID)
+	if e != nil {
+		return e
+	}
+	return writeJSON(w, 200, map[string]any{"can_create_study": canCreate, "authenticated": true, "principal": map[string]any{"principal_id": actor.ID, "display_name": actor.Subject}, "permissions": permissions, "csrf_token": nil, "login_url": "/auth/login"})
 }
 func (s *Server) publicAPI(w http.ResponseWriter, r *http.Request, parts []string) error {
 	methods := publicMethods(parts)
@@ -231,6 +247,9 @@ func (s *Server) publicAPI(w http.ResponseWriter, r *http.Request, parts []strin
 	}
 	if parts[0] == "pools" {
 		return s.pools(w, r, actor, parts)
+	}
+	if parts[0] == "studies" {
+		return s.studies(w, r, actor.ID, parts)
 	}
 	if parts[0] != "jobs" {
 		return domain.Err(404, "not_found")
@@ -757,6 +776,8 @@ func publicMethods(parts []string) []string {
 		return nil
 	}
 	switch parts[0] {
+	case "studies":
+		return studyMethods(parts)
 	case "catalog":
 		if len(parts) == 1 {
 			return []string{"GET"}

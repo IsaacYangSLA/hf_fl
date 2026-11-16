@@ -44,6 +44,9 @@ func (m *Manager) approveSpec(ctx context.Context, tx *store.Tx, spec domain.Job
 		return "", domain.Err(422, "invalid_runtime_image_digest")
 	}
 	for _, p := range spec.Participants {
+		if _, e := store.StudyParticipantPrincipal(ctx, tx, spec.ProjectID, p.ParticipantID); e != nil {
+			return "", e
+		}
 		b, e := tx.One(ctx, "SELECT * FROM jm_participant_bindings WHERE id = ?", p.DatasetBinding)
 		if e != nil {
 			return "", e
@@ -415,7 +418,7 @@ func (m *Manager) Cancel(ctx context.Context, actor, id string, expected int64, 
 	})
 }
 func (m *Manager) Retry(ctx context.Context, actor, id string, expected int64, k string) (Object, error) {
-	return m.command(ctx, actor, id, "operator", k, expected, "job.retry_requested", Object{}, false, func(tx *store.Tx, job Object) error {
+	return m.commandWithProjectLock(ctx, actor, id, "operator", k, expected, "job.retry_requested", Object{}, false, true, func(tx *store.Tx, job Object) error {
 		if text(job["state"]) != "FAILED" {
 			return domain.Err(409, "job_retry_requires_failed")
 		}
@@ -427,6 +430,19 @@ func (m *Manager) Retry(ctx context.Context, actor, id string, expected int64, k
 		}
 		if has([]any{"expiry_pending", "expired"}, text(job["cleanup_status"])) || expired(job["artifacts_expire_at"], m.now()) {
 			return domain.Err(409, "job_artifacts_expired")
+		}
+		raw, e := domain.CanonicalJSON(job["spec_json"])
+		if e != nil {
+			return domain.Err(409, "invalid_job_spec")
+		}
+		spec, e := domain.DecodeJobSpec(raw)
+		if e != nil {
+			return domain.Err(409, "invalid_job_spec")
+		}
+		for _, participant := range spec.Participants {
+			if _, e = store.StudyParticipantPrincipal(ctx, tx, text(job["project_id"]), participant.ParticipantID); e != nil {
+				return e
+			}
 		}
 		job["state"] = "RECONCILING"
 		job["phase"] = "retry_pending"

@@ -57,7 +57,7 @@ func BuildServices(ctx context.Context, s config.Settings, withController bool) 
 	}
 	oidc := auth.OIDCConfig{Issuer: s.OIDC.Issuer, ClientID: s.OIDC.ClientID, ClientSecret: s.OIDC.ClientSecret, RedirectURI: s.OIDC.RedirectURI, Audience: s.OIDC.Audience, IntrospectionURL: s.OIDC.IntrospectionURL, JWKSURL: s.OIDC.JWKSURL, PublicKey: s.OIDC.PublicKey, EndpointOrigins: s.OIDC.EndpointOrigins, TimeoutSeconds: s.OIDC.TimeoutSeconds, JWKSCacheSeconds: s.OIDC.JWKSCacheSeconds, AllowLocalHTTP: s.OIDC.AllowLocalHTTP}
 	stage = "authentication"
-	services.Auth, err = auth.New(db, auth.Config{OIDC: oidc, SessionSecret: s.SessionSecret, PlatformOperatorIDs: s.PlatformOperatorIDs}, nil)
+	services.Auth, err = auth.New(db, auth.Config{OIDC: oidc, SessionSecret: s.SessionSecret, PlatformOperatorIDs: s.PlatformOperatorIDs, SignupProviders: s.SignupProviders}, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -297,7 +297,11 @@
           "primary_key": false,
           "auto": false,
           "default": {
-            "kind": "list"
+            "kind": "value",
+            "value": [
+              "contributor",
+              "publisher"
+            ]
           }
         },
         {

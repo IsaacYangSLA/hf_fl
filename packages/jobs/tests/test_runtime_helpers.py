@@ -55,6 +55,30 @@ class RuntimeHelperTests(unittest.TestCase):
         self.assertIn("PermissionError", evidence["stderr"])
         self.assertIn('"ready": true', evidence["stdout"])
 
+    def test_native_adapter_failure_keeps_cleanup_evidence(self):
+        from deploy.jobs.runtime import qualify_readonly_io as qualification
+        qualifier = qualification.Qualification.__new__(qualification.Qualification)
+        qualifier.executor_binary = Path("/owned/native-qualifier")
+        qualifier.profile_path = Path("/owned/profile.json")
+        qualifier.run_root = Path("/owned/probe")
+        qualifier.report = {}
+        result = SimpleNamespace(returncode=1, stdout=json.dumps({
+            "checks": [{"name": "adapter_fixed_isolated_command", "passed": False}],
+            "cleanup_confirmed": False}), stderr="adapter resource cleanup unconfirmed")
+        with patch.object(qualification, "command", return_value=result):
+            with self.assertRaisesRegex(RuntimeError, "cleanup unconfirmed"):
+                qualifier.native_probe("adapter", image="sha256:" + "a" * 64, job_id="probe")
+        self.assertFalse(qualifier.report["native_probe_failures"][0]["evidence"]["cleanup_confirmed"])
+
+    def test_native_adapter_missing_check_cannot_promote_profile(self):
+        from deploy.jobs.runtime import qualify_readonly_io as qualification
+        qualifier = qualification.Qualification.__new__(qualification.Qualification)
+        qualifier.base_image = "sha256:" + "a" * 64
+        qualifier.owner = "probe"
+        qualifier.native_probe = lambda *args, **kwargs: {"checks": [], "cleanup_confirmed": True}
+        with self.assertRaisesRegex(ValueError, "every required check"):
+            qualifier.adapter_check(Path("/owned/candidate.json"))
+
     def test_frozen_wheels_reused_and_tampering_refused_before_copy(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

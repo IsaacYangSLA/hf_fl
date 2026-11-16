@@ -6,10 +6,9 @@ proxies, managed Exchange edge, and transfer gateway. Independent Exchange runs
 its ordinary API, managed API, storage backend, and verification worker against
 real PostgreSQL and a private versioned S3 bucket.
 
-Python is used for independent Exchange and the unchanged sandbox FL application.
-No Python manager API, scheduler, controller, executor, gateway, or other
-management service is invoked. The unchanged sandboxed Python FL application
-adapter and independent Exchange remain.
+Exchange and all management services run as native Go processes. Python runs
+client/test operations and the sandboxed federated-learning application only;
+it does not implement a server, scheduler, controller, executor, or gateway.
 
 ## Prerequisites
 
@@ -19,8 +18,10 @@ adapter and independent Exchange remain.
   adapter, NumPy, and SafeTensors already installed.
 - Provide dedicated PostgreSQL databases and operator-owned S3 credentials that
   may create/delete a unique test bucket. Never point this gate at production.
-- Install independent Exchange server dependencies, Uvicorn, and NumPy into the
-  fixture Python environment.
+- Build the native Go Exchange executable and set `HF2L_EXCHANGE_GO_BINARY`
+  to its absolute, operator-owned regular executable path.
+- Install the Python Exchange client package, HTTPX, Boto3, Cryptography, PyJWT,
+  Psycopg, NumPy, and SafeTensors into the fixture Python environment.
 - Keep the runtime and test files on an owned local filesystem; grant only the
   sudo operations required by the documented qualified runtime/source fetcher.
 
@@ -58,25 +59,27 @@ regular, single-link files owned by the invoking user with no group/world access
 From packages/jobs:
 
 ~~~sh
+HF2L_EXCHANGE_GO_BINARY=/usr/local/bin/hf2l-exchange \
 HF2L_GO_LIFECYCLE_CONFIG=/etc/hf2l/private-lifecycle-test.json \
   go test -count=1 -timeout=20m -v ./integration/lifecycle
 ~~~
 
 Without the environment variable, this external-resource gate explicitly skips.
 
-To qualify the native Go Exchange implementation, additionally set
-HF2L_EXCHANGE_GO_BINARY to the absolute path of its built, operator-owned regular
-executable. The fixture then launches native serve, serve-managed,
-serve-gateway-backend, and worker processes; all post-readiness control operations
-use their authenticated HTTPS APIs. Python helpers perform retained-state schema/
-S3/seed setup, read-only oracle checks, and the sandboxed ML application. They do
-not run an Exchange API or worker in this mode. The private ready/result receipts
-record implementation=go and the exact binary SHA-256. An invalid explicit binary
-fails closed. Leaving this variable unset preserves the Python Exchange reference
-fixture.
+`HF2L_EXCHANGE_GO_BINARY` is required for a configured run. The fixture launches
+native `serve`, `serve-managed`, `serve-gateway-backend`, and `worker` processes;
+all post-readiness control operations use their authenticated encrypted APIs.
+Python helpers own unique PostgreSQL schemas and object-storage buckets, make
+client requests, inspect persisted results independently, and supply the training
+application. They never run an Exchange server or worker.
 
-The same variable selects the native backend for TestRealExchangeGateway in the
-manager transfer package, alongside its existing private PostgreSQL/S3 opt-ins.
+Private ready/result receipts record `implementation=go` and the binary hash.
+An absent, relative, writable-by-group, or otherwise invalid binary fails a
+configured gate. There is no Python-server fallback.
+
+The same required variable selects the native backend for
+`TestRealExchangeGateway` in the manager transfer package, alongside its private
+PostgreSQL/storage settings and Python test interpreter.
 
 ## Evidence and cleanup
 

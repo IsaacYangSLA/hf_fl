@@ -11,6 +11,7 @@ build/
 !packages/jobs/internal/build/**
 dist/
 *.egg-info/
+/PKG-INFO
 
 # Local credentials and Hugging Face caches
 .env
@@ -41,3 +42,8 @@ tchngyang
 
 # Private first-federation service and identity configuration
 examples/first_federation/.runtime/
+
+# Native executables produced by default module-local Go builds.
+/packages/exchange/hf2l-exchange
+/packages/jobs/hf2l-jobs
+/packages/jobs/hf2l-jobs-qualify-io

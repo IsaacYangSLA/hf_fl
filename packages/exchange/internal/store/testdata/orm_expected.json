@@ -1,0 +1,198 @@
+{
+  "v2_blobs": [
+    {
+      "expires_at": 2000000000.0,
+      "grant_expires_at": 0.0,
+      "id": "blob",
+      "media_type": "application/octet-stream",
+      "object_key": null,
+      "object_version": null,
+      "part_size": 8388608,
+      "path": "a.bin",
+      "pending_deletion": false,
+      "record_id": "record",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 0,
+      "space_id": "space",
+      "state": "reserved",
+      "verified_sha256": null,
+      "verified_size": null
+    }
+  ],
+  "v2_coordination_inputs": [
+    {
+      "attempt_id": "coord",
+      "record_id": "record",
+      "space_id": "space"
+    }
+  ],
+  "v2_coordinations": [
+    {
+      "expected_generation": 1,
+      "fence": 1,
+      "holder": "alice",
+      "id": "coord",
+      "lease_until": 2000000000.0,
+      "reference_name": "main",
+      "result_record_id": null,
+      "space_id": "space",
+      "state": "active"
+    }
+  ],
+  "v2_events": [
+    {
+      "id": 1,
+      "payload": {},
+      "principal_id": "alice",
+      "record_id": null,
+      "space_id": "space",
+      "type": "event"
+    }
+  ],
+  "v2_kind_policies": [
+    {
+      "generation": 1,
+      "kind": "thing",
+      "publish_roles": [
+        "contributor",
+        "publisher"
+      ],
+      "space_id": "space",
+      "visibility": "shared"
+    }
+  ],
+  "v2_managed_spaces": [
+    {
+      "job_id": "job",
+      "retired_at": null,
+      "space_id": "space"
+    }
+  ],
+  "v2_members": [
+    {
+      "bindings": {},
+      "principal_id": "alice",
+      "roles": [],
+      "space_id": "space",
+      "subject": null
+    }
+  ],
+  "v2_operations": [
+    {
+      "key": "key",
+      "principal_id": "alice",
+      "request_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "response": {},
+      "scope": "scope",
+      "space_id": "space"
+    }
+  ],
+  "v2_records": [
+    {
+      "base_record_id": null,
+      "creator": "alice",
+      "creator_bindings": {},
+      "declared_bytes": 0,
+      "expires_at": 2000000000.0,
+      "generation": 1,
+      "id": "record",
+      "kind": "thing",
+      "metadata_bytes": 0,
+      "metadata_json": {
+        "count": 123456789012345678901,
+        "float": 1.0,
+        "unicode": "É😀"
+      },
+      "published_at": null,
+      "schema_revision_id": "schema",
+      "shared": false,
+      "space_id": "space",
+      "state": "draft"
+    }
+  ],
+  "v2_references": [
+    {
+      "fence": 0,
+      "generation": 1,
+      "name": "main",
+      "record_id": "record",
+      "space_id": "space"
+    }
+  ],
+  "v2_schema_revisions": [
+    {
+      "dialect": "https://json-schema.org/draft/2020-12/schema",
+      "digest": "",
+      "id": "schema",
+      "kind": "thing",
+      "profile_version": "generic.v1",
+      "revision": 1,
+      "schema": {
+        "title": "É😀",
+        "type": "object"
+      },
+      "space_id": "space"
+    }
+  ],
+  "v2_spaces": [
+    {
+      "allocated": 0,
+      "event_floor": 0,
+      "generation": 1,
+      "id": "space",
+      "metadata_bytes": 0,
+      "name": "É😀",
+      "principal_quota_bytes": 107374182400,
+      "profile": "generic.v1",
+      "quota_bytes": 107374182400,
+      "quota_metadata_bytes": 1073741824,
+      "quota_records": 100000,
+      "reclaiming": 0,
+      "record_count": 0
+    }
+  ],
+  "v2_transfer_attempts": [
+    {
+      "blob_id": "blob",
+      "grant_expires_at": 0.0,
+      "id": "attempt",
+      "last_error": null,
+      "lease_until": null,
+      "mutation_tokens": [],
+      "next_attempt": 0.0,
+      "object_key": "prefix/private-key",
+      "operation": "upload",
+      "retry_count": 0,
+      "state": "initiating",
+      "token": null,
+      "upload_handle": {}
+    }
+  ],
+  "v2_workload_grants": [
+    {
+      "attempt_id": "attempt",
+      "bindings": {},
+      "certificate_thumbprint": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "component_id": "component",
+      "enabled": true,
+      "epoch": 1,
+      "expires_at": 2000000000.0,
+      "id": "grant",
+      "job_id": "job",
+      "principal_id": "alice",
+      "revoked_at": null,
+      "roles": [
+        "reader"
+      ],
+      "space_id": "space",
+      "subject": "Alice"
+    }
+  ],
+  "v2_workload_revocations": [
+    {
+      "attempt_id": "revoked",
+      "revoked_at": 2000000000.0,
+      "space_id": "space"
+    }
+  ]
+}

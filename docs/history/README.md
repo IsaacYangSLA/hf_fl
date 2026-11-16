@@ -8,8 +8,8 @@ are documented in [architecture v3](../ARCHITECTURE_V3.md), and the current inde
 runbook is [EXCHANGE_V3.md](../EXCHANGE_V3.md). Use the
 [training guide](../TRAINING_GUIDE.md) for current CLI workflows. Historical test counts apply only
 to the code and environment identified by the original document.
-The source distribution retains these documents so links from the v3 comparison
-remain reviewable; their inclusion does not make them current specifications.
+These documents remain available so the earlier design decisions can be
+reviewed; their inclusion does not make them current specifications.
 
 | Document | Historical scope |
 |---|---|
@@ -20,3 +20,8 @@ remain reviewable; their inclusion does not make them current specifications.
 | [EXCHANGE_REMEDIATION.md](EXCHANGE_REMEDIATION.md) | Status of each finding after remediation |
 | [EXCHANGE_SERVICE_DESIGN.md](EXCHANGE_SERVICE_DESIGN.md) | Original design of the legacy exchange service |
 | [DESIGN_SLIDES.md](DESIGN_SLIDES.md) | Four-slide overview of the original two-backend design |
+
+The [earlier v3 architecture at the pre-removal baseline](https://github.com/IsaacYangSLA/hf_fl/blob/e5b9dc52be155f281cac6ec8cb41d20a8c25e8cb/docs/ARCHITECTURE_V3.md)
+records the Python-service integration before the current Go-only manager and
+Exchange service implementation. The [historical validation index](../validation/README.md)
+keeps original verification records separate from current operator guidance.

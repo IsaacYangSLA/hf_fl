@@ -16,7 +16,6 @@ _COMMANDS = {
     "listen": ("hf2l.cli.listen", "Run a durable client or owner listener"),
     "round": ("hf2l.owner_fedavg", "Select, aggregate and publish a round"),
     "allowlist": ("hf2l.create_allowlist", "Create participant identity mappings"),
-    "exchange": ("hf2l_exchange.cli", "Administer the independent exchange service"),
 }
 
 
@@ -36,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     """Dispatch explicit arguments without changing the process's ``sys.argv``."""
     parser = argparse.ArgumentParser(
         prog="hf2l",
-        description="Federated learning commands and exchange service administration.",
+        description="Federated learning commands.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Commands:\n" + "\n".join(
             f"  {name:16} {description}" for name, (_, description) in _COMMANDS.items()

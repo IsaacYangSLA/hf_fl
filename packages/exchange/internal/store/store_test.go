@@ -2,12 +2,12 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -363,96 +363,152 @@ func TestRebindPreservesQuotedQuestionMarks(t *testing.T) {
 		t.Fatalf("unsafe rebind %s", result)
 	}
 }
-func TestBidirectionalPythonPersistence(t *testing.T) { testBidirectionalPythonPersistence(t, false) }
-func TestBidirectionalPythonNullPersistence(t *testing.T) {
-	testBidirectionalPythonPersistence(t, true)
-}
-func testBidirectionalPythonPersistence(t *testing.T, explicitNull bool) {
-	py := os.Getenv("HF2L_EXCHANGE_TEST_PYTHON")
-	if py == "" {
-		t.Skip("set HF2L_EXCHANGE_TEST_PYTHON for Python ORM compatibility oracle")
+
+// The expected rows were frozen from the original persistence implementation.
+// Neither generating nor checking them requires a Python server at test time.
+func assertFrozenRows(t *testing.T, db *DB, expectedName string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", expectedName))
+	if err != nil {
+		t.Fatal(err)
 	}
+	decoded, err := domain.DecodeJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := decoded.(map[string]any)
+	actual := snapshot(t, db)
+	if len(expected) != len(actual) {
+		t.Fatalf("table coverage: got %d want %d", len(actual), len(expected))
+	}
+	for table, spec := range schemaTables {
+		rows := actual[table].([]map[string]any)
+		if len(rows) != 1 {
+			t.Fatalf("%s row count %d", table, len(rows))
+		}
+		left := rows[0]
+		right := expected[table].([]any)[0].(map[string]any)
+		for _, c := range spec.Columns {
+			if c.Default != nil && c.Default.Kind == "now" {
+				n, ok := domain.Float(left[c.Name])
+				if !ok || n <= 0 {
+					t.Fatalf("invalid current-time default %s.%s", table, c.Name)
+				}
+				delete(left, c.Name)
+			}
+		}
+		l, err := domain.CanonicalJSON(left)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := domain.CanonicalJSON(right)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(l) != string(r) {
+			t.Errorf("retained row differs %s:\ngot %s\nwant %s", table, l, r)
+		}
+	}
+}
+
+func TestFrozenDefaultsAndNullsSurviveRestart(t *testing.T) {
 	for _, backend := range []string{"sqlite", "postgresql"} {
-		for _, direction := range []string{"python_to_go", "go_to_python"} {
-			t.Run(backend+"/"+direction, func(t *testing.T) {
-				db, u := testDB(t, backend)
+		for _, fixture := range []struct{ input, expected string }{
+			{"orm_inputs.json", "orm_expected.json"},
+			{"orm_null_inputs.json", "orm_null_expected.json"},
+		} {
+			t.Run(backend+"/"+fixture.input, func(t *testing.T) {
 				ctx := context.Background()
-				action := "snapshot"
-				if explicitNull {
-					action = "snapshot_nulls"
+				db, url := testDB(t, backend)
+				if err := Initialize(ctx, db); err != nil {
+					t.Fatal(err)
 				}
-				if direction == "python_to_go" {
-					action = "create"
-					if explicitNull {
-						action = "create_nulls"
-					}
-				} else {
-					if e := Initialize(ctx, db); e != nil {
-						t.Fatal(e)
-					}
-					if explicitNull {
-						e := db.WithTx(ctx, true, func(tx *Tx) error {
-							for _, r := range loadInputs(t, "orm_null_inputs.json") {
-								if e := tx.Insert(ctx, r.Table, r.Values); e != nil {
-									return e
-								}
-							}
-							return nil
-						})
-						if e != nil {
-							t.Fatal(e)
-						}
-					} else {
-						insertAll(t, db)
-					}
-				}
-				cmd := exec.CommandContext(ctx, py, "testdata/schema_oracle.py", action, u)
-				raw, e := cmd.Output()
-				if e != nil {
-					if x, ok := e.(*exec.ExitError); ok {
-						t.Fatalf("reference oracle failed: %s", x.Stderr)
-					}
-					t.Fatal(e)
-				}
-				if e := Check(ctx, db); e != nil {
-					t.Fatal(e)
-				}
-				var expected domain.Object
-				d := json.NewDecoder(strings.NewReader(string(raw)))
-				d.UseNumber()
-				if e = d.Decode(&expected); e != nil {
-					t.Fatal(e)
-				}
-				actual := snapshot(t, db)
-				// SQLAlchemy and Go may call their current-time defaults at different instants.
-				// All other data, including numeric JSON types and every ORM default, must agree.
-				for table, spec := range schemaTables {
-					left := actual[table].([]map[string]any)[0]
-					right := expected[table].([]any)[0].(map[string]any)
-					for _, c := range spec.Columns {
-						if c.Default != nil && c.Default.Kind == "now" {
-							n, ok := domain.Float(left[c.Name])
-							if !ok || n <= 0 {
-								t.Fatalf("invalid current-time default %s.%s", table, c.Name)
-							}
-							delete(left, c.Name)
-							delete(right, c.Name)
+				if err := db.WithTx(ctx, true, func(tx *Tx) error {
+					for _, row := range loadInputs(t, fixture.input) {
+						if err := tx.Insert(ctx, row.Table, row.Values); err != nil {
+							return err
 						}
 					}
-					l, e := domain.CanonicalJSON(left)
-					if e != nil {
-						t.Fatal(e)
-					}
-					rr, e := domain.CanonicalJSON(right)
-					if e != nil {
-						t.Fatal(e)
-					}
-					if string(l) != string(rr) {
-						t.Fatalf("retained data differs %s:\nGo %s\nPython %s", table, l, rr)
-					}
+					return nil
+				}); err != nil {
+					t.Fatal(err)
 				}
+				before, err := domain.CanonicalJSON(snapshot(t, db))
+				if err != nil {
+					t.Fatal(err)
+				}
+				assertFrozenRows(t, db, fixture.expected)
+				db.Close()
+				reopened, err := Open(ctx, url)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer reopened.Close()
+				if err = Check(ctx, reopened); err != nil {
+					t.Fatal(err)
+				}
+				after, err := domain.CanonicalJSON(snapshot(t, reopened))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(before) != string(after) {
+					t.Fatal("restart changed retained rows, defaults, or timestamp values")
+				}
+				assertFrozenRows(t, reopened, fixture.expected)
 			})
 		}
+	}
+}
+
+// The SQL statements are a retained database exported from the historical
+// implementation, not recreated from today's Go schema/default helpers.
+func TestFrozenRetainedSQLiteDatabase(t *testing.T) {
+	for _, prefix := range []string{"orm", "orm_null"} {
+		t.Run(prefix, func(t *testing.T) {
+			ctx := context.Background()
+			db, url := testDB(t, "sqlite")
+			raw, err := os.ReadFile(filepath.Join("testdata", prefix+"_retained_sqlite.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var statements []string
+			if err = json.Unmarshal(raw, &statements); err != nil {
+				t.Fatal(err)
+			}
+			if err = db.WithTx(ctx, true, func(tx *Tx) error {
+				// A dump orders tables by name. Defer constraints until all
+				// parent and child rows have been restored in this transaction.
+				if _, err := tx.Exec(ctx, "PRAGMA defer_foreign_keys=ON"); err != nil {
+					return err
+				}
+				// Create every referenced table before restoring rows: a
+				// deferred foreign key still requires its target table to exist.
+				for _, data := range []bool{false, true} {
+					for _, statement := range statements {
+						isData := strings.HasPrefix(statement, "INSERT ") || strings.HasPrefix(statement, "DELETE ")
+						if isData != data {
+							continue
+						}
+						if _, err := tx.Exec(ctx, statement); err != nil {
+							return err
+						}
+					}
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			db.Close()
+			reopened, err := Open(ctx, url)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer reopened.Close()
+			if err = Check(ctx, reopened); err != nil {
+				t.Fatal(err)
+			}
+			assertFrozenRows(t, reopened, prefix+"_expected.json")
+		})
 	}
 }
 
@@ -519,14 +575,20 @@ func TestSQLiteReadTransactionsAreDeferredAndWritesImmediate(t *testing.T) {
 	}
 }
 
-func TestReferenceSchemaAndDefaultManifest(t *testing.T) {
-	py := os.Getenv("HF2L_EXCHANGE_TEST_PYTHON")
-	if py == "" {
-		t.Skip("set HF2L_EXCHANGE_TEST_PYTHON for reference schema/default manifest check")
+func TestFrozenSchemaAndDefaultManifest(t *testing.T) {
+	// This immutable revision includes the historical migration SQL, column
+	// kinds, nullability, and client defaults, independently frozen before
+	// removing the old server implementation. Changes require migration review.
+	const expected = "afdff0b471960f5c527564fcd9ec69ed2a7e1aed410f0c5fd646d4c9a4c82309"
+	actual := fmt.Sprintf("%x", sha256.Sum256(schemaBytes))
+	if actual != expected {
+		t.Fatalf("frozen schema/default contract changed: got %s want %s", actual, expected)
 	}
-	cmd := exec.CommandContext(context.Background(), py, "testdata/export_schema.py")
-	if out, e := cmd.CombinedOutput(); e != nil {
-		t.Fatalf("reference schema/default drift: %v %s", e, out)
+	if err := loadSchema(); err != nil {
+		t.Fatal(err)
+	}
+	if frozen.Revision != "0003_workload_grants" || len(frozen.Tables) != 15 {
+		t.Fatal("frozen schema identity changed")
 	}
 }
 

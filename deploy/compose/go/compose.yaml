@@ -1,0 +1,63 @@
+# Services only: provide PostgreSQL, identity and versioned S3 separately.
+# See README.md before starting. Requires Docker Compose 2.24 or newer.
+name: hf2l-go
+
+x-service: &service
+  image: ${HF2L_GO_IMAGE:?Set a deployment-specific Go image name and tag}
+  build:
+    context: ../../..
+    dockerfile: deploy/compose/go/Dockerfile
+  user: "${HF2L_SERVICE_UID:?Set the non-root service UID}:${HF2L_SERVICE_GID:?Set the service GID}"
+  environment:
+    SSL_CERT_FILE: /run/hf2l/service-ca.crt
+    AWS_CA_BUNDLE: /run/hf2l/service-ca.crt
+  volumes:
+    - type: bind
+      source: ${HF2L_CONFIG_DIR:?Set the absolute private configuration directory}
+      target: /run/hf2l
+      read_only: true
+      bind:
+        create_host_path: false
+  read_only: true
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  restart: unless-stopped
+  stop_grace_period: 30s
+
+services:
+  exchange-api:
+    <<: *service
+    env_file: ${HF2L_CONFIG_DIR:?Set the absolute private configuration directory}/exchange.env
+    command:
+      - /usr/local/bin/hf2l-exchange
+      - serve
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8441"
+      - --tls-cert
+      - /run/hf2l/exchange-server.crt
+      - --tls-key
+      - /run/hf2l/exchange-server.key
+    ports:
+      - "${HF2L_BIND_ADDRESS:-127.0.0.1}:${HF2L_EXCHANGE_PORT:-8441}:8441"
+
+  exchange-worker:
+    <<: *service
+    env_file: ${HF2L_CONFIG_DIR:?Set the absolute private configuration directory}/exchange.env
+    command: [/usr/local/bin/hf2l-exchange, worker]
+
+  manager:
+    <<: *service
+    profiles: [manager]
+    env_file:
+      - path: ${HF2L_CONFIG_DIR:?Set the absolute private configuration directory}/jobs.env
+        # Keep the Exchange-only profile usable without manager credentials.
+        # Before enabling this profile, create jobs.env as described in README.md.
+        required: false
+    command: [/usr/local/bin/hf2l-jobs, serve, --config, /run/hf2l/jobs.json]
+    ports:
+      - "${HF2L_BIND_ADDRESS:-127.0.0.1}:${HF2L_MANAGER_PORT:-8082}:8082"
+    stop_grace_period: 90s

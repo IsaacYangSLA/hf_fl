@@ -7,6 +7,7 @@ or tokens. Use --runtime-dir outside the checkout on real deployments.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta, timezone
 import hashlib
 import ipaddress
 import json
@@ -148,6 +149,8 @@ def render_environment(runtime, config, accounts, admin_subject=""):
     prefix = {
         "HF2L_PROJECT_NAME": config["project_name"],
         "HF2L_RUNTIME_DIR": str(runtime),
+        "HF2L_SERVICE_UID": str(os.getuid()),
+        "HF2L_SERVICE_GID": str(os.getgid()),
         "HF2L_EXCHANGE_HOST": config["exchange_host"],
         "HF2L_AUTH_HOST": config["auth_host"],
         "HF2L_OBJECTS_HOST": config["objects_host"],
@@ -189,6 +192,46 @@ def render_environment(runtime, config, accounts, admin_subject=""):
         key + "=" + value + "\n" for key, value in values.items()))
 
 
+def initialize_backend_tls(runtime):
+    """Issue a private server identity used only between Caddy and Go Exchange."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+
+    now = datetime.now(timezone.utc)
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "HF2L internal Exchange issuer")])
+    ca = (x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name)
+          .public_key(ca_key.public_key()).serial_number(x509.random_serial_number())
+          .not_valid_before(now - timedelta(minutes=5)).not_valid_after(now + timedelta(days=730))
+          .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+          .add_extension(x509.KeyUsage(digital_signature=False, content_commitment=False,
+              key_encipherment=False, data_encipherment=False, key_agreement=False,
+              key_cert_sign=True, crl_sign=True, encipher_only=False, decipher_only=False), critical=True)
+          .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
+          .sign(ca_key, hashes.SHA256()))
+    server_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+    server_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "exchange-api")])
+    server = (x509.CertificateBuilder().subject_name(server_name).issuer_name(ca_name)
+          .public_key(server_key.public_key()).serial_number(x509.random_serial_number())
+          .not_valid_before(now - timedelta(minutes=5)).not_valid_after(now + timedelta(days=365))
+          .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+          .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False,
+              key_encipherment=False, data_encipherment=False, key_agreement=False,
+              key_cert_sign=False, crl_sign=False, encipher_only=False, decipher_only=False), critical=True)
+          .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=True)
+          .add_extension(x509.SubjectAlternativeName([x509.DNSName("exchange-api")]), critical=False)
+          .add_extension(x509.SubjectKeyIdentifier.from_public_key(server_key.public_key()), critical=False)
+          .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
+          .sign(ca_key, hashes.SHA256()))
+    private_write(runtime / "backend-ca.crt", ca.public_bytes(serialization.Encoding.PEM).decode(), public=True)
+    private_write(runtime / "backend-server.crt", server.public_bytes(serialization.Encoding.PEM).decode(), public=True)
+    private_write(runtime / "backend-server.key", server_key.private_bytes(serialization.Encoding.PEM,
+          serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode())
+    # The CA signing key is deliberately not persisted or mounted in either service.
+
+
 def initialize(args, runtime):
     if runtime.exists() and any(runtime.iterdir()):
         raise ValueError("Runtime directory is not empty; reuse it with bootstrap/start")
@@ -213,7 +256,8 @@ def initialize(args, runtime):
     runtime.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(runtime, 0o700)
     config = {
-        "format": 1, "project_name": args.project_name, "tls": args.tls,
+        "format": 2, "implementation": "go",
+        "project_name": args.project_name, "tls": args.tls,
         "exchange_host": hosts[0], "auth_host": hosts[1], "objects_host": hosts[2],
         "https_port": args.https_port, "http_port": args.http_port,
         "bind_address": args.bind_address, "network_subnet": str(network),
@@ -232,6 +276,7 @@ def initialize(args, runtime):
         "keycloak_db_password": password(),
         "minio_user": "hf2l" + secrets.token_hex(8), "minio_password": password(),
     }
+    initialize_backend_tls(runtime)
     write_json(runtime / "config.json", config)
     write_json(runtime / "accounts.json", accounts)
     render_environment(runtime, config, accounts)
@@ -257,6 +302,8 @@ class Stack:
     def __init__(self, runtime):
         self.runtime = runtime
         self.config = load_json(runtime / "config.json")
+        if self.config.get("implementation") != "go" or self.config.get("format") != 2:
+            raise ValueError("This runtime belongs to the removed Python stack; preserve it and follow the Go cutover guide with a new configuration directory")
         self.accounts = load_json(runtime / "accounts.json")
         self.docker = self._docker_command()
         self.base = self.docker + ["compose", "--env-file", str(runtime / "compose.env"),
@@ -425,27 +472,29 @@ class Stack:
 
     def initialize_storage(self):
         code = """
+import os
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
-from hf2l_exchange.config import StorageSettings
-s=StorageSettings.from_env()
-client=boto3.client('s3',endpoint_url=s.endpoint,aws_access_key_id=s.access_key,
- aws_secret_access_key=s.secret_key,region_name=s.region,
+bucket=os.environ['EXCHANGE_S3_BUCKET']
+client=boto3.client('s3',endpoint_url=os.environ['EXCHANGE_S3_ENDPOINT'],
+ aws_access_key_id=os.environ['EXCHANGE_S3_ACCESS_KEY'],
+ aws_secret_access_key=os.environ['EXCHANGE_S3_SECRET_KEY'],
+ region_name=os.environ['EXCHANGE_S3_REGION'],
  config=Config(signature_version='s3v4',s3={'addressing_style':'path'}))
 try:
- client.head_bucket(Bucket=s.bucket)
+ client.head_bucket(Bucket=bucket)
 except ClientError as exc:
  if exc.response['ResponseMetadata']['HTTPStatusCode'] != 404: raise
- client.create_bucket(Bucket=s.bucket)
-client.put_bucket_versioning(Bucket=s.bucket,VersioningConfiguration={'Status':'Enabled'})
+ client.create_bucket(Bucket=bucket)
+client.put_bucket_versioning(Bucket=bucket,VersioningConfiguration={'Status':'Enabled'})
 try:
- client.delete_bucket_policy(Bucket=s.bucket)
+ client.delete_bucket_policy(Bucket=bucket)
 except ClientError as exc:
  if exc.response.get('Error',{}).get('Code') not in ('NoSuchBucketPolicy','NoSuchPolicy'): raise
 print('Private versioned bucket ready')
 """
-        self.compose("run", "--rm", "--no-deps", "exchange-api", "python", "-c", code)
+        self.compose("run", "--rm", "--no-deps", "bootstrap", "python", "-c", code)
 
     def record_release(self):
         source = subprocess.run(["git", "-C", str(HERE), "rev-parse", "HEAD"],
@@ -478,17 +527,18 @@ print('Private versioned bucket ready')
             images = json.loads(images_output)
         except json.JSONDecodeError:
             images = [json.loads(line) for line in images_output.splitlines() if line.strip()]
-        dependencies = self.compose("run", "--rm", "--no-deps", "exchange-api",
-                                    "python", "-m", "pip", "freeze", capture=True).stdout.splitlines()
+        build_info = self.compose("run", "--rm", "--no-deps", "exchange-api",
+                                  "cat", "/usr/share/hf2l/exchange-build-info.txt",
+                                  capture=True).stdout
         write_json(self.runtime / "release.json", {
             "source_revision": source, "source_dirty": bool(dirty),
             "source_tree_sha256": hashlib.sha256(manifest).hexdigest(),
             "source_files": source_files, "images": images,
-            "server_dependencies": dependencies,
+            "server_implementation": "go", "go_build_info": build_info,
         })
 
     def bootstrap(self):
-        self.compose("build", "exchange-api", "minio")
+        self.compose("build", "exchange-api", "bootstrap", "minio")
         self.start_dependencies()
         self.bootstrap_identity()
         self.compose("run", "--rm", "--no-deps", "exchange-api", "hf2l-exchange", "init-db")

@@ -64,7 +64,7 @@ func callCLI(t *testing.T, args ...string) map[string]any {
 func TestCLICreatesMigratesAndAdministersRealDatabase(t *testing.T) {
 	database := configureEnvironment(t)
 	result := callCLI(t, "init-db")
-	if result["schema_revision"] != "0003_administrative_audit" || result["status"] != "ok" {
+	if result["schema_revision"] != store.CurrentRevision || result["status"] != "ok" {
 		t.Fatal(result)
 	}
 	quota := filepath.Join(t.TempDir(), "quota.json")

@@ -6,7 +6,11 @@
 }
 https://{$HF2L_EXCHANGE_HOST}:{$HF2L_HTTPS_PORT} {
     import /etc/caddy/tls.conf
-    reverse_proxy exchange-api:8000 {
+    reverse_proxy https://exchange-api:8441 {
+        transport http {
+            tls_trust_pool file /etc/caddy/backend-ca.crt
+            tls_server_name exchange-api
+        }
         header_up X-Forwarded-Proto https
         header_up X-Forwarded-Host {hostport}
     }

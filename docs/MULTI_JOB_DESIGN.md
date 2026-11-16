@@ -21,15 +21,21 @@ The existing deployment already has useful building blocks:
 | The owner listener fixes its reference to `main` and binds state to one repository/configuration ([owner listener](../hf2l/listener/owner.py)). | Run a separate owner and isolated repository/space for each managed job. |
 | Listener `max_rounds` counts successes in the current invocation ([listener engine](../hf2l/listener/engine.py)). | Persist an absolute final round so restarts cannot extend a job accidentally. |
 | Publication intent and uncertain outcomes stop owner/client replay ([owner](../hf2l/listener/owner.py), [client](../hf2l/listener/client.py)). | Reuse this safety boundary; never turn an unknown publication into a blind retry. |
-| Exchange checks current membership inside the space transaction ([application service](../packages/exchange/src/hf2l_exchange/application.py)). | Retain membership checks and add a narrower workload grant check. |
-| Exchange supports separate human and optional workload issuer/audience validation with current grant checks ([authentication](../packages/exchange/src/hf2l_exchange/auth.py)). | Configure the managed issuer/audience explicitly and use certificate-bound execution grants through the dedicated ingress. |
+| Exchange checks current membership inside the space transaction ([application service](../packages/exchange/internal/service/service.go)). | Retain membership checks and add a narrower workload grant check. |
+| Exchange supports separate human and optional workload issuer/audience validation with current grant checks ([authentication](../packages/exchange/internal/auth/auth.go)). | Configure the managed issuer/audience explicitly and use certificate-bound execution grants through the dedicated ingress. |
 | The built-in trainer creates an optimizer for each training call ([training](../hf2l/training.py)). | Recovery resumes from durable round boundaries; mid-epoch optimizer resume is outside v1. |
 
 V1 manages FedAvg jobs using fresh `fedavg.v1` Exchange spaces for model artifacts. Existing LocalStore, Hugging Face, JFrog, and manual cyclic workflows remain available independently; their adapters must establish equivalent job-scoped credentials and egress before becoming managed isolation targets. Automatic cyclic scheduling is a later workflow adapter.
 
 ## 2. Architecture and ownership
 
-The implementation provides an independently packaged Python distribution `hf2l-jobs`, import package `hf2l_jobs`, under `packages/jobs`, requiring Python 3.11 or later. It uses FastAPI, SQLAlchemy, and PostgreSQL and serves packaged HTML/CSS/JavaScript from the manager; dashboard development and deployment do not require Node.js.
+The manager is a native Go executable under `packages/jobs`, built on Linux
+with Go 1.26 or later. It uses PostgreSQL and serves embedded HTML/CSS/JavaScript:
+page structure, appearance, and browser behavior. Dashboard development and
+deployment do not require Node.js. The separate `hf2l-jobs` Python distribution
+contains training/build execution adapters, requiring Python 3.11 or later; it
+does not contain a manager server. Exchange is also a native Go service.
+Org P's model averaging and participant training remain Python application code.
 
 ```mermaid
 flowchart LR
@@ -78,15 +84,27 @@ A source commit is resolved to an immutable verified snapshot before execution. 
 
 | Role | Allowed actions |
 | --- | --- |
+| Study creator | Create a named study through a separately revocable servicewide grant; becomes administrator only in the study created. Cannot allocate quotas, administer the service, or access foreign studies/jobs. |
 | Project submitter | Create jobs in that project; receives job-admin on jobs it creates. |
 | Job reader | Read that job's metadata, history, metrics, logs, code snapshots, and retained artifacts. |
 | Job operator | Reader actions plus cancel, retry, and explicitly requested reconciliation. |
 | Job-admin | Operator actions plus grant/revoke job membership and authorize purge. |
-| Platform operator | Manage pools, node health, quotas, and cleanup; operational inventory does not grant access to job code, logs, or artifacts. |
+| Platform operator | Manage pools and inspect resource health through the human interface; other trusted service administration uses local operator commands. Operational inventory does not grant access to job code, logs, or artifacts. |
 
-Membership is explicit per job. Project creation permission does not automatically expose every project job. Only a job-admin can add members; preserve at least one effective job-admin when editing membership. Platform operators need a separate audited job grant to inspect content. Every endpoint checks the current ACL, including historical jobs, log tails, downloads, counts, search, and event streams. Apply authorization before filtering, pagination, aggregation, and counts. An inaccessible job returns 404; queue information never reveals another user's job identity or title.
+Membership is explicit per job. Project membership and study-creation permission do not automatically expose every project job. Only a job-admin can add members; preserve at least one effective job-admin when editing membership. Platform operators need a separate audited job grant to inspect content. Every endpoint checks the current ACL, including historical jobs, log tails, downloads, counts, search, and event streams. Apply authorization before filtering, pagination, aggregation, and counts. An inaccessible job returns 404; queue information never reveals another user's job identity or title.
 
 The dashboard uses OIDC authorization code flow with PKCE, validated issuer/audience/nonce, and a same-origin server session. Bind the authorization response to the initiating session using state and redirect URI validation. Store sessions server-side, use Secure/HttpOnly/SameSite cookies, and enforce CSRF checks on mutations. Sessions expire after 30 minutes idle or eight hours absolute. Revalidate identity at least every 15 minutes through a configured provider online check or fresh authorization; deny access if revalidation cannot complete. Support provider back-channel logout/introspection when available, and close expired/revoked streams. Without an integrated revocation signal there is no instantaneous account-disabling guarantee; identity must be reauthorized at the next required online check. Renewal requires fresh authorization after absolute expiry. Human tokens never enter workloads or browser local storage. [OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html)
+
+A study is a collaboration stored as a manager project. Selected study creators
+have more permission than ordinary signed-in accounts and less than service
+operators. Trusted local administration grants and revokes this permission;
+existing project administrators do not receive it automatically. Dashboard
+creation accepts only a name, starts registration closed with approval required,
+sets all six resource allowances to zero and retention to 14 days, and grants
+administrator membership only to the creator. Revocation immediately blocks
+new creation through existing sessions without removing existing memberships.
+Operator-created projects and separately assigned quotas remain supported;
+manager study records and standalone Exchange projects are independent.
 
 ### Workload access and fencing
 
@@ -94,7 +112,7 @@ Workloads use a separate fixed issuer from human login and service-specific fixe
 
 Add a generic Exchange workload-grant ledger containing grant ID, principal ID, allowed space, epoch, enabled status, expiry, certificate thumbprint, and permitted role/bindings. Privileged idempotent grant/revoke operations are restricted to the trusted provisioning principal. Workload JWTs include job, attempt, component, space, grant ID, and epoch, with a maximum lifetime of 300 seconds. Store job/attempt/component bindings as opaque grant metadata; Exchange validates their equality without implementing job lifecycle logic.
 
-For every managed workload request, require both current space membership and a matching enabled, unexpired grant. Effective roles are the intersection of membership roles and grant-permitted roles; participant bindings must match the grant exactly. The space, job/attempt/component bindings, and epoch must match the ledger. Neither extra roles in the correct space nor membership in another space expands token authority. Keep stable Exchange principals per job/component/participant across infrastructure attempts, preserving creator membership and participant labels ([FedAvg profile](../packages/exchange/src/hf2l_exchange/profiles.py)). Rotate execution instance, attempt binding, grant ID, token, and epoch instead.
+For every managed workload request, require both current space membership and a matching enabled, unexpired grant. Effective roles are the intersection of membership roles and grant-permitted roles; participant bindings must match the grant exactly. The space, job/attempt/component bindings, and epoch must match the ledger. Neither extra roles in the correct space nor membership in another space expands token authority. Keep stable Exchange principals per job/component/participant across infrastructure attempts, preserving creator membership and participant labels ([FedAvg profile](../packages/exchange/internal/profiles/profiles.go)). Rotate execution instance, attempt binding, grant ID, token, and epoch instead.
 
 Before a new attempt starts, persist a revocation operation, revoke all old attempt grants transactionally in Exchange, and obtain confirmed completion. Then reconcile publications already accepted before revocation. Only after that barrier may the successor receive grants. Before reusing the same writable state or compute, also confirm previous runtime termination or authoritative node fencing; grant revocation alone does not stop filesystem mutation. If revocation or publication outcome cannot be confirmed, the job stays reconciling or needs attention. No scheduler assumption overrides Exchange fencing.
 
@@ -208,4 +226,4 @@ Required acceptance scenarios:
 - Historical ACLs survive completion and artifact expiration. Purge is authorized/audited. CSRF, XSS, stream reconnection, session expiry, and log/artifact rendering are covered.
 - Existing Exchange authentication, standalone FL CLI workflows, generated contracts, wheel installs, and supported Python versions remain compatible.
 
-**Initial implementation choices:** Linux CPU nodes; locally approved participant data/training; managed FedAvg; CPU sandbox profile first; PostgreSQL durable queue/history; no pause, preemption, optimizer resume, or shared GPUs; artifacts retained 90 days and metadata retained until authorized purge. The implemented CPU interfaces and tested scope are described in the runbooks and validation report. GPU/Kubernetes execution, pause, preemption, optimizer resume, and shared GPUs remain outside the qualified v1 scope.
+**Initial implementation choices:** Linux CPU nodes; locally approved participant data/training; managed FedAvg; CPU sandbox profile first; PostgreSQL durable queue/history; no pause, preemption, optimizer resume, or shared GPUs; artifact retention set by project policy (trusted project creation defaults to 90 days; dashboard study creation defaults to 14 days) and metadata retained until authorized purge. The implemented CPU interfaces and tested scope are described in the runbooks and validation report. GPU/Kubernetes execution, pause, preemption, optimizer resume, and shared GPUs remain outside the qualified v1 scope.

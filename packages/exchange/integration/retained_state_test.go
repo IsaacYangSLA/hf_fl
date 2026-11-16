@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// TestRetainedStatePythonAndGo swaps implementations over the same owned
-// database and provider state. Python is an offline reference, never a bridge
-// used by a running native Exchange process.
-func TestRetainedStatePythonAndGo(t *testing.T) {
+// TestRetainedStateNativeRestart continues client work across native service
+// restarts over the same owned database and provider state. Python supplies
+// client requests and independent evidence checks, never a server.
+func TestRetainedStateNativeRestart(t *testing.T) {
 	config := os.Getenv("HF2L_GO_EXCHANGE_RETAINED_CONFIG")
 	if config == "" {
 		config = os.Getenv("HF2L_GO_EXCHANGE_SDK_CONFIG")
@@ -70,5 +70,5 @@ func TestRetainedStatePythonAndGo(t *testing.T) {
 	if err != nil || report.Status != "PASS" || len(report.Cases) != 2 || len(report.CleanupErrors) != 0 {
 		t.Fatalf("retained-state acceptance failed: class=%s code=%s; private evidence=%s", report.ErrorClass, report.ErrorCode, root)
 	}
-	t.Log("Python↔Go retained-state initialization, idempotency, coordination, multipart and exact PUT receipt continuation passed")
+	t.Log("Native restart retained-state initialization, idempotency, coordination, multipart and exact PUT receipt continuation passed")
 }

@@ -37,56 +37,34 @@ jobs:
           tests.test_listener_engine tests.test_owner_listener
           tests.test_owner_listener_cli tests.test_runner_publication_hook -v
 
-  dependency-boundaries:
+  sdk-boundaries:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        python: ['3.12']
-        installation: [sdk, server]
+        python: ['3.11', '3.12', '3.13', '3.14']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Install standalone SDK or server without HF2L
-        env:
-          INSTALLATION: ${{ matrix.installation }}
+      - name: Install the standalone Python SDK without server or ML dependencies
         run: |
           python -m venv .venv
-          if [ "$INSTALLATION" = server ]; then
-            .venv/bin/python -m pip install -e './packages/exchange[server]'
-          else
-            .venv/bin/python -m pip install -e ./packages/exchange
-          fi
-          .venv/bin/python scripts/check_exchange_dependencies.py --mode "$INSTALLATION"
+          .venv/bin/python -m pip install -e './packages/exchange[test]'
+          .venv/bin/python scripts/check_exchange_dependencies.py --mode sdk
           .venv/bin/python -m pip check
-
-  generic-sqlite:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python: ['3.12']
-    env:
-      EXCHANGE_REQUIRE_TESTS: '1'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-      - name: Install generic service and tests without ML dependencies
-        run: |
-          python -m venv .venv
-          .venv/bin/python -m pip install -e './packages/exchange[server,test]'
-      - name: Run generic SQLite and Moto suite
+      - name: Verify Python SDK wire, transfer, and recovery contracts
         run: .venv/bin/python -m unittest discover -s packages/exchange/tests -v
 
   hf2l-regression:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python: ['3.12']
+    timeout-minutes: 30
     env:
       EXCHANGE_REQUIRE_TESTS: '1'
+    strategy:
+      matrix:
+        python: ['3.12', '3.14']
     steps:
       - uses: actions/checkout@v4
         with:
@@ -94,81 +72,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: Install local distributions and legacy regression dependencies
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.x'
+          cache-dependency-path: packages/exchange/go.sum
+      - name: Build the native Exchange for application integration tests
+        run: |
+          go -C packages/exchange build -trimpath -o "$RUNNER_TEMP/hf2l-exchange" ./cmd/hf2l-exchange
+          chmod 0755 "$RUNNER_TEMP/hf2l-exchange"
+          printf 'HF2L_EXCHANGE_GO_BINARY=%s\n' "$RUNNER_TEMP/hf2l-exchange" >> "$GITHUB_ENV"
+      - name: Install Python training, clients, and application test dependencies
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          .venv/bin/python -m pip install -e './packages/exchange[server,test]' -e '.[torch,hf,examples,exchange,service,exchange-test]'
-      - name: Run all application, numeric golden, architecture and legacy regressions
+          .venv/bin/python -m pip install -e './packages/exchange[test]' -e '.[torch,hf,examples,exchange,exchange-test]' 'PyJWT[crypto]' boto3 'moto[s3,server]'
+      - name: Run application, numeric golden, architecture, and participant regressions
         run: .venv/bin/python -m unittest discover -s tests -v
       - name: Check distribution metadata consistency
         run: .venv/bin/python -m pip check
-
-  postgres-s3:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        # Locally inspected PostgreSQL 18 image; deliberately immutable.
-        image: postgres@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280
-        env:
-          POSTGRES_USER: hf2l_test
-          POSTGRES_PASSWORD: local-test-only
-          POSTGRES_DB: hf2l_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U hf2l_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-    env:
-      EXCHANGE_REQUIRE_TESTS: '1'
-      EXCHANGE_TEST_DATABASE_URL: postgresql+psycopg://hf2l_test:local-test-only@127.0.0.1:5432/hf2l_test
-      EXCHANGE_TEST_S3_ENDPOINT: http://127.0.0.1:9000
-      AWS_ACCESS_KEY_ID: hf2l-local-test
-      AWS_SECRET_ACCESS_KEY: local-test-only-password
-      AWS_DEFAULT_REGION: us-east-1
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install both distributions and test dependencies
-        run: |
-          python -m venv .venv
-          .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-          .venv/bin/python -m pip install -e './packages/exchange[server,test]' -e '.[torch,hf,examples,exchange,service,exchange-test]'
-      - name: Build S3 test image from verified upstream source
-        timeout-minutes: 20
-        run: |
-          docker build --file examples/first_federation/Dockerfile.minio \
-            --tag hf2l-ci-minio:source .
-      - name: Start pinned ephemeral S3 test service
-        run: |
-          docker run -d --rm --name hf2l-ci-minio -p 127.0.0.1:9000:9000 \
-            -e MINIO_ROOT_USER="$AWS_ACCESS_KEY_ID" \
-            -e MINIO_ROOT_PASSWORD="$AWS_SECRET_ACCESS_KEY" \
-            hf2l-ci-minio:source server /data
-          .venv/bin/python - <<'PYTHON'
-          import time
-          from urllib.request import urlopen
-          for attempt in range(30):
-              try:
-                  with urlopen('http://127.0.0.1:9000/minio/health/ready', timeout=2):
-                      break
-              except OSError:
-                  if attempt == 29:
-                      raise
-                  time.sleep(1)
-          PYTHON
-      - name: Run generic PostgreSQL and S3 conformance tests
-        run: .venv/bin/python -m unittest discover -s packages/exchange/tests -v
-      - name: Run legacy PostgreSQL concurrency and S3 signature regressions
-        run: .venv/bin/python -m unittest discover -s tests -v
-      - name: Remove ephemeral S3 service
-        if: always()
-        run: docker rm -f hf2l-ci-minio || true

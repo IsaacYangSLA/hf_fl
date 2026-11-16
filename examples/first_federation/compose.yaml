@@ -4,9 +4,12 @@ x-exchange: &exchange
   build:
     context: ../..
     dockerfile: examples/first_federation/Dockerfile
+  user: "${HF2L_SERVICE_UID:?Run stack.py init first}:${HF2L_SERVICE_GID:?Run stack.py init first}"
   env_file: ${HF2L_RUNTIME_DIR:?Run stack.py init first}/exchange.env
   volumes:
     - ${HF2L_RUNTIME_DIR}/service-ca.crt:/run/hf2l/service-ca.crt:ro
+    - ${HF2L_RUNTIME_DIR}/backend-server.crt:/run/hf2l/backend-server.crt:ro
+    - ${HF2L_RUNTIME_DIR}/backend-server.key:/run/hf2l/backend-server.key:ro
   restart: unless-stopped
   networks: [federation]
   security_opt: [no-new-privileges:true]
@@ -76,6 +79,7 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ${HF2L_RUNTIME_DIR}/tls.conf:/etc/caddy/tls.conf:ro
+      - ${HF2L_RUNTIME_DIR}/backend-ca.crt:/etc/caddy/backend-ca.crt:ro
       - caddy-data:/data
       - caddy-config:/config
     restart: unless-stopped
@@ -90,16 +94,16 @@ services:
   exchange-api:
     <<: *exchange
     command:
-      - uvicorn
-      - hf2l_exchange.api:create_app
-      - --factory
+      - hf2l-exchange
+      - serve
       - --host
       - "0.0.0.0"
       - --port
-      - "8000"
-      - --proxy-headers
-      - --forwarded-allow-ips
-      - ${HF2L_PROXY_IP}
+      - "8441"
+      - --tls-cert
+      - /run/hf2l/backend-server.crt
+      - --tls-key
+      - /run/hf2l/backend-server.key
     depends_on:
       postgres: {condition: service_healthy}
       caddy: {condition: service_started}
@@ -110,6 +114,19 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       caddy: {condition: service_started}
+
+  bootstrap:
+    image: ${HF2L_PROJECT_NAME:-hf2l-first-federation}-bootstrap:local
+    build:
+      context: ../..
+      dockerfile: examples/first_federation/Dockerfile.bootstrap
+    profiles: [tools]
+    user: "${HF2L_SERVICE_UID:?Run stack.py init first}:${HF2L_SERVICE_GID:?Run stack.py init first}"
+    env_file: ${HF2L_RUNTIME_DIR:?Run stack.py init first}/exchange.env
+    volumes:
+      - ${HF2L_RUNTIME_DIR}/service-ca.crt:/run/hf2l/service-ca.crt:ro
+    security_opt: [no-new-privileges:true]
+    networks: [federation]
 
 networks:
   federation:

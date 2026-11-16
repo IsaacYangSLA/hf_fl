@@ -14,7 +14,8 @@
   <div class="shell">
     <aside class="sidebar" aria-label="Job manager navigation">
       <a class="brand" href="#current"><span class="brand-mark" aria-hidden="true">H</span><span>HF²L<span class="brand-caption">Job manager</span></span></a>
-      <nav aria-label="Jobs">
+      <nav aria-label="Workspace">
+        <a class="nav-link" href="#studies" data-view="studies">Studies</a>
         <a class="nav-link" href="#current" data-view="current">Current jobs</a>
         <a class="nav-link" href="#queued" data-view="queued">Queue <span id="queue-nav-count" class="nav-count"></span></a>
         <a class="nav-link" href="#history" data-view="history">Job history</a>
@@ -32,10 +33,11 @@
         <section id="login-panel" class="login-panel" hidden>
           <div class="eyebrow">HF²L job manager</div><h1>Federated learning, organized.</h1>
           <p>Sign in to view the jobs you can access, submit new training work, and follow its progress.</p>
-          <a id="login-link" class="button primary" href="/auth/login">Sign in</a>
+          <div class="flex-row"><a id="login-link" class="button primary" href="/auth/login">Sign in</a><a id="signup-link" class="button" href="/signup">Sign up</a></div>
+          <p class="field-help">Use a trusted account, then request to join a study. Org P must approve each participant.</p>
         </section>
         <div id="application" hidden>
-          <section class="page-heading"><div><div class="eyebrow" id="page-eyebrow">Federated learning</div><h1 id="page-title">Current jobs</h1><p id="page-description">Follow active training and resource provisioning.</p></div><div class="heading-actions"><button class="button" id="refresh-button">Refresh</button><button class="button primary" id="create-button" disabled>Create job</button></div></section>
+          <section class="page-heading"><div><div class="eyebrow" id="page-eyebrow">Federated learning</div><h1 id="page-title">Current jobs</h1><p id="page-description">Follow active training and resource provisioning.</p></div><div class="heading-actions"><button class="button" id="refresh-button">Refresh</button><button class="button primary" id="create-study-button" hidden>Create study</button><button class="button primary" id="create-button" disabled>Create job</button></div></section>
           <div id="page-error" class="notice error" role="alert" hidden></div>
           <div id="session-notice" class="notice" role="status" hidden></div>
           <section id="summary" class="summary" aria-label="Accessible job counts"></section>
@@ -46,6 +48,7 @@
           </section>
           <section id="detail-panel" hidden aria-label="Job detail"></section>
           <section id="operations-panel" hidden aria-label="Resource health"></section>
+          <section id="studies-panel" hidden aria-label="Study enrollment"></section>
         </div>
       </main>
       <footer>HF²L <span aria-hidden="true">·</span> <span id="updated-label">Waiting for job manager</span></footer>
@@ -88,6 +91,15 @@
   </dialog>
   <dialog id="member-dialog" aria-labelledby="member-title">
     <form id="member-form"><div class="dialog-header"><h2 id="member-title">Grant job access</h2><button type="button" class="icon-button" data-close="member-dialog" aria-label="Close access form">×</button></div><div id="member-error" class="notice error" role="alert" hidden></div><label class="wide-label">Principal ID<input name="principal_id" required maxlength="256" autocomplete="off"></label><label class="wide-label">Role<select name="role"><option value="reader">Reader · view this job</option><option value="operator">Operator · view and control lifecycle</option><option value="admin">Admin · control lifecycle and access</option></select></label><div class="dialog-footer"><button type="button" class="button" data-close="member-dialog">Cancel</button><button type="submit" class="button primary" id="submit-member">Save access</button></div></form>
+  </dialog>
+  <dialog id="create-study-dialog" aria-labelledby="create-study-title">
+    <form id="create-study-form">
+      <div class="dialog-header"><h2 id="create-study-title">Create study</h2><button type="button" class="icon-button" data-close="create-study-dialog" aria-label="Close study creation form">×</button></div>
+      <p class="field-help">Participant signup starts closed and every participant needs approval. A new study has no training capacity; contact Org S to allocate it before creating jobs.</p>
+      <div id="create-study-error" class="notice error" role="alert" tabindex="-1" hidden></div>
+      <label class="wide-label">Study name<input name="name" required maxlength="200" autocomplete="off"></label>
+      <div class="dialog-footer"><button type="button" class="button" data-close="create-study-dialog">Cancel</button><button type="submit" class="button primary" id="submit-study">Create study</button></div>
+    </form>
   </dialog>
 </body>
 </html>

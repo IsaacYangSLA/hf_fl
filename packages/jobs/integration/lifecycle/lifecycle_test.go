@@ -551,6 +551,9 @@ func TestNativeGoFederatedLifecycle(t *testing.T) {
 	if e = json.Unmarshal(data, &c); e != nil {
 		t.Fatal(e)
 	}
+	if !filepath.IsAbs(os.Getenv("HF2L_EXCHANGE_GO_BINARY")) {
+		t.Fatal("set HF2L_EXCHANGE_GO_BINARY to an absolute native Exchange executable")
+	}
 	for _, p := range []string{c.Root, c.OwnedRoot, c.Profile, c.Python, c.DatabaseConfig, c.StorageConfig} {
 		if !filepath.IsAbs(p) {
 			t.Fatal("absolute owned paths required")
