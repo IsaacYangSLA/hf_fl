@@ -240,8 +240,14 @@ func TestWebArtifactDownloadChecksMetadataAndNeverExposesStorageCredentials(t *t
 	if e != nil || response.StatusCode != 200 || !bytes.Equal(body, payload) {
 		t.Fatal("download", response.StatusCode, len(body), e)
 	}
-	if !controlled.closed.Load() || controlled.finalChecks.Load() == 0 {
-		t.Fatal("reader not closed or final verification not forced")
+	if controlled.finalChecks.Load() == 0 {
+		t.Fatal("final verification not forced before download completion")
+	}
+	// Reading Content-Length bytes can finish before the handler runs its
+	// deferred Close. Wait for the handler before checking reader cleanup.
+	f.http.Close()
+	if !controlled.closed.Load() {
+		t.Fatal("reader not closed after handler completion")
 	}
 	if response.Header.Get("Content-Type") != "application/octet-stream" || !strings.Contains(response.Header.Get("Content-Disposition"), "model.safetensors") {
 		t.Fatal(response.Header)

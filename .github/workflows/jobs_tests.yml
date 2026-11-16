@@ -68,8 +68,13 @@ jobs:
           import tarfile
           import zipfile
           root = Path.cwd()
+          def source_file(path):
+              return path.is_file() and not any(
+                  part == "__pycache__" or part.endswith((".egg-info", ".dist-info"))
+                  for part in path.parts
+              )
           def package_sources(base):
-              return [path for path in (base / "src").rglob("*") if path.is_file() and
+              return [path for path in (base / "src").rglob("*") if source_file(path) and
                       (path.suffix == ".py" or base == root and
                        ("/static/" in path.as_posix() or "/templates/" in path.as_posix()))]
           for artifact in Path("dist").glob("*.tar.gz"):
@@ -86,18 +91,18 @@ jobs:
                   files = [base / name for name in ("README.md", "pyproject.toml", "MANIFEST.in")]
                   files += list((root / "hf2l").rglob("*.py"))
                   files += [path for path in (root / "examples/first_federation").rglob("*")
-                            if path.is_file() and (path.suffix in {".py", ".json", ".yaml", ".txt"} or
+                            if source_file(path) and (path.suffix in {".py", ".json", ".yaml", ".txt"} or
                             path.name.startswith("Dockerfile") or path.name == "Caddyfile")]
                   files += [path for base in (root / "packages/jobs", root / "packages/exchange")
-                            for path in base.rglob("*") if path.is_file() and
+                            for path in base.rglob("*") if source_file(path) and
                             (path.suffix in {".go", ".json", ".sql", ".md", ".txt"} or path.name in {"go.mod", "go.sum"})]
-                  files += [path for path in (root / "deploy/compose").rglob("*") if path.is_file() and
+                  files += [path for path in (root / "deploy/compose").rglob("*") if source_file(path) and
                             (path.suffix in {".md", ".yaml"} or path.name.startswith("Dockerfile"))]
                   files += [root / "packages/jobs" / name for name in ("README.md", "pyproject.toml", "MANIFEST.in")]
                   files += package_sources(root / "packages/jobs") + package_sources(root / "packages/exchange")
                   files += [path for path in (root / "packages/jobs/src/hf2l_jobs/static").rglob("*")
-                            if path.is_file()]
-                  files += [path for path in (root / "deploy/jobs").rglob("*") if path.is_file() and
+                            if source_file(path)]
+                  files += [path for path in (root / "deploy/jobs").rglob("*") if source_file(path) and
                             (path.suffix in {".py", ".md", ".go", ".json"} or path.name.startswith("Dockerfile") or path.name in {"go.mod", "go.sum"})]
               with tarfile.open(artifact, "r:gz") as archive:
                   members = {entry.name.partition("/")[2]: entry for entry in archive.getmembers() if entry.isfile()}
@@ -117,7 +122,7 @@ jobs:
                   count = 0
                   for name, base in packages.items():
                       for path in base.rglob("*"):
-                          if path.is_file() and path.suffix == ".py":
+                          if source_file(path) and path.suffix == ".py":
                               member = name + "/" + path.relative_to(base).as_posix()
                               assert member in archive.namelist(), f"{artifact.name} missing {member}"
                               assert archive.read(member) == path.read_bytes(), f"{artifact.name} differs at {member}"
