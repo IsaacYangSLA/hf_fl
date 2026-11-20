@@ -1,7 +1,7 @@
 include README.md
 include requirements.txt
 recursive-include docs *.md *.json
-recursive-include examples *.py *.json *.yaml *.txt Caddyfile Dockerfile*
+recursive-include examples *.py *.json *.yaml *.txt *.md Caddyfile Dockerfile*
 recursive-include hf2l *.py
 recursive-include tests *.py *.json *.safetensors *.md
 recursive-include scripts *.py

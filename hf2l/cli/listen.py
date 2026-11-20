@@ -13,6 +13,7 @@ import sys
 import threading
 from urllib.parse import urlsplit, urlunsplit
 
+from hf2l.recovery_client import add_recovery_arguments, make_recovery, source_identity as _source_id
 from hf2l.backends import add_store_arguments, make_store
 from hf2l.plugin_loader import load_plugin, parse_plugin_args, require_callable
 
@@ -73,6 +74,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     owner.add_argument("--require-concurrent-publication", action="store_true",
                        help="Reject a backend without atomic conditional publication")
     add_store_arguments(parser)
+    add_recovery_arguments(parser)
     args = parser.parse_args(argv)
     if args.max_backoff < args.poll_interval:
         parser.error("--max-backoff must be at least --poll-interval")
@@ -95,30 +97,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.plugin_arg and not args.plugin:
         parser.error("--plugin-arg requires --plugin")
     return args
-
-
-def _source_id(store) -> str:
-    """Bind state to the constructed store's effective location and local identity.
-
-    Factory defaults and environment configuration have already been resolved by
-    this point. Credentials are deliberately absent from the location identity.
-    The listener hashes this description before persisting it.
-    """
-    identity = {"backend": store.name}
-    if store.name == "local":
-        identity.update(root=str(Path(store.root).resolve()), principal=store.principal)
-    else:
-        if store.name == "exchange":
-            endpoint = store.client.endpoint
-        else:
-            endpoint = store.api.endpoint
-        parts = urlsplit(endpoint)
-        # A password or token in a URL must neither identify a repository nor be
-        # retained in listener state. Provider endpoints identify their API path.
-        authority = parts.netloc.rsplit("@", 1)[-1].lower()
-        identity["endpoint"] = urlunsplit((parts.scheme.lower(), authority,
-                                            parts.path.rstrip("/"), "", ""))
-    return json.dumps(identity, sort_keys=True, separators=(",", ":"))
 
 
 def _training_id(reference, plugin, options) -> str:
@@ -196,11 +174,15 @@ def main(argv: list[str] | None = None) -> int:
                 configuration_id = "fedavg"
             store = make_store(args.backend, args.token, args.endpoint, principal=args.local_principal)
             if args.role == "client":
+                source_id = _source_id(store)
+                recovery = make_recovery(args, plugin, source_id)
                 listener = ClientListener(store=store, repo_id=args.repo_id, participant=args.participant,
-                                          state_dir=args.state_dir, source_id=_source_id(store), training_id=training_id,
+                                          state_dir=args.state_dir, source_id=source_id, training_id=training_id,
                                           train_model=train_model, options=options, reference=args.reference,
-                                          on_event=_print_event)
+                                          on_event=_print_event, recovery=recovery)
             else:
+                if args.recovery_root is not None or args.recovery_config is not None:
+                    raise ValueError("Recovery settings are for participant training")
                 config = RoundConfig(
                     repo_id=args.repo_id, output_dir=args.state_dir / "unused",
                     selection="discover", publish=True,

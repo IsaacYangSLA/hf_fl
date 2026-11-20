@@ -105,10 +105,23 @@ LAYERS: tuple[Layer, ...] = (
            "hf2l.listener.engine"), STDLIB_ONLY),
     Layer("client listener", ("hf2l.listener",),
           ("hf2l.common", "hf2l.core", "hf2l.checkpoint", "hf2l.client_steps",
-           "hf2l.listener"), STDLIB_ONLY),
+           "hf2l.listener", "hf2l.recovery", "hf2l.recovery_submission"), STDLIB_ONLY),
     Layer("allowlist", ("hf2l.allowlist",),
           ("hf2l.common", "hf2l.hub_helpers"), STDLIB_ONLY),
     Layer("plugin loader", ("hf2l.plugin_loader",), (), STDLIB_ONLY),
+    Layer(
+        "pod execution",
+        ("hf2l.kubernetes",),
+        ("hf2l.checkpoint.format", "hf2l.checkpoint.layout", "hf2l.plugin_loader"),
+        STDLIB_ONLY,
+    ),
+    Layer("checkpoint recovery", ("hf2l.recovery",), (), STDLIB_ONLY),
+    Layer("pod recovery", ("hf2l.kubernetes_recovery",),
+          ("hf2l.kubernetes", "hf2l.recovery", "hf2l.plugin_loader"), STDLIB_ONLY),
+    Layer("participant recovery", ("hf2l.recovery_client",),
+          ("hf2l.recovery", "hf2l.listener.workflow", "hf2l.kubernetes_recovery"), STDLIB_ONLY),
+    Layer("submission recovery", ("hf2l.recovery_submission",),
+          ("hf2l.client_steps",), STDLIB_ONLY),
     Layer("plugins.api", ("hf2l.plugins.api",), ("hf2l.common", "hf2l.core")),
     Layer("plugins", ("hf2l.plugins",),
           ("hf2l.plugins.api", "hf2l.examples", "examples", "hf2l.training", "hf2l.data_utils")),
@@ -132,6 +145,17 @@ LAYERS: tuple[Layer, ...] = (
           ("examples", "hf2l.data_utils", "hf2l.checkpoint_utils")),
     Layer("first federation project contract tests", ("examples.first_federation.tests.test_project",),
           ("examples", "hf2l.data_utils", "hf2l_exchange.client_types", "hf2l_exchange.domain")),
+    Layer(
+        "Kubernetes bootstrap",
+        ("examples.kubernetes.initialize",),
+        (
+            "examples",
+            "hf2l.backends.factory",
+            "hf2l.checkpoint.format",
+            "hf2l.core.protocol",
+            "hf2l.hub_helpers",
+        ),
+    ),
     Layer("installed examples", ("examples",), ("examples", "hf2l.data_utils")),
     Layer("cli", ("hf2l.cli",), ("hf2l",)),
     Layer("legacy commands", LEGACY_COMMANDS, ("hf2l",)),
@@ -162,7 +186,7 @@ LAZY_REGISTRY_PACKAGE = "hf2l.stores"
 COMPATIBILITY_EXPORT_PACKAGE = "hf2l.backends"
 TORCH_IMPORTERS = ("hf2l.checkpoint.safetensors_torch", "hf2l.plugins", "hf2l.examples", "examples", "hf2l.training")
 TORCH_MODULES = ("torch", "safetensors.torch")
-PRINTERS = ("hf2l.cli", "hf2l.examples", "examples", "hf2l_exchange.cli", "hf2l.exchange.cli", "hf2l.training") + LEGACY_COMMANDS
+PRINTERS = ("hf2l.cli", "hf2l.examples", "examples", "hf2l_exchange.cli", "hf2l.exchange.cli", "hf2l.training", "hf2l.kubernetes", "hf2l.recovery_client") + LEGACY_COMMANDS
 
 
 def layer_of(module: str) -> Layer | None:

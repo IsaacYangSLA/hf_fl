@@ -323,3 +323,5 @@ retry can duplicate an operation; unresolved Exchange claims remain subject to
 server fencing and cannot be cleared simply by retrying locally. Never delete
 state to clear an unknown outcome. This provides durable job tracking, not an
 exactly-once delivery guarantee.
+
+For listeners running in organization-owned Kubernetes pods, see the [Kubernetes example](../examples/kubernetes/README.md). Each organization retains its own cluster access and private data.

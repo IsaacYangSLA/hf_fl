@@ -231,7 +231,9 @@ def upload_client_update(
     participant: str,
     num_examples: int,
     training_metadata: dict[str, object] | None = None,
-) -> tuple[PublishResult, dict[str, object]]:
+    *,
+    _reconcile_only: bool = False,
+) -> tuple[PublishResult | None, dict[str, object]]:
     from hf2l.checkpoint_utils import discover_checkpoint, validate_compatible
 
     work_dir = work_dir.resolve()
@@ -323,6 +325,9 @@ def upload_client_update(
                 or not saved["submitted_at"]):
             raise ValueError("Saved publication intent differs from the selected client output")
         submission = saved
+    elif _reconcile_only:
+        store.reconcile_submission(repo_id, trained_dir, None, base_revision=base_revision)
+        return None, {}
     else:
         submission["submission_revision"] = store.new_submission_revision(participant, source_round)
         submission["submitted_at"] = utc_now()
@@ -331,6 +336,10 @@ def upload_client_update(
         write_json(intent_path, submission)
     submission_revision = submission["submission_revision"]
     upload_paths = [*trained.artifact_paths, SUBMISSION_FILE]
+    if _reconcile_only:
+        return store.reconcile_submission(
+            repo_id, trained_dir, upload_paths, base_revision=base_revision,
+        ), submission
     result = store.publish_submission(
         repo_id,
         trained_dir,

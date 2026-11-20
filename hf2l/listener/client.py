@@ -13,6 +13,7 @@ import tempfile
 import time  # Compatibility for callers patching this module's polling clock.
 from pathlib import Path
 
+from hf2l.recovery import TrainingCancelled, TrainingPaused
 from hf2l.common.fs import read_json, write_json
 from hf2l.core.ports import ModelStore
 from hf2l.core.protocol import CLIENT_CONTEXT_FILE, ROUND_FILE, ClientContext, RoundRecord
@@ -39,7 +40,7 @@ credentials and plugin options are never copied into the state document.
 
     def __init__(self, store: ModelStore, *, repo_id: str, participant: str,
                  state_dir: Path, source_id: str, training_id: str, train_model,
-                 options: dict | None = None, reference: str = "main", on_event=None):
+                 options: dict | None = None, reference: str = "main", on_event=None, recovery=None):
         self.store = store
         self.repo_id = _text(repo_id, "repo_id")
         self.participant = _text(participant, "participant")
@@ -49,6 +50,7 @@ credentials and plugin options are never copied into the state document.
         if not callable(train_model):
             raise ListenerStateError("train_model must be callable")
         self.train_model = train_model
+        self.recovery = recovery
         self.options = json.loads(json.dumps({} if options is None else options, allow_nan=False))
         if not isinstance(self.options, dict):
             raise ListenerStateError("Training options must be a JSON object")
@@ -59,6 +61,8 @@ credentials and plugin options are never copied into the state document.
                     "training_hash": _digest(json.dumps(
                         {"trainer": training_id, "options": self.options},
                         sort_keys=True, separators=(",", ":"), allow_nan=False))}
+        if recovery is not None:
+            identity["recovery_profile"] = recovery.compatibility(self.options)
         super().__init__(state_dir=state_dir, identity=identity, on_event=on_event)
 
     def _current_revision(self):
@@ -75,9 +79,11 @@ credentials and plugin options are never copied into the state document.
             raise ValueError("Published round declares a different backend")
         return document.round
 
-    def _is_current(self, job):
+    def _is_current(self, job, work_dir=None):
         if self._current_revision() == job["revision"]:
             return True
+        if self.recovery is not None and work_dir is not None:
+            self.recovery.cancel_obsolete(work_dir, self.options)
         self._finish(job, "skipped", reason="reference_advanced")
         return False
 
@@ -98,10 +104,12 @@ credentials and plugin options are never copied into the state document.
         self._require_open()
         active = self.state["active"]
         job = self.state["jobs"].get(active)
-        if job and job["status"] in {"publishing", "uncertain"}:
+        reconcile = job is not None and job["status"] in {"publishing", "uncertain"}
+        if reconcile and (self.recovery is None or not callable(getattr(self.store, "reconcile_submission", None))):
             raise UncertainSubmission("Submission outcome is unknown; reconcile it and use --resolve-uncertain submitted or retry")
         revision = self._current_revision()
-        if job and job["revision"] != revision:
+        if (job and job["revision"] != revision and not reconcile
+                and not (self.recovery is not None and job["status"] == "training")):
             self._finish(job, "skipped", reason="reference_advanced")
             job = None
         if job is None:
@@ -119,6 +127,22 @@ credentials and plugin options are never copied into the state document.
 
         job_dir = self._job_dir(job)
         work_dir = self._safe(job_dir / "work")
+        if reconcile:
+            from hf2l.recovery_submission import reconcile_saved_submission
+
+            self._check_context(job, work_dir)
+            metadata = read_json(self._safe(job_dir / "training-result.json"))
+            validate_submission(work_dir, self.participant, metadata)
+            try:
+                result = reconcile_saved_submission(self.store, work_dir, self.participant, metadata)
+            except Exception as exc:
+                raise UncertainSubmission("Saved submission has not been reconciled") from exc
+            if result is not None:
+                self._finish(job, "submitted", result=result)
+                return "submitted"
+            if not self._is_current(job):
+                return "skipped"
+            self._set_status(job, "ready")
         if job["status"] in {"pending", "downloading"}:
             self._set_status(job, "downloading")
             self._remove_owned(work_dir)
@@ -130,12 +154,22 @@ credentials and plugin options are never copied into the state document.
             self._set_status(job, "training")
 
         if job["status"] == "training":
-            if not self._is_current(job):
+            if not self._is_current(job, work_dir):
                 return "skipped"
             self._check_context(job, work_dir)
             self._remove_owned(work_dir / "trained_model")
             self._emit("training", job)
-            metadata = train_round(self.train_model, self.options, self.participant, work_dir)
+            trainer = self.train_model if self.recovery is None else self.recovery
+            try:
+                metadata = train_round(trainer, self.options, self.participant, work_dir)
+            except (TrainingPaused, TrainingCancelled) as exc:
+                if self.recovery is None:
+                    raise
+                if isinstance(exc, TrainingCancelled):
+                    self._finish(job, "skipped", reason="cancelled")
+                    return "skipped"
+                self._emit("paused", job)
+                return "paused"
             write_json(self._safe(job_dir / "training-result.json"), metadata)
             self._set_status(job, "ready")
 

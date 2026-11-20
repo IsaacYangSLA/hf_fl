@@ -1,0 +1,16 @@
+{
+  "kubeconfig": "/private/alice/cluster-access",
+  "context": "alice-cluster",
+  "namespace": "hf2l-study",
+  "image": "registry.example.test/hf2l-training:reviewed-release",
+  "plugin": "/opt/hf2l/examples/kubernetes/trainer.py",
+  "dataset_claim": "hf2l-alice-data",
+  "resources": {
+    "requests": {"cpu": "100m", "memory": "128Mi"},
+    "limits": {"cpu": "1", "memory": "512Mi"}
+  },
+  "readiness_timeout_seconds": 120,
+  "training_timeout_seconds": 600,
+  "request_timeout_seconds": 30,
+  "max_transfer_bytes": 67108864
+}

@@ -982,3 +982,5 @@ Local test DNS and CA qualification do **not** verify public certificate
 issuance or reachability from other organizations. Org S must still coordinate
 the external-network checks in step 2 with Org P, Alice, and Bob before
 Org P invites real participants.
+
+For Alice and Bob in their own Kubernetes clusters and Org P in its own cluster, continue with the [Kubernetes example](../kubernetes/README.md). It covers persistent listener pods and temporary prepare/train/cleanup pods.

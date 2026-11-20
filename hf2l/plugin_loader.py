@@ -18,6 +18,7 @@ PLUGIN_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 BUILTIN_PLUGINS = {
     "lenet": "hf2l.plugins.lenet_poc",
     "vgg-cifar10": "hf2l.plugins.vgg_cifar10_poc",
+    "kubernetes": "hf2l.kubernetes",
 }
 
 

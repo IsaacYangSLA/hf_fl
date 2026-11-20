@@ -180,7 +180,12 @@ class ExchangeStore(ModelStore):
             if any(names_collide(name, other) for other in names[index + 1:]):
                 raise ValueError(f"Attachment {name!r} collides with another attachment in record {record['id']}")
 
-    def _publish(self, repo_id, folder, paths, kind, base=None, extra=None):
+    @staticmethod
+    def _upload_state_path(folder):
+        folder = Path(folder)
+        return folder.parent / (folder.name + ".exchange-upload.json")
+
+    def _publish(self, repo_id, folder, paths, kind, base=None, extra=None, *, reconcile_only=False):
         self._require_profile(repo_id)
         files, inline, extra, complete = {}, {}, dict(extra or {}), None
         for name in checked_file_paths(folder, paths):
@@ -215,9 +220,10 @@ class ExchangeStore(ModelStore):
                 repo_id, kind=kind, schema_revision_id=schema.id,
                 metadata={INLINE_FILES_KEY: inline, **extra}, files=files,
                 verification_seconds=self.wait_seconds,
-                state_path=Path(folder).parent / (Path(folder).name + ".exchange-upload.json"),
+                state_path=self._upload_state_path(folder),
+                **({"reconcile_only": True} if reconcile_only else {}),
             )
-            return record.id
+            return record.id if record is not None else None
 
     @staticmethod
     def _bound_round(folder, files, inline, extra):
@@ -242,6 +248,19 @@ class ExchangeStore(ModelStore):
             raise ValueError("Participant must match the authenticated membership")
         revision = self._publish(repo_id, folder, paths, "training.update", base_revision)
         return PublishResult(revision, resolved_revision=revision)
+
+    def reconcile_submission(self, repo_id, folder, paths, *, base_revision):
+        """Return the already published submission described by the saved intent."""
+        if paths is None:
+            # Without a saved intent the uploader must not have contacted Exchange.
+            state_path = self._upload_state_path(folder)
+            if state_path.exists() or state_path.is_symlink():
+                raise ValueError("Saved upload operation has no publication intent")
+            return None
+        revision = self._publish(
+            repo_id, folder, paths, "training.update", base_revision, reconcile_only=True,
+        )
+        return PublishResult(revision, resolved_revision=revision) if revision is not None else None
 
     @staticmethod
     def _candidate(record):

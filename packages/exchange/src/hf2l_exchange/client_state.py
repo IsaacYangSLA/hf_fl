@@ -63,7 +63,8 @@ class StateRepository:
             if os.path.exists(temporary):
                 os.unlink(temporary)
 
-    def begin(self, operation, identity, *, idempotency_key=None) -> dict:
+    def lookup(self, operation, identity, *, idempotency_key=None) -> dict:
+        """Read matching saved operation state without starting an operation."""
         expected = fingerprint([operation, identity])
         state = self.load()
         if state:
@@ -72,6 +73,13 @@ class StateRepository:
             if idempotency_key is not None and state.get("key") != idempotency_key:
                 raise ExchangeError(409, "operation_key_mismatch")
             return state
+        return {}
+
+    def begin(self, operation, identity, *, idempotency_key=None) -> dict:
+        state = self.lookup(operation, identity, idempotency_key=idempotency_key)
+        if state:
+            return state
+        expected = fingerprint([operation, identity])
         state = {"version": 1, "operation": operation, "fingerprint": expected,
                  "key": idempotency_key or uuid.uuid4().hex}
         self.save(state)

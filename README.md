@@ -244,3 +244,5 @@ contracts, and historical records.
 Raw datasets stay with participants; model updates are shared with authorized
 readers and trusted service administrators. The beginner example does not
 provide secure aggregation or differential privacy.
+
+For organization-owned training and aggregation pods, see the [Kubernetes example](examples/kubernetes/README.md).

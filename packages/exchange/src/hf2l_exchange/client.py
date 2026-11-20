@@ -311,7 +311,11 @@ class ExchangeClient:
             "/acquisitions/" + quote(handle.id, safe="") + "/complete"), body=body, headers=self._key(state["key"])))
 
     def put_record(self, space, *, kind, metadata, schema_revision_id=None, type_revision=None,
-                   files=None, state_path=None, upload_seconds=86400, verification_seconds=3600):
+                   files=None, state_path=None, upload_seconds=86400,
+                   verification_seconds=3600, reconcile_only=False):
+        """Publish a record, or look up an exact known publication without writes."""
+        if reconcile_only and state_path is None:
+            raise ValueError("Publication reconciliation requires saved operation state")
         revision = schema_revision_id or type_revision
         if not revision:
             raise ValueError("schema_revision_id is required")
@@ -328,6 +332,21 @@ class ExchangeClient:
                        for name, path in sorted(files.items())]
         identity = [self.endpoint, space, kind, revision, metadata, attachments]
         repository = StateRepository(state_path)
+        if reconcile_only:
+            state = repository.lookup("put_record", identity)
+            if not state and Path(state_path).exists():
+                raise ValueError("Saved publication operation state is empty")
+            if "record_id" not in state:
+                # The SDK saves a record ID before making any publication request.
+                return None
+            record = self.get_record(space, state["record_id"])
+            actual = sorted((item.path, item.size, item.sha256) for item in record.attachments)
+            expected = [(item["path"], item["size"], item["sha256"]) for item in attachments]
+            if (record.id != state["record_id"] or record.space_id != space or record.kind != kind
+                    or record.schema_revision_id != revision or record.metadata != metadata
+                    or actual != expected):
+                raise ExchangeError(409, "publication_result_mismatch")
+            return record if record.state == "published" else None
         state = repository.begin("put_record", identity)
         deadline = time.monotonic() + upload_seconds
         if "record_id" not in state:
