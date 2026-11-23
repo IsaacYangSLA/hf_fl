@@ -11,8 +11,20 @@ import json
 from pathlib import Path
 import re
 import sys
-import httpx
 from urllib.parse import quote
+
+if sys.version_info < (3, 14, 0, "final", 0) or sys.version_info >= (3, 16):
+    message = (
+        "The HF²L export utility requires Python 3.14 or 3.15. "
+        f"Running Python {sys.version.split()[0]}. "
+        "Create and use a virtual environment with a supported Python version."
+    )
+    if __name__ == "__main__":
+        raise SystemExit(message)
+    raise RuntimeError(message)
+
+import httpx
+
 try:
     from .jobs_client import API, JobsClient, JobsClientError, atomic_json, private_directory
 except ImportError:

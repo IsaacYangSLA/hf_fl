@@ -17,9 +17,19 @@ import platform
 import re
 import stat
 import subprocess
+import sys
 import tarfile
 import time
 import urllib.request
+
+
+if sys.version_info < (3, 14, 0, "final", 0) or sys.version_info >= (3, 16):
+    raise SystemExit(
+        "The HF²L job runtime tools require Python 3.14 or 3.15. "
+        f"Running Python {sys.version.split()[0]}. "
+        "Run this command with python3.14 or python3.15."
+    )
+
 
 RELEASE = "20261005.0"
 ARCHIVE_SHA512 = "79869ae9a589355a46d46fdac068d9a954e741741ffe77c64e38c56ea955498c1cb04e9bce44e1cce5155333e6b76bee72347c6661bb7c78fd2fe3aad198c8fe"

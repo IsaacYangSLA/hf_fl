@@ -14,22 +14,29 @@ each participant and the aggregator.
 The HF²L application, Exchange client library, and job execution adapters require
 Python 3.14 or 3.15. Exchange and job-manager servers are Go programs; build
 them with Go 1.26 or later or use the [Go Compose guide](../deploy/compose/go/README.md).
-Python 3.13 and earlier are not supported.
-Create a local environment in this source checkout. Base installation supports
-NumPy/SafeTensors processing and the local backend; install the extras used by
-your application:
+From the repository root, prepare `.venv`, a directory with its own Python
+commands and packages, using the versioned `python3.14` command. Substitute
+`python3.15` to use Python 3.15. The `&&` runs the package installer only
+after the setup helper succeeds. If your existing environment is rejected,
+follow the [source installation instructions](../README.md#install-from-source)
+to preserve it and create a fresh one.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -e .
-# Hugging Face and the training examples used below:
-.venv/bin/python -m pip install -e '.[hf,examples]'
+python3.14 scripts/setup_venv.py .venv &&
+  .venv/bin/python -m pip install -e .
 ```
 
+Base installation includes NumPy/SafeTensors processing and the local backend.
+For Hugging Face and the training examples below, run
+`.venv/bin/python -m pip install -e '.[hf,examples]'`.
 For JFrog, use `.venv/bin/python -m pip install -e '.[jfrog,examples]'`.
 Torch alone is available through `.[torch]`; it is required for Torch training
 and BF16 aggregation. BF16 owners must also select `--array-backend torch`;
-installing Torch does not change the CLI's NumPy default. These integration
+installing Torch does not change the CLI's NumPy default. Use a PyTorch build
+compatible with your selected Python and platform. Native Intel Mac wheels
+are unavailable for these Python versions. [PyTorch platform guidance](../README.md#install-from-source)
+
+These integration
 changes are unreleased; earlier published packages do not necessarily expose the interfaces described here.
 
 The Exchange software development kit (SDK) is the Python client library.
@@ -838,19 +845,23 @@ git tag 0.1.1
 git push origin 0.1.1
 ```
 
-Build from that clean, exact tag using the project virtual environment:
+Build from that clean, exact tag using the project virtual environment.
+Use `python3.15` in place of `python3.14` if you selected Python 3.15.
 
 ```bash
-.venv/bin/python -m pip install -e '.[build]'
-.venv/bin/python -m build
-.venv/bin/python -m twine check dist/*
+python3.14 scripts/setup_venv.py .venv &&
+  .venv/bin/python -m pip install -e '.[build]' &&
+  .venv/bin/python -m build &&
+  .venv/bin/python -m twine check dist/*
 ```
 
-Install the resulting wheel into another environment with:
+From the same checkout, choose a new consumer environment path in place of
+`/path/to/consumer-venv`. Replace `VERSION` with the version in the built wheel's
+filename. The `&&` runs the installation only after setup succeeds.
 
 ```bash
-python3 -m venv /path/to/consumer-venv
-/path/to/consumer-venv/bin/python -m pip install dist/hf2l-VERSION-py3-none-any.whl
+python3.14 scripts/setup_venv.py /path/to/consumer-venv &&
+  /path/to/consumer-venv/bin/python -m pip install dist/hf2l-VERSION-py3-none-any.whl
 ```
 
 At a release tag, the wheel uses that exact version. Between tags,
@@ -880,13 +891,20 @@ For example, `hf2l-client-download` is equivalent to
 No live Hugging Face account is needed for the local suites. Go 1.26 or later
 must be on `PATH`, the list of directories searched for executable commands.
 Native integration tests launch a prebuilt Exchange server in temporary
-directories; they do not build it automatically. Install the three editable
-Python distributions and their testing/training dependencies first:
+directories; they do not build it automatically. Set up the virtual environment
+and install the three editable Python distributions and their testing and
+training dependencies. Substitute `python3.15` if you selected Python 3.15.
 
 ```bash
-.venv/bin/python -m pip install -e './packages/exchange' \
-  -e './packages/jobs[build]' \
-  -e '.[torch,hf,examples,exchange,exchange-test]'
+python3.14 scripts/setup_venv.py .venv &&
+  .venv/bin/python -m pip install -e './packages/exchange' \
+    -e './packages/jobs[build]' \
+    -e '.[torch,hf,examples,exchange,exchange-test]'
+```
+
+Continue after installation succeeds.
+
+```bash
 mkdir -p work/native
 (cd packages/exchange && go build -o "$PWD/../../work/native/hf2l-exchange" ./cmd/hf2l-exchange)
 export HF2L_EXCHANGE_GO_BINARY="$PWD/work/native/hf2l-exchange"

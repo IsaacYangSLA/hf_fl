@@ -47,15 +47,26 @@ Private updates are accessible to their author and the authorized owner.
 ## 1. Install in the source checkout
 
 Use Python 3.14 or 3.15 for the application and Go 1.26 or later to build the
-Exchange server. Run every command below from the repository root
-using the project `.venv`. In this quick start, terminals A–D are on the
-same trusted operator's machine and share this installation. Create it if it
-does not exist:
+Exchange server. Run the commands from the repository root. In this quick
+start, terminals A–D are on the same trusted operator's machine and share
+`.venv`, the directory containing this project's Python commands and packages.
+Use the versioned `python3.14` command below, or substitute `python3.15` if you
+have compatible PyTorch packages for it. The `&&` runs the next command only
+after setup succeeds. If setup rejects an existing environment, follow the
+[source installation instructions](../../README.md#install-from-source).
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install --upgrade pip
-# CPU PyTorch; skip this line if the environment already has suitable PyTorch.
+python3.14 scripts/setup_venv.py .venv &&
+  .venv/bin/python -m pip install --upgrade pip
+```
+
+Continue after setup succeeds. The first command installs PyTorch for the CPU
+from PyTorch's package server. Skip it if the checked environment already has
+a suitable PyTorch installation. On an Intel-based Mac, run this example in
+a Linux environment with compatible PyTorch packages.
+[PyTorch platform guidance](../../README.md#install-from-source)
+
+```bash
 .venv/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
 .venv/bin/python -m pip install -e ./packages/exchange \
   -e '.[examples,exchange,exchange-test]' \

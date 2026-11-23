@@ -15,8 +15,8 @@ owned data. No Python server implementation is installed or imported.
   allowed to create and drop owned schemas.
 - Supply a dedicated S3 test endpoint with credentials allowed to create,
   version, inspect and remove owned buckets.
-- Use Python with the current Exchange package, HTTPX, Cryptography, PyJWT,
-  Psycopg and Boto3. These are client and test-operation dependencies; the
+- Use a Python 3.14 or 3.15 environment with the current Exchange package,
+  HTTPX, Cryptography, PyJWT, Psycopg, and Boto3. These are client and test-operation dependencies; the
   Python package contains no server implementation.
 - Create a mode-`0700` evidence root. Keep all settings and secrets outside Git.
 

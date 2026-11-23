@@ -19,15 +19,21 @@ TLS certificate, hostname, and strict chain-purpose checks remain enabled. By de
 
 ## Run an export
 
-Install HTTPX, the Python library used for the utility’s web requests, in a Python 3.14 or 3.15 environment. The Python execution-adapter package does not install this utility dependency. Run these commands from the repository checkout:
+Install HTTPX, the Python library used for the utility's web requests, in
+`.venv`, a directory with its own Python commands and packages. The setup
+helper creates or verifies it. Use `python3.14`, or substitute `python3.15` to
+use Python 3.15. Each `&&` runs the next command only after the preceding
+command succeeds. Run from the repository root.
+[Source installation instructions](../README.md#install-from-source)
 
 ```sh
-python -m pip install "httpx>=0.27,<1"
-python -m tools.export_jobs \
-  --manager-url https://manager.example.invalid \
-  --session-file /private/job-session.json \
-  --output /private/job-exports \
-  --ca-file /private/service-ca.pem
+python3.14 scripts/setup_venv.py .venv &&
+  .venv/bin/python -m pip install "httpx>=0.27,<1" &&
+  .venv/bin/python -m tools.export_jobs \
+    --manager-url https://manager.example.invalid \
+    --session-file /private/job-session.json \
+    --output /private/job-exports \
+    --ca-file /private/service-ca.pem
 ```
 
 Replace the example paths and origin with the deployment's approved values. The output directory must be private and owned by the current user. Omit `--ca-file` for a service trusted by the system CA roots.

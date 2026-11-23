@@ -43,11 +43,15 @@ go -C packages/exchange build -trimpath -o ../../dist/hf2l-exchange ./cmd/hf2l-e
 Install that executable at the service account's configured command path. The
 commands below use the repository build at `./dist/hf2l-exchange`.
 
-SDK-only clients install `./packages/exchange`; it supplies no server command:
+SDK-only clients install `./packages/exchange` from the repository root with
+Python 3.14 or 3.15. The setup helper creates or verifies `.venv`, the
+directory with the client's Python commands and packages. Substitute
+`python3.15` to select Python 3.15. The `&&` runs installation after
+successful setup. [Source installation instructions](../README.md#install-from-source)
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install ./packages/exchange
+python3.14 scripts/setup_venv.py .venv &&
+  .venv/bin/python -m pip install ./packages/exchange
 ```
 
 The client library and Go server need no machine-learning libraries. PostgreSQL

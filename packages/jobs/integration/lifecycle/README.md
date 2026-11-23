@@ -20,8 +20,9 @@ it does not implement a server, scheduler, controller, executor, or gateway.
   may create/delete a unique test bucket. Never point this gate at production.
 - Build the native Go Exchange executable and set `HF2L_EXCHANGE_GO_BINARY`
   to its absolute, operator-owned regular executable path.
-- Install the Python Exchange client package, HTTPX, Boto3, Cryptography, PyJWT,
-  Psycopg, NumPy, and SafeTensors into the fixture Python environment.
+- Install the Python Exchange client package, HTTPX, Boto3, Cryptography,
+  PyJWT, Psycopg, NumPy, and SafeTensors into a Python 3.14 or 3.15 test
+  environment.
 - Keep the runtime and test files on an owned local filesystem; grant only the
   sudo operations required by the documented qualified runtime/source fetcher.
 

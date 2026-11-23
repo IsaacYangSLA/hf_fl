@@ -394,8 +394,9 @@ In addition to the qualified runtime and imported worker image, prepare:
 - Operator-owned S3 credentials permitted to create and remove a unique test
   bucket, including versions and multipart uploads.
 - The native Exchange executable selected by `HF2L_EXCHANGE_GO_BINARY`.
-- A fixture Python environment with the Exchange SDK, Boto3, Cryptography,
-  PyJWT, Psycopg, NumPy, and SafeTensors for setup and application checks.
+- A Python 3.14 or 3.15 test environment with the Exchange SDK, Boto3,
+  Cryptography, PyJWT, Psycopg, NumPy, and SafeTensors for setup and
+  application checks.
 - Only the required runtime/source-fetch sudo permissions and an owned local
   filesystem with enough capacity for concurrent execution and retained state.
 

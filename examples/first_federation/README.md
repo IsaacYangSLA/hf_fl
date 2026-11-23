@@ -143,6 +143,10 @@ Python 3.14 with venv, package-index access for installation, browser access
 use POSIX file locking and permissions; native Windows is not supported.
 Participants install **no server stack or Docker**.
 
+Install the versioned `python3.14` command on each machine. It selects the
+Python release used by this walkthrough and can be installed alongside the
+system Python. [Python installation and environment setup](../../README.md#install-from-source)
+
 Replace all example DNS names with Org S's actual names. Use publicly trusted
 HTTPS certificates; never disable verification. Private internal TLS is an
 explicit alternative for an exercise with configured DNS and CA trust; follow
@@ -151,24 +155,31 @@ the public setup.
 
 ### Install one exact source revision independently
 
-Org P selects a reviewed commit **containing this example** and sends everyone
-its full 40-character `SOURCE_REVISION`. Do not use a moving `main` as the
-version. These development interfaces may be newer than published packages.
+Org P selects a reviewed commit containing this example and
+`scripts/setup_venv.py` and sends everyone its full 40-character
+`SOURCE_REVISION`. These development interfaces may be newer than published
+packages. The setup helper creates or verifies `.venv`, a directory with its
+own Python commands and packages. The `&&` between commands runs the next
+step only after the preceding step succeeds.
 
 ~~~bash
 export SOURCE_REVISION='<full-commit-ID-containing-this-example>'
 git clone https://github.com/IsaacYangSLA/hf_fl.git
 cd hf_fl
 git checkout --detach "$SOURCE_REVISION"
-test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"
-python3.14 -m venv .venv
-. .venv/bin/activate
-python -m pip install . ./packages/exchange 'PyJWT[crypto]>=2.9,<3'
+test "$(git rev-parse HEAD)" = "$SOURCE_REVISION" &&
+  python3.14 scripts/setup_venv.py .venv &&
+  . .venv/bin/activate &&
+  python -m pip install . ./packages/exchange 'PyJWT[crypto]>=2.9,<3'
 export EXAMPLE=examples/first_federation
 export EXCHANGE_ENDPOINT=https://exchange.example.org
 export ISSUER=https://auth.example.org/realms/hf2l
 export OBJECTS_ENDPOINT=https://objects.example.org
 ~~~
+
+If setup rejects your existing `.venv`, deactivate it if active, move it to an
+unused backup path, and repeat the setup and installation steps. Continue
+only after installation succeeds.
 
 The shared install includes Cryptography, a Python library used by Org S's setup
 helper to create private connection certificates. Storage administration uses a
@@ -940,9 +951,9 @@ root. **Input:** a fresh private runtime directory and qualification tools.
 **Success:** the verifier reports completed gates in its private summary.
 **Handoff:** sanitized results, never credentials or the private evidence tree.
 
-This is not required for Alice and Bob. Install Playwright in a separate test
-environment containing the client dependencies above; provide Chromium and
-`certutil`. Configure local test DNS (or hosts entries) so these names resolve
+This is not required for Alice and Bob. Install Playwright in a separate
+Python 3.14 test environment containing the client dependencies above.
+Provide Chromium and `certutil`. Configure local test DNS (or hosts entries) so these names resolve
 to loopback:
 
 ~~~text

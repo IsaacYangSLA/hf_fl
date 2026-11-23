@@ -6,6 +6,7 @@ import argparse
 import copy
 import json
 from pathlib import Path
+import sys
 from urllib.parse import urlsplit
 
 
@@ -115,6 +116,13 @@ def manifests(
 
 
 def main() -> None:
+    if sys.version_info < (3, 14, 0, "final", 0) or sys.version_info >= (3, 16):
+        raise SystemExit(
+            "Rendering HF²L Kubernetes resources requires Python 3.14 or 3.15. "
+            f"Running Python {sys.version.split()[0]}. "
+            "Run this command with python3.14 or python3.15."
+        )
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--role", choices=["alice", "bob", "owner"], required=True)
     parser.add_argument("--image", required=True)

@@ -69,8 +69,10 @@ Each organization needs:
   a storage class tells Kubernetes how to obtain persistent disks.
 - A way for its nodes to pull the reviewed training image. Configure a private
   registry's pull credentials locally when required; do not share them with Org S.
-- Python 3.14 or 3.15 on the administrative workstation for the renderer below.
-  Docker, an image-building tool, is needed where the example image is built.
+- Python 3.14 or 3.15 on the administrative workstation. The renderer below
+  uses the versioned `python3.14` command to create configuration files.
+  Substitute `python3.15` to select Python 3.15. Docker, an image-building
+  tool, is needed where the example image is built.
 - Its own Exchange account token in a private file and the public certificate
   authority bundle supplied by Org S. A token proves the account's identity;
   a certificate authority bundle identifies trusted encrypted service endpoints.
@@ -131,7 +133,7 @@ export SPACE_ID=your-existing-exchange-space
 export ENDPOINT=https://exchange.example.test
 export OUT="$HOME/hf2l-kubernetes-$ROLE"
 kubectl --context "$CONTEXT" create namespace "$NAMESPACE"
-python examples/kubernetes/configure.py --role "$ROLE" \
+python3.14 examples/kubernetes/configure.py --role "$ROLE" \
   --image "$TRAINING_IMAGE" --space "$SPACE_ID" --endpoint "$ENDPOINT" \
   --output-dir "$OUT"
 ```
@@ -287,8 +289,9 @@ local client; the temporary training pod receives no Exchange or cluster token.
 Do not also run that participant's persistent listener against the same round.
 
 Install the current HF²L client and Exchange client as described in the
-[first-federation guide](../first_federation/README.md). `kubectl` must be available
-on this local client. Make a private copy of `alice-pod.example.json` and adapt it
+[first-federation guide](../first_federation/README.md). Run the following host
+commands from that repository root with the `.venv` environment created
+there. `kubectl` must be available on this local client. Make a private copy of `alice-pod.example.json` and adapt it
 for your own role. This configuration uses JSON fields: `kubeconfig` names your
 absolute cluster-connection file; `context` selects its connection; `namespace`
 selects the target resource group; `image` names the reviewed worker;
@@ -314,7 +317,7 @@ export OPTIONS_FILE="$HOME/private/round/options.json"
 cat > "$OPTIONS_FILE" <<'EOF'
 {"pod_config": "/private/alice/pod.json", "dataset": "/data/private-data.npz"}
 EOF
-python -m hf2l.kubernetes run --base-dir "$BASE_DIR" \
+.venv/bin/python -m hf2l.kubernetes run --base-dir "$BASE_DIR" \
   --output-dir "$TRAINED_DIR" --options-file "$OPTIONS_FILE"
 ```
 
@@ -327,10 +330,10 @@ training. The adapter records the selected attempt beside the base directory;
 do not delete that record to retry an uncertain operation.
 
 ```sh
-python -m hf2l.kubernetes pre --base-dir "$BASE_DIR" \
+.venv/bin/python -m hf2l.kubernetes pre --base-dir "$BASE_DIR" \
   --output-dir "$TRAINED_DIR" --options-file "$OPTIONS_FILE"
-python -m hf2l.kubernetes train --base-dir "$BASE_DIR"
-python -m hf2l.kubernetes post --base-dir "$BASE_DIR"
+.venv/bin/python -m hf2l.kubernetes train --base-dir "$BASE_DIR"
+.venv/bin/python -m hf2l.kubernetes post --base-dir "$BASE_DIR"
 ```
 
 An external three-step runner must call `cleanup --base-dir "$BASE_DIR"` when
@@ -502,7 +505,8 @@ kubectl --context "$CONTEXT" --namespace "$NAMESPACE" apply -f "$OUT/listener.js
 
 `kubectl exec` runs a command in an existing pod. The target
 `deployment/$LISTENER` selects the listener's deployment. The two hyphens
-`--` end the Kubernetes options. Python's `-m` option runs the named module.
+`--` end the Kubernetes options. The `python` command here is Python 3.14
+inside the example image. Its `-m` option runs the named module.
 Here `hf2l.recovery_client` is the participant's recovery control command,
 `status` displays saved work, and `--root` gives the private directory to
 inspect. The response contains `work_id`, the identifier of an exact round
@@ -627,7 +631,7 @@ exact published model version. The following values configure the command.
   command on the next line.
 
 ```sh
-python -m hf2l.client_train --backend exchange --repo-id "$SPACE_ID" \
+.venv/bin/python -m hf2l.client_train --backend exchange --repo-id "$SPACE_ID" \
   --participant "$ROLE" --work-dir "$ROUND_WORK" --base-revision "$BASE_REVISION" \
   --plugin kubernetes --plugin-arg pod_config="$POD_CONFIG" \
   --plugin-arg dataset=/data/private-data.npz \

@@ -29,12 +29,15 @@ adapters and their immutable input contracts. A sandbox is the isolated executio
 environment that constrains a job's files, resource use, and network access.
 Python 3.14 or 3.15 is required.
 
-Install the adapter package in the approved training image, alongside the HF²L
-application and Exchange client library. From the repository root:
+Install the adapter package alongside the HF²L application and Exchange
+client library when building the approved training image. The
+[deployment image build](../../deploy/jobs/README.md#build-the-trusted-runtime-image)
+selects Python 3.14. For a manual installation from the repository root in
+the image build environment, `python3.14` selects the same Python release.
 
 ```sh
-python -m pip install ./packages/jobs
-python -m hf2l_jobs.runtime --help
+python3.14 -m pip install ./packages/jobs
+python3.14 -m hf2l_jobs.runtime --help
 ```
 
 The equivalent installed command is `hf2l-jobs-runtime`. There is no Python

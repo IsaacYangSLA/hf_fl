@@ -121,20 +121,31 @@ weighting. Additional algorithms and checkpoint formats require implementation.
 HF²L, the Exchange Python client library, and the isolated training/build adapters
 require **Python 3.14 or 3.15**. The native [Go Exchange service](docs/GO_EXCHANGE.md)
 and [Go manager](docs/GO_JOB_MANAGER.md) build separately on Linux with Go 1.26 or later.
-The beginner walkthrough uses **Python 3.14** and lists its host prerequisites.
-Python 3.13 and earlier are not supported by HF²L. Optional ML dependencies must also support
-your selected Python version.
+The beginner walkthrough uses **Python 3.14**. Install the versioned
+command `python3.14` alongside your system Python. On Linux, one option is
+`uv python install 3.14`, where uv is a tool for installing Python versions.
+Follow its guide to make the installed command available in your shell.
+[Python downloads](https://www.python.org/downloads/)
+[uv's Python installation guide](https://docs.astral.sh/uv/guides/install-python/)
 
-From the repository root:
+A virtual environment is a directory with its own Python commands and packages.
+From the repository root, `scripts/setup_venv.py` checks the Python version and
+creates or verifies the `.venv` environment. Substitute `python3.15` to select
+Python 3.15. The existing environment's Python release must match the selected
+release. Each `&&` runs the next command only if the preceding command succeeds.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -e .
-.venv/bin/hf2l --help
+python3.14 scripts/setup_venv.py .venv &&
+  .venv/bin/python -m pip install -e . &&
+  .venv/bin/hf2l --help
 ```
 
-This installs the NumPy/SafeTensors core and local backend. Add the packages
-needed for your chosen workflow:
+If setup rejects an existing `.venv`, deactivate it if active, move it to an
+unused backup path, and rerun setup. You can also pass a new directory and
+use it in place of `.venv` in subsequent commands.
+
+The base installation includes the NumPy/SafeTensors core and local backend.
+Add the packages needed for your chosen workflow:
 
 | Need | Install into the same environment |
 | --- | --- |
@@ -142,6 +153,11 @@ needed for your chosen workflow:
 | JFrog integration | `.venv/bin/python -m pip install -e '.[jfrog]'` |
 | Torch and bundled training plugins | `.venv/bin/python -m pip install -e '.[examples]'` |
 | HF²L with Exchange | `.venv/bin/python -m pip install -e ./packages/exchange -e '.[exchange]'` |
+
+Optional dependencies must support your Python version and platform. PyTorch,
+the library used by the bundled training examples, has no upstream prebuilt
+packages for Intel-based Macs on Python 3.14 or 3.15. Use a supported Linux
+environment for those examples. [PyTorch's Intel Mac support announcement](https://dev-discuss.pytorch.org/t/pytorch-macos-x86-builds-deprecation-starting-january-2024/1690)
 
 Installing a package does not deploy its services. Follow the beginner
 walkthrough or the relevant operator guide. Generic Exchange clients can install

@@ -60,11 +60,15 @@ file and does not depend on parsing evaluation output.
 
 ## Run the HTTPS relay
 
-On the relay host, install this checkout and a WSGI server in its project venv:
+On the relay host, use Python 3.14 or 3.15 and run from the repository root.
+The setup helper creates or verifies `.venv`, a directory with its own Python
+commands and packages. Substitute `python3.15` to use Python 3.15. The `&&`
+runs the installation of Gunicorn, the web server for the relay, after setup
+succeeds. [Source installation instructions](../README.md#install-from-source)
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install gunicorn
+python3.14 scripts/setup_venv.py .venv &&
+  .venv/bin/python -m pip install gunicorn
 ```
 
 Set these environment variables through your host's secret/configuration

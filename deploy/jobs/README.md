@@ -96,15 +96,14 @@ For an IP endpoint use `-verify_ip` with its actual address. Include approved in
 
 ## CPU runtime setup
 
-The administrator helper `runtime/setup.py` requires Linux x86_64, Python 3.14 or 3.15, cgroup v2, Docker, systemd, and approved noninteractive `sudo` access to the explicit runtime operations. The manager server is built with Go 1.26 or later. Its Python execution-adapter
-package supports Python 3.14 and 3.15.
+The administrator helper `runtime/setup.py` requires Linux x86_64, Python 3.14 or 3.15, cgroup v2, Docker, systemd, and approved noninteractive `sudo` access to the explicit runtime operations. The examples use the versioned `python3.14` command. You can use `python3.15` for runtime administration and qualification. The worker image build below targets Python 3.14. The manager server builds with Go 1.26 or later.
 
 Choose a new short absolute runtime directory owned by the operator, at least three path components below `/`, with enough space for its dedicated Docker data and bounded job volumes. Unix socket path limits apply. The helper refuses system Docker roots and foreign/unmarked directories. Verified runtime executables are staged in an owned `/opt/hf2l-jobs-runtime-<id>` directory so unprivileged runtime sidecars can traverse them without broadening private home-directory permissions. It neither rewrites `/etc/docker` nor restarts the system Docker service.
 
 ```sh
-python3 deploy/jobs/runtime/setup.py install --root /srv/hf2l/runtime
-python3 deploy/jobs/runtime/setup.py start --root /srv/hf2l/runtime
-python3 deploy/jobs/runtime/setup.py status --root /srv/hf2l/runtime
+python3.14 deploy/jobs/runtime/setup.py install --root /srv/hf2l/runtime
+python3.14 deploy/jobs/runtime/setup.py start --root /srv/hf2l/runtime
+python3.14 deploy/jobs/runtime/setup.py status --root /srv/hf2l/runtime
 ```
 
 The install pins official gVisor release `20261005.0`, downloaded over HTTPS and verified against both a hard-coded SHA-512 and the official HTTPS checksum. This is checksum verification, not a signature claim.
@@ -132,7 +131,7 @@ The deployment builder `runtime/build_image.py` stages the trusted training appl
 The image builder targets CPython 3.14/`cp314`, with CPU Torch `2.14.1+cpu`; other Python/image ABI combinations require qualification. Preload and independently approve the immutable Python 3.14 base image in the owned daemon. Pass the deployment's actual operator-approved immutable local base image ID with `--base-image`; the builder requires it explicitly and does not assume a previously qualified image exists.
 
 ```sh
-python3 deploy/jobs/runtime/build_image.py \
+python3.14 deploy/jobs/runtime/build_image.py \
   --docker-host unix:///srv/hf2l/runtime/docker.sock \
   --base-image sha256:YOUR_ACTUAL_APPROVED_BASE_IMAGE_DIGEST \
   --python /usr/bin/python3.14 \
@@ -243,7 +242,7 @@ Approve those project hashes against the recorded frozen source/build provenance
 Set the variables below to the approved cache directories and full source commit, then run from the unchanged frozen checkout:
 
 ```sh
-python3 deploy/jobs/runtime/build_image.py \
+python3.14 deploy/jobs/runtime/build_image.py \
   --docker-host unix:///srv/hf2l/runtime/docker.sock \
   --base-image sha256:YOUR_ACTUAL_APPROVED_BASE_IMAGE_DIGEST \
   --source-commit "$HF2L_SOURCE_COMMIT" \
@@ -264,7 +263,7 @@ Use the resulting worker `image_id` in runtime qualification, then approve that 
 Run adversarial qualification against the owned daemon and approved runtime image:
 
 ```sh
-python3 deploy/jobs/runtime/qualify.py \
+python3.14 deploy/jobs/runtime/qualify.py \
   --docker-host unix:///srv/hf2l/runtime/docker.sock \
   --daemon-config /srv/hf2l/runtime/daemon.json \
   --image sha256:YOUR_ACTUAL_APPROVED_IMAGE_DIGEST \
@@ -279,7 +278,7 @@ Qualification checks concurrent synthetic sandboxes, source/state/cache/log sepa
 Keep the ready-only `profile.json` separate from the qualified `executor-profile.json`; `setup.py status` deliberately rewrites only the ready-only report. Promote executor evidence only after the qualification result passes. The `publish-profile` action verifies the report checks, runtime/daemon hashes, Docker resource root, and current isolated-daemon health before producing `executor-profile.json`. Publish the passing report using:
 
 ```sh
-python3 deploy/jobs/runtime/setup.py publish-profile \
+python3.14 deploy/jobs/runtime/setup.py publish-profile \
   --root /srv/hf2l/runtime \
   --qualification /srv/hf2l/validation/cpu-profile/qualification.json \
   --resource-root /srv/hf2l
@@ -299,7 +298,7 @@ nonroot node operator, after the original profile publication:
 ```sh
 mkdir -p dist
 go -C packages/jobs build -trimpath -o ../../dist/hf2l-jobs-qualify-io ./cmd/hf2l-jobs-qualify-io
-python3 deploy/jobs/runtime/qualify_readonly_io.py \
+python3.14 deploy/jobs/runtime/qualify_readonly_io.py \
   --executor-binary /absolute/path/to/hf2l-jobs-qualify-io \
   --profile /srv/hf2l/runtime/executor-profile.json \
   --root /srv/hf2l/validation/readonly-io \
@@ -914,7 +913,7 @@ The controller creates and supervises per-execution proxy sockets automatically.
 To shut down, stop admission, cancel/fence active jobs through the manager, confirm runtime termination and owned-container cleanup, then stop the owned daemon:
 
 ```sh
-python3 deploy/jobs/runtime/setup.py stop --root /srv/hf2l/runtime
+python3.14 deploy/jobs/runtime/setup.py stop --root /srv/hf2l/runtime
 ```
 
 The helper refuses daemon stop while containers are running and preserves owned data. Do not delete retained state or release quarantined capacity before confirmed fencing/termination.

@@ -13,13 +13,15 @@ models in its own environment; participants train on their own machines.
 ## Install the client
 
 The client requires Python 3.14 or 3.15. Run these commands from the repository
-root. A virtual environment is a private directory containing this project's
-Python tools and dependencies. The first command creates it; the second installs
-this package from the checkout:
+root. A virtual environment is a directory with its own Python commands and
+packages. The setup helper creates or verifies `.venv`. Substitute `python3.15`
+to select Python 3.15. The `&&` runs installation after successful setup. If
+setup rejects an existing environment, follow the
+[source installation instructions](../../README.md#install-from-source).
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -e ./packages/exchange
+python3.14 scripts/setup_venv.py .venv &&
+  .venv/bin/python -m pip install -e ./packages/exchange
 ```
 
 The only direct runtime dependency is HTTPX, the library used for network

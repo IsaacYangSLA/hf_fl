@@ -69,15 +69,18 @@ executable mode.
 The `hf2l-exchange` command is supplied only by the Go executable.
 The Python package no longer installs that command or a `server` extra.
 
-Clients install the Python SDK separately:
+Clients install the Python SDK separately. It requires Python 3.14 or 3.15.
+From the repository root, create or verify `.venv`, the directory with the
+client's Python commands and packages. Substitute `python3.15` to select
+Python 3.15. The `&&` runs installation after successful setup.
+[Source installation instructions](../README.md#install-from-source)
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -e ./packages/exchange
+python3.14 scripts/setup_venv.py .venv &&
+  .venv/bin/python -m pip install -e ./packages/exchange
 ```
 
-SDK/application Python requirements remain unchanged. The Go server requires
-neither the Python SDK nor an ML environment.
+The Go server runs independently of the Python SDK.
 
 ## Configuration and services
 
@@ -314,8 +317,8 @@ The storage receipt contains `endpoint`, `access_key`, `secret_key`, and
 `region`. Use dedicated test resources with schema-creation and
 bucket/version/multipart privileges.
 
-Install the current Python SDK plus HTTPX, Cryptography, PyJWT, Psycopg, and
-Boto3 for the live SDK harness. The retained-state gate restarts the native Go
+Use a Python 3.14 or 3.15 environment for the live SDK harness. Install the
+current Python SDK plus HTTPX, Cryptography, PyJWT, Psycopg, and Boto3 in it. The retained-state gate restarts the native Go
 service and continues uploads/downloads through the Python SDK; it does not
 install or start a Python server.
 
