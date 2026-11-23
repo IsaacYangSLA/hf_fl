@@ -119,10 +119,10 @@ weighting. Additional algorithms and checkpoint formats require implementation.
 ## Install from source
 
 HF²L, the Exchange Python client library, and the isolated training/build adapters
-require **Python 3.11 or later**. The native [Go Exchange service](docs/GO_EXCHANGE.md)
+require **Python 3.14 or 3.15**. The native [Go Exchange service](docs/GO_EXCHANGE.md)
 and [Go manager](docs/GO_JOB_MANAGER.md) build separately on Linux with Go 1.26 or later.
-The beginner walkthrough uses **Python 3.12** and lists its host prerequisites.
-Python 3.10 is not supported by HF²L. Optional ML dependencies must also support
+The beginner walkthrough uses **Python 3.14** and lists its host prerequisites.
+Python 3.13 and earlier are not supported by HF²L. Optional ML dependencies must also support
 your selected Python version.
 
 From the repository root:

@@ -33,7 +33,7 @@ The manager is a native Go executable under `packages/jobs`, built on Linux
 with Go 1.26 or later. It uses PostgreSQL and serves embedded HTML/CSS/JavaScript:
 page structure, appearance, and browser behavior. Dashboard development and
 deployment do not require Node.js. The separate `hf2l-jobs` Python distribution
-contains training/build execution adapters, requiring Python 3.11 or later; it
+contains training/build execution adapters, requiring Python 3.14 or 3.15; it
 does not contain a manager server. Exchange is also a native Go service.
 Org P's model averaging and participant training remain Python application code.
 

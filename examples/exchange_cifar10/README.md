@@ -46,7 +46,7 @@ Private updates are accessible to their author and the authorized owner.
 
 ## 1. Install in the source checkout
 
-Use Python 3.11 or later for the application and Go 1.26 or later to build the
+Use Python 3.14 or 3.15 for the application and Go 1.26 or later to build the
 Exchange server. Run every command below from the repository root
 using the project `.venv`. In this quick start, terminals A–D are on the
 same trusted operator's machine and share this installation. Create it if it

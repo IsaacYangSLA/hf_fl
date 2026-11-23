@@ -19,7 +19,7 @@ TLS certificate, hostname, and strict chain-purpose checks remain enabled. By de
 
 ## Run an export
 
-Install HTTPX, the Python library used for the utility’s web requests, in a Python 3.11 or later environment. The Python execution-adapter package does not install this utility dependency. Run these commands from the repository checkout:
+Install HTTPX, the Python library used for the utility’s web requests, in a Python 3.14 or 3.15 environment. The Python execution-adapter package does not install this utility dependency. Run these commands from the repository checkout:
 
 ```sh
 python -m pip install "httpx>=0.27,<1"

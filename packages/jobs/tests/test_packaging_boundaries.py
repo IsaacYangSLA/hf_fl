@@ -30,7 +30,7 @@ class PackagingBoundaryTests(unittest.TestCase):
         commands = {point.name: point.value for point in distribution.entry_points
                     if point.group == "console_scripts"}
         self.assertEqual(commands, {"hf2l-jobs-runtime": "hf2l_jobs.runtime:main"})
-        self.assertEqual(distribution.metadata["Requires-Python"], ">=3.11")
+        self.assertEqual(sorted(distribution.metadata["Requires-Python"].split(",")), ["<3.16", ">=3.14"])
 
     def test_required_dependencies_do_not_install_server_or_training_frameworks(self):
         from packaging.requirements import Requirement

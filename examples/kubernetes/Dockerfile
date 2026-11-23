@@ -1,5 +1,5 @@
 # Build from the repository root; no Git credentials or private data are copied.
-FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
+FROM python:3.14-slim-bookworm@sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b
 ARG HF2L_VERSION=0.0.dev0
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 \
     SETUPTOOLS_SCM_PRETEND_VERSION_FOR_HF2L=${HF2L_VERSION}

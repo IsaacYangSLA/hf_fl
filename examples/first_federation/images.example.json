@@ -1,7 +1,7 @@
 {
   "python": {
-    "tag": "python:3.12-slim-bookworm",
-    "digest": "sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258"
+    "tag": "python:3.14-slim-bookworm",
+    "digest": "sha256:3fe1a0b6c2d6b2ebb572906cdabeca75aeb558c0c17db5ffefbcf8094871c32b"
   },
   "postgres": {
     "tag": "postgres:18",

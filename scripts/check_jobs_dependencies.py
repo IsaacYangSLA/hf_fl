@@ -179,8 +179,8 @@ def check_metadata() -> list[str]:
     if unconditional != ["pydantic"]:
         problems.append(f"Runtime unconditional dependencies must be [pydantic], got {unconditional}")
     python_requires = distribution.metadata.get("Requires-Python", "")
-    if python_requires.strip() != ">=3.11":
-        problems.append(f"Expected Python >=3.11 metadata, got {python_requires!r}")
+    if sorted(clause.strip() for clause in python_requires.split(",")) != ["<3.16", ">=3.14"]:
+        problems.append(f"Expected Python >=3.14,<3.16 metadata, got {python_requires!r}")
     return problems
 
 

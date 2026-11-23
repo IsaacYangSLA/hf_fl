@@ -28,7 +28,7 @@ Install that executable into the service account's configured command path.
 For the API/dashboard under Docker Compose, use the
 [Go services Compose guide](../deploy/compose/go/README.md). Python package
 installation does not install a manager server. The Python execution-adapter
-package requires Python 3.11 or later. The deployment image builder separately
+package requires Python 3.14 or 3.15. The deployment image builder separately
 targets CPython 3.14; its image must be qualified on the intended runtime. Manager
 processes do not import job training plugins. The approved runtime image must
 contain the FL dependencies needed by its jobs. Managed execution currently uses

@@ -7,13 +7,15 @@ name = "hf2l-exchange"
 version = "0.1.0.dev0"
 description = "Python client for authenticated metadata and immutable file exchange"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14,<3.16"
 dependencies = ["httpx>=0.27,<1"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
 ]
 
 [project.optional-dependencies]

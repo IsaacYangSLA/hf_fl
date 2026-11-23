@@ -12,7 +12,7 @@ models in its own environment; participants train on their own machines.
 
 ## Install the client
 
-The client requires Python 3.11 or later. Run these commands from the repository
+The client requires Python 3.14 or 3.15. Run these commands from the repository
 root. A virtual environment is a private directory containing this project's
 Python tools and dependencies. The first command creates it; the second installs
 this package from the checkout:

@@ -27,7 +27,7 @@ remain explicit operator tasks.
 The `hf2l-jobs` Python distribution now contains only the sandboxed application
 adapters and their immutable input contracts. A sandbox is the isolated execution
 environment that constrains a job's files, resource use, and network access.
-Python 3.11 or later is required.
+Python 3.14 or 3.15 is required.
 
 Install the adapter package in the approved training image, alongside the HF²L
 application and Exchange client library. From the repository root:

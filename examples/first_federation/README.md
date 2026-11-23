@@ -107,7 +107,7 @@ does not deliver or install executable code.
 
 ### Prerequisites
 
-**Org S server:** Linux, Git, Python 3.12 with venv, Docker Engine and Docker
+**Org S server:** Linux, Git, Python 3.14 with venv, Docker Engine and Docker
 Compose v2 with the Buildx plugin, persistent disk, and Docker permissions.
 Reserve three public DNS names pointing to this server: `exchange.example.org`, `auth.example.org`, and
 `objects.example.org`. Allow inbound TCP 80/443 for Caddy and certificate
@@ -138,7 +138,7 @@ sudo authorization. If neither works, ask the server administrator to provide
 approved Docker access before proceeding.
 
 **Org P's aggregator, Alice, and Bob:** Linux (or a Linux environment such as WSL2), Git,
-Python 3.12 with venv, package-index access for installation, browser access
+Python 3.14 with venv, package-index access for installation, browser access
 (possibly another device), and outbound HTTPS to all three names. The helpers
 use POSIX file locking and permissions; native Windows is not supported.
 Participants install **no server stack or Docker**.
@@ -161,7 +161,7 @@ git clone https://github.com/IsaacYangSLA/hf_fl.git
 cd hf_fl
 git checkout --detach "$SOURCE_REVISION"
 test "$(git rev-parse HEAD)" = "$SOURCE_REVISION"
-python3.12 -m venv .venv
+python3.14 -m venv .venv
 . .venv/bin/activate
 python -m pip install . ./packages/exchange 'PyJWT[crypto]>=2.9,<3'
 export EXAMPLE=examples/first_federation

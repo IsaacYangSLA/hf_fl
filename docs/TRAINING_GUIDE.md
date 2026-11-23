@@ -12,10 +12,9 @@ each participant and the aggregator.
 ## Install and authenticate
 
 The HF²L application, Exchange client library, and job execution adapters require
-Python 3.11 or later. Exchange and job-manager servers are Go programs; build
+Python 3.14 or 3.15. Exchange and job-manager servers are Go programs; build
 them with Go 1.26 or later or use the [Go Compose guide](../deploy/compose/go/README.md).
-[Python 3.10 reached end of life](https://peps.python.org/pep-0619/#3-10-lifespan)
-on October 1, 2026, and no longer receives Python updates.
+Python 3.13 and earlier are not supported.
 Create a local environment in this source checkout. Base installation supports
 NumPy/SafeTensors processing and the local backend; install the extras used by
 your application:
@@ -906,8 +905,9 @@ A passing emulated-storage suite does not establish real-provider conformance.
 The [Exchange validation guide](EXCHANGE_V3.md#validation-status-and-deployment-limits)
 describes provider checks and deployment limits. The continuous integration
 (CI) workflows define the current test groups. Package metadata requires Python
-3.11 or later; the workflows exercise Python 3.11 through 3.14 for the runtime
-wheel and selected Python 3.12/3.14 application groups. Those checks do not
-establish every optional dependency combination on every Python version.
+3.14 or 3.15; the workflows exercise Python 3.14 and 3.15 for the runtime
+wheel, client library, and application groups, and Python 3.14 for the
+remaining jobs. Those checks do not establish every optional dependency
+combination on every Python version.
 Dated reports in [docs/validation](validation/) record historical executions
 and their scope.

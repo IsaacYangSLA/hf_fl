@@ -69,7 +69,7 @@ Each organization needs:
   a storage class tells Kubernetes how to obtain persistent disks.
 - A way for its nodes to pull the reviewed training image. Configure a private
   registry's pull credentials locally when required; do not share them with Org S.
-- Python 3.11 or newer on the administrative workstation for the renderer below.
+- Python 3.14 or 3.15 on the administrative workstation for the renderer below.
   Docker, an image-building tool, is needed where the example image is built.
 - Its own Exchange account token in a private file and the public certificate
   authority bundle supplied by Org S. A token proves the account's identity;
